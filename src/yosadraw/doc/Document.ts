@@ -8,6 +8,8 @@ export interface Layer {
   name: string;
   visible: boolean;
   locked: boolean;
+  /** Bloquear alfa: lo que se pinta sólo cambia el color de lo que ya hay, nunca la transparencia. */
+  alphaLock: boolean;
   opacity: number;
   blend: LayerBlend;
   items: Item[];
@@ -25,6 +27,18 @@ export interface Command {
 
 export const MAX_LAYERS = 32;
 
+export type DocProfile = 'srgb' | 'p3' | 'gray';
+
+/** Propiedades del documento que se guardan con el proyecto. */
+export interface DocSettings {
+  /** Color del papel, o null para fondo transparente. */
+  background: string | null;
+  /** Resolución de impresión (píxeles por pulgada). */
+  dpi: number;
+  /** Perfil de color de trabajo (se propone al exportar). */
+  profile: DocProfile;
+}
+
 /**
  * Documento: capas ordenadas (de abajo arriba) con sus elementos, la capa
  * activa y la selección. Toda modificación se hace a través de comandos
@@ -34,13 +48,29 @@ export class Document {
   layers: Layer[] = [];
   activeId = '';
   selection: Selection | null = null;
+  settings: DocSettings = { background: '#ffffff', dpi: 300, profile: 'srgb' };
   private nextItem = 1;
   private nextLayer = 1;
 
-  constructor(readonly width: number, readonly height: number) {
+  constructor(readonly width: number, readonly height: number, settings?: Partial<DocSettings>) {
     const l = this.newLayer('Capa 1');
     this.layers.push(l);
     this.activeId = l.id;
+    if (settings) this.settings = { ...this.settings, ...settings };
+  }
+
+  /** Contadores internos (para guardar y restaurar sin repetir identificadores). */
+  get counters() { return { nextItem: this.nextItem, nextLayer: this.nextLayer }; }
+
+  /** Sustituye el contenido completo (al abrir un proyecto). */
+  restore(layers: Layer[], activeId: string, selection: Selection | null, counters: { nextItem: number; nextLayer: number }) {
+    if (!layers.length) throw new Error('El proyecto no tiene capas');
+    this.layers = layers;
+    this.activeId = layers.some(l => l.id === activeId) ? activeId : layers[layers.length - 1].id;
+    this.selection = selection;
+    const maxItem = (items: Item[]): number => items.reduce((m, i) => Math.max(m, i.id, i.kind === 'group' ? maxItem(i.items) : 0), 0);
+    this.nextItem = Math.max(counters.nextItem, 1 + Math.max(0, ...layers.map(l => maxItem(l.items))));
+    this.nextLayer = Math.max(counters.nextLayer, layers.length + 1);
   }
 
   /* ---------- Consultas ---------- */
@@ -50,7 +80,7 @@ export class Document {
 
   newLayer(name?: string): Layer {
     const n = this.nextLayer++;
-    return { id: `L${n}_${Math.random().toString(36).slice(2, 7)}`, name: name ?? `Capa ${n}`, visible: true, locked: false, opacity: 1, blend: 'normal', items: [] };
+    return { id: `L${n}_${Math.random().toString(36).slice(2, 7)}`, name: name ?? `Capa ${n}`, visible: true, locked: false, alphaLock: false, opacity: 1, blend: 'normal', items: [] };
   }
 
   /** Crea un elemento con identificador y cajas calculadas. */
@@ -61,6 +91,16 @@ export class Document {
     if (sb) local = { minX: Math.max(local.minX, sb.minX), minY: Math.max(local.minY, sb.minY), maxX: Math.min(local.maxX, sb.maxX), maxY: Math.min(local.maxY, sb.maxY) };
     const m = extra.m ?? null;
     return { ...data, id: this.nextItem++, m, clip: extra.clip ?? null, local, bounds: m ? transformAABB(m, local) : local } as Item;
+  }
+
+  /**
+   * Elemento pintado por una herramienta de pintura (pincel, bote, degradado, formas):
+   * si la capa tiene el alfa bloqueado, queda marcado para dibujarse sólo sobre lo existente.
+   */
+  paintItem(layerId: string, data: ItemData, extra: { m?: Mat | null; clip?: Selection | null } = {}): Item {
+    const it = this.item(data, extra);
+    if (this.layer(layerId)?.alphaLock) it.lock = true;
+    return it;
   }
 
   /* ---------- Comandos ---------- */
@@ -121,7 +161,7 @@ export class Document {
     return { label: 'Mover capa', layers: [id], structure: true, redo: () => move(from, to), undo: () => move(to, from) };
   }
 
-  cmdLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'opacity' | 'blend'>>, label = 'Propiedades de capa'): Command {
+  cmdLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend'>>, label = 'Propiedades de capa'): Command {
     const l = this.layer(id)!;
     const before = Object.fromEntries(Object.keys(patch).map(k => [k, (l as unknown as Record<string, unknown>)[k]])) as typeof patch;
     return {

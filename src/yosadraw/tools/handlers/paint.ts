@@ -31,7 +31,7 @@ export function bucketHandler(ctx: ToolContext, tool: string): ActiveHandler {
       id.data.set(data);
       g.putImageData(id, 0, 0);
       const opacity = ctx.setting<number>(tool, 'opacity');
-      const item = doc.item({ kind: 'bitmap', image: c, x: m.x0, y: m.y0, w, h }, { clip: doc.selection });
+      const item = doc.paintItem(layer.id, { kind: 'bitmap', image: c, x: m.x0, y: m.y0, w, h }, { clip: doc.selection });
       const items = opacity < 1 ? [doc.item({ kind: 'group', items: [item], opacity, blend: 'normal' })] : [item];
       engine.exec(doc.cmdAddItems(layer.id, items, 'Relleno'));
     },
@@ -68,7 +68,7 @@ export function gradientHandler(ctx: ToolContext, tool: string): ActiveHandler {
       if (!g || !ok) return;
       const { engine } = ctx, doc = engine.doc, layer = engine.editableLayer();
       if (!layer) return;
-      engine.exec(doc.cmdAddItems(layer.id, [doc.item({ kind: 'gradient', grad: g }, { clip: doc.selection })], 'Degradado'));
+      engine.exec(doc.cmdAddItems(layer.id, [doc.paintItem(layer.id, { kind: 'gradient', grad: g }, { clip: doc.selection })], 'Degradado'));
     },
     cancel() { a = b = null; },
     overlay(g) {
@@ -121,7 +121,7 @@ export function shapesHandler(ctx: ToolContext, tool: string): ActiveHandler {
       if (Math.abs(s.x1 - s.x0) < minPx && Math.abs(s.y1 - s.y0) < minPx) return;
       const { engine } = ctx, doc = engine.doc, layer = engine.editableLayer();
       if (!layer) return;
-      engine.exec(doc.cmdAddItems(layer.id, [doc.item({ kind: 'shape', shape: s }, { clip: doc.selection })], 'Forma'));
+      engine.exec(doc.cmdAddItems(layer.id, [doc.paintItem(layer.id, { kind: 'shape', shape: s }, { clip: doc.selection })], 'Forma'));
     },
     cancel() { a = null; box = null; },
     overlay(g) {

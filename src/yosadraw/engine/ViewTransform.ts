@@ -83,7 +83,8 @@ export class ViewTransform implements ViewState {
   }
 
   /** Coloca el punto de documento (dx, dy) en la posición de pantalla (sx, sy). */
-  private pin(dx: number, dy: number, sx: number, sy: number) {
+  /** Coloca el punto del documento (dx, dy) en el punto de pantalla (sx, sy). */
+  pin(dx: number, dy: number, sx: number, sy: number) {
     const c = Math.cos(this.rotation) * this.scale, s = Math.sin(this.rotation) * this.scale;
     this.x = sx - (c * dx - s * dy);
     this.y = sy - (s * dx + c * dy);

@@ -39,7 +39,17 @@ export interface DesktopBridge {
   chooseFolder?(current: string): Promise<string | null>;
   writeExport?(folder: string, name: string, data: Uint8Array, overwrite: boolean): Promise<string>;
   revealFile?(path: string): Promise<void>;
+  /** Android: compartir el archivo exportado con otra app. */
+  shareFile?(path: string): Promise<void>;
+  /** Android: nombre y ruta visibles de un archivo guardado (las rutas reales son URIs content://). */
+  describe?(path: string): { name: string; path: string };
   exportFile(defaultName: string, content: string): Promise<boolean>;
+  /** Almacén de proyectos de la galería (escritorio: userData/projects; Android: archivos privados). */
+  storeGet?(key: string): Promise<Uint8Array | null>;
+  storePut?(key: string, data: Uint8Array): Promise<void>;
+  storeDelete?(key: string): Promise<void>;
+  storeList?(prefix: string): Promise<string[]>;
+  storeLocation?(): Promise<string>;
   importFiles(): Promise<{ name: string; content: string }[]>;
 }
 

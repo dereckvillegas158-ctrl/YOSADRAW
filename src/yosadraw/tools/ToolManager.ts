@@ -20,7 +20,13 @@ export const ACTIONS: ActionDef[] = [
   { id: 'fill-selection', label: 'Rellenar selección', group: 'Selección', shortcut: ['Alt+Backspace'], run: m => selectionActions.fill(m.ctx) },
   { id: 'new-layer', label: 'Nueva capa', group: 'Capas', shortcut: ['Ctrl+Shift+N'], run: m => m.engine.addLayer() },
   { id: 'duplicate-layer', label: 'Duplicar capa', group: 'Capas', shortcut: ['Ctrl+J'], run: m => m.engine.exec(m.engine.doc.cmdDuplicateLayer(m.engine.doc.activeId)) },
+  { id: 'alpha-lock', label: 'Bloquear alfa de la capa', group: 'Capas', shortcut: ['/'], run: m => { const l = m.engine.doc.active; m.engine.setLayerProps(l.id, { alphaLock: !l.alphaLock }); m.hooks.notify(l.alphaLock ? `Alfa bloqueado en «${l.name}»` : `Alfa desbloqueado en «${l.name}»`); } },
   { id: 'merge-down', label: 'Combinar hacia abajo', group: 'Capas', shortcut: ['Ctrl+E'], run: m => m.engine.exec(m.engine.doc.cmdMergeDown(m.engine.doc.activeId)) },
+  { id: 'save', label: 'Guardar', group: 'Archivo', shortcut: ['Ctrl+S'], run: m => m.hooks.project?.('save') },
+  { id: 'save-as', label: 'Guardar como…', group: 'Archivo', shortcut: ['Ctrl+Shift+S'], run: m => m.hooks.project?.('saveAs') },
+  { id: 'new-project', label: 'Nuevo proyecto…', group: 'Archivo', shortcut: ['Ctrl+Alt+N'], run: m => m.hooks.project?.('new') },
+  { id: 'gallery', label: 'Volver a la galería', group: 'Archivo', shortcut: ['Ctrl+Shift+G'], run: m => m.hooks.project?.('gallery') },
+  { id: 'effects', label: 'Efectos…', group: 'Imagen', shortcut: ['Ctrl+Shift+F'], run: m => m.hooks.openEffects?.() },
   { id: 'export', label: 'Exportar…', group: 'Archivo', shortcut: ['Ctrl+Shift+E'], run: m => m.hooks.openExport?.() },
   { id: 'swap-colors', label: 'Intercambiar colores', group: 'Color', shortcut: ['X'], run: m => m.swapColors() },
   { id: 'default-colors', label: 'Colores por defecto', group: 'Color', shortcut: ['D'], run: m => m.setColors('#1b1530', '#ffffff') },
@@ -56,7 +62,7 @@ export class ToolManager extends Emitter<ToolManagerEvents> {
   colors: ColorState = { primary: '#1b1530', secondary: '#ffffff', recent: [] };
   private recentTimer = 0;
 
-  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, readonly hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void; openExport?(): void }) {
+  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, readonly hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void; openExport?(): void; openEffects?(): void; project?(a: 'save' | 'saveAs' | 'new' | 'gallery'): void }) {
     super();
     const defaults: Record<string, string[]> = {};
     for (const t of TOOLS) defaults[`tool:${t.id}`] = t.shortcut;
@@ -93,6 +99,16 @@ export class ToolManager extends Emitter<ToolManagerEvents> {
     let h = this.handlers.get(id);
     if (!h) { h = t.create(this.ctx); this.handlers.set(id, h); }
     return h;
+  }
+
+  /** Al cambiar de documento: la herramienta activa aplica o descarta lo pendiente y empieza limpia. */
+  resetForDocument() {
+    const prev = this.handlers.get(this.current.id);
+    prev?.deactivate?.();
+    this.handlers.clear();
+    const id = this.current.id;
+    this.current = this.tools.find(t => t.id === 'pen')!;
+    this.select(id);
   }
 
   select(id: string) {

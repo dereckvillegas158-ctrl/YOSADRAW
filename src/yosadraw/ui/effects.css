@@ -1,0 +1,70 @@
+/* ---------- Ventana de efectos ----------
+   Panel lateral flotante (escritorio) u hoja inferior (teléfono) que deja ver
+   el lienzo con la vista previa en vivo. */
+.fx-panel {
+  position: fixed; z-index: 45; right: calc(12px + var(--sa-r)); top: 118px; bottom: calc(44px + var(--sa-b)); width: 372px;
+  display: flex; flex-direction: column; min-height: 0; outline: none;
+  background: rgba(20, 17, 29, 0.97); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55); animation: fx-in 0.18s ease;
+}
+@keyframes fx-in { from { opacity: 0; transform: translateX(16px); } }
+.fx-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 6px 16px; }
+.fx-head h2 { margin: 0; display: flex; align-items: center; gap: 8px; font: 700 18px var(--font-display); }
+.fx-head h2 svg { color: var(--accent-2); }
+.fx-target { display: flex; flex-direction: column; gap: 6px; padding: 4px 14px 8px; }
+.fx-target .segmented button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.fx-note { margin: 0; font-size: 12px; color: #ffcf7a; }
+.fx-browse { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 8px; border-bottom: 1px solid var(--line); }
+.fx-search { width: 100%; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); }
+.fx-cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.fx-cats::-webkit-scrollbar { display: none; }
+.fx-cats .chip-btn { flex: none; }
+.fx-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 196px; overflow-y: auto; padding-right: 2px; scrollbar-color: var(--line) transparent; }
+.fx-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); cursor: pointer; text-align: left; min-width: 0; }
+.fx-item:hover { border-color: rgba(157, 107, 255, 0.5); }
+.fx-item[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.fx-item-name { font-size: 12.5px; font-weight: 600; line-height: 1.25; }
+.fx-item-cat { font-size: 10.5px; color: var(--muted); }
+.fx-params { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; scrollbar-color: var(--line) transparent; }
+.fx-params h3 { margin: 0; font: 700 15px var(--font-display); }
+.fx-params .ctl-row output { font: 500 12px var(--font-mono); color: var(--accent-2); }
+.fx-params select { width: auto; min-width: 150px; }
+.fx-color input[type=color] { width: 56px; height: 30px; }
+.fx-foot { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--line); }
+.fx-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.fx-actions .fx-apply { min-width: 96px; }
+.fx-perf { font: 11px var(--font-mono); }
+.fx-panel.busy .fx-browse, .fx-panel.busy .fx-params, .fx-panel.busy .fx-target { pointer-events: none; opacity: 0.55; }
+.fx-btn svg { color: var(--accent-2); }
+html:not(.phone) body.fx-open .panel { visibility: hidden; }
+
+/* Teléfono: hoja inferior compacta; la lista de efectos va en una fila deslizable. */
+html.phone .fx-panel {
+  left: 0; right: 0; top: auto; bottom: 0; width: auto; height: min(56vh, 520px); border-radius: 18px 18px 0 0; border-bottom: 0;
+  padding: 0 var(--sa-r) var(--sa-b) var(--sa-l); animation: sheet-up 0.2s ease;
+}
+html.phone .fx-list { display: flex; overflow-x: auto; overflow-y: hidden; max-height: none; gap: 6px; scrollbar-width: none; }
+html.phone .fx-list::-webkit-scrollbar { display: none; }
+html.phone .fx-item { flex: none; width: 150px; }
+html.phone .fx-search { display: none; }
+html.phone .fx-head { padding-top: 8px; }
+html.phone .fx-actions .btn { flex: 1; }
+@media (orientation: landscape) {
+  html.phone .fx-panel { left: auto; top: 0; width: min(380px, 55vw); height: auto; border-radius: 18px 0 0 18px; border-bottom: 1px solid var(--line); padding-top: var(--sa-t); }
+}
+@media (orientation: portrait) { html.phone #fx-btn { display: none; } }
+@media (prefers-reduced-motion: reduce) { .fx-panel { animation: none; } }
+
+/* Teléfono: todo el panel se desplaza (los parámetros nunca quedan aplastados) y los botones quedan fijos abajo. */
+html.phone .fx-panel { overflow-y: auto; overscroll-behavior: contain; }
+html.phone .fx-panel .fx-params { flex: none; overflow: visible; }
+html.phone .fx-panel .fx-foot { position: sticky; bottom: 0; background: rgba(20, 17, 29, 0.98); }
+/* Vertical: el lienzo ocupa sólo la parte que deja libre la hoja, para ver el resultado entero. */
+@media (orientation: portrait) {
+  html.phone body.fx-open .app { height: calc(100% - min(56vh, 520px)); }
+  html.phone body.fx-open .status, html.phone body.fx-open #toolbar-host { display: none; }
+}
+@media (orientation: landscape) {
+  html.phone body.fx-open .app { width: calc(100% - min(380px, 55vw)); }
+  html.phone body.fx-open .quick-sliders { display: none; }
+}

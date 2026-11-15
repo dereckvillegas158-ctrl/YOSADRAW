@@ -23,7 +23,8 @@ await build({
   base: './',
   build: {
     outDir, emptyOutDir: true, target: 'es2020', assetsInlineLimit: 0, modulePreload: false,
-    rollupOptions: { input: resolve(root, entry) },
+    // Un solo archivo: también los import() dinámicos (worker de ZIP) van dentro.
+    rollupOptions: { input: resolve(root, entry), output: { inlineDynamicImports: true } },
   },
 });
 

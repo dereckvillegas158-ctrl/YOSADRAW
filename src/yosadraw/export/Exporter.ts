@@ -1,7 +1,6 @@
 import { zipSync } from 'fflate';
 import { desktopBridge } from '../brush/storage';
 import type { CanvasEngine } from '../engine';
-import ExportWorker from './export.worker?worker&inline';
 import type { EncodedFile, RasterJob } from './pipeline';
 import { exportRegion, outputSize, renderForExport } from './render';
 import { FORMATS, safeFileName, type ExportOptions } from './types';
@@ -22,7 +21,16 @@ export class Exporter {
 
   constructor(private engine: CanvasEngine) {}
 
-  private w(): Worker {
+  /**
+   * El codificador (PSD, WebP con su wasm…) pesa ~1 MB: se carga la primera vez
+   * que se exporta, no al abrir la app. La vista previa publicada (un solo HTML)
+   * lo lleva incrustado.
+   */
+  private async w(): Promise<Worker> {
+    if (this.worker) return this.worker;
+    const ExportWorker = import.meta.env.VITE_TARGET === 'artifact'
+      ? (await import('./export.worker?worker&inline')).default
+      : (await import('./export.worker?worker')).default;
     if (this.worker) return this.worker;
     const w = new ExportWorker();
     w.onmessage = (e: MessageEvent) => {
@@ -41,7 +49,7 @@ export class Exporter {
     const id = ++this.seq;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, progress });
-      this.w().postMessage({ ...msg, id }, transfer);
+      this.w().then(w => w.postMessage({ ...msg, id }, transfer), reject);
     });
   }
 
@@ -126,7 +134,8 @@ export class Exporter {
     if (bridge?.writeExport && folder) {
       const paths: string[] = [];
       for (const f of files) paths.push(await bridge.writeExport(folder, f.name, f.data, overwrite));
-      return { mode: 'desktop', paths, folder, total, names: paths.map(p => p.split(/[\\/]/).pop()!) };
+      const names = paths.map(p => bridge.describe?.(p).name ?? p.split(/[\\/]/).pop()!);
+      return { mode: 'desktop', paths, folder, total, names };
     }
     let blob: Blob, name: string;
     if (files.length === 1) { blob = new Blob([files[0].data as Uint8Array<ArrayBuffer>], { type: files[0].mime }); name = files[0].name; }

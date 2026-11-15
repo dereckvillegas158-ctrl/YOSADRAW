@@ -2,15 +2,17 @@ import type { StrokePoint } from '../../core/types';
 import { createEngine, type StrokeEngine } from '../../filters';
 import { PointerInput } from '../../input/PointerInput';
 import type { BrushPreset } from '../brush/BrushPreset';
-import { BrushStrokeSession, SessionBuffers } from '../brush/BrushStrokeSession';
+import { BrushStrokeSession, finishStrokeOffline, SessionBuffers } from '../brush/BrushStrokeSession';
 import type { StrokePainter } from '../brush/StrokePainter';
 import { Document, History, MAX_LAYERS, type Command, type Layer } from '../doc/Document';
 import { distanceToRuler, projectOnRuler, symmetryMatrices, type Ruler, type Symmetry } from '../doc/geometry';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
 import { strokeSelectionOutline } from '../doc/Selection';
 import { Emitter } from './Emitter';
-import { Navigation, type NavMode } from './Navigation';
-import { invert, multiply, ViewTransform, type Mat, type ViewState } from './ViewTransform';
+import { fromOverlayUi, Navigation, type NavMode } from './Navigation';
+import { invert, multiply, ViewTransform, type AABB, type Mat, type ViewState } from './ViewTransform';
+import type { Item } from '../doc/items';
+import type { Rect } from '../brush/StrokePainter';
 
 export type EngineMode = 'paint' | 'erase' | 'pan' | 'rotate' | 'custom';
 
@@ -45,7 +47,14 @@ export type EngineEvents = {
   /** Color tomado con Alt + clic. */
   picked: string;
   notice: string;
+  /** El extremo borrador del lápiz se apoyó (true) o se levantó (false). */
+  stylusEraser: boolean;
+  /** Se cargó otro documento (abrir o crear un proyecto). */
+  document: Document;
 };
+
+/** Qué hace un dedo sobre el lienzo. */
+export type FingerMode = 'auto' | 'draw' | 'navigate';
 
 export interface CanvasEngineOptions {
   width: number;
@@ -54,6 +63,8 @@ export interface CanvasEngineOptions {
   brush: BrushPreset;
   color: string;
   theme?: Partial<CanvasTheme>;
+  /** Documento inicial (por defecto, uno vacío de width × height). */
+  doc?: Document;
 }
 
 interface LayerView { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; crisp: ViewTransform | null; dirty: boolean; clipped: boolean; ms: number }
@@ -75,12 +86,13 @@ const SLICE_MS = 9;
  * - Todo cambio del documento es un comando del historial.
  */
 export class CanvasEngine extends Emitter<EngineEvents> {
-  readonly doc: Document;
-  readonly history = new History();
+  /** Documento actual; se sustituye con `loadDocument`. */
+  doc: Document;
+  history = new History();
   readonly view = new ViewTransform();
   readonly stabilizer: StrokeEngine = createEngine();
   readonly painter: StrokePainter;
-  readonly items: ItemRenderer;
+  items: ItemRenderer;
   readonly element: HTMLElement;
   theme: CanvasTheme = { workspace: '#08070d', paper: '#ffffff', frame: 'rgba(255,255,255,0.14)' };
   color: string;
@@ -88,6 +100,14 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   symmetry: Symmetry = { enabled: false, mode: 'vertical', cx: 0, cy: 0, count: 6 };
   /** Distancia (px de pantalla) a la que un trazo se engancha a la regla. */
   rulerSnap = 60;
+  /**
+   * Dedo: 'auto' dibuja hasta que se usa un lápiz (luego sólo navega: rechazo de palma),
+   * 'draw' siempre dibuja, 'navigate' sólo mueve, amplía y gira.
+   */
+  fingerMode: FingerMode = 'auto';
+  /** Mantener el dedo quieto (o pulsar el botón del lápiz) toma el color. */
+  holdToPick = true;
+  holdDelay = 500;
 
   private preset: BrushPreset;
   private _mode: EngineMode = 'paint';
@@ -119,13 +139,20 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private simulate = false;
   private sim = { x: 0, y: 0, t: 0, v: 0, p: 1 };
   private toolPointer: number | null = null;
+  private pens = new Set<number>();
+  private touches = new Set<number>();
+  private strokeStart = 0;
+  private hold: { id: number; x: number; y: number; timer: number } | null = null;
+  /** Puntero que está tomando color (mantener pulsado o botón del lápiz) y su lupa. */
+  private picking: { id: number; x: number; y: number; color: string | null } | null = null;
+  private stylusEraser = false;
   private hover: { x: number; y: number; pressure: number; tilt: number; type: string } | null = null;
   private nav: Navigation;
   private resizeObs: ResizeObserver;
 
   constructor(container: HTMLElement, opts: CanvasEngineOptions) {
     super();
-    this.doc = new Document(opts.width, opts.height);
+    this.doc = opts.doc ?? new Document(opts.width, opts.height);
     this.painter = opts.painter;
     this.items = new ItemRenderer(opts.painter, opts.width, opts.height);
     this.preset = opts.brush;
@@ -146,7 +173,11 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.paper = paperCanvas.getContext('2d', { alpha: false })!;
     this.live = this.liveCanvas.getContext('2d', { desynchronized: true })!;
 
-    container.addEventListener('pointerdown', e => { this.downType = e.pointerType; this.downAlt = e.altKey; }, { capture: true });
+    container.addEventListener('pointerdown', this.onCaptureDown, { capture: true });
+    container.addEventListener('pointermove', this.onCaptureMove, { capture: true, passive: true });
+    for (const t of ['pointerup', 'pointercancel'] as const) container.addEventListener(t, this.onCaptureUp, { capture: true });
+    // Mantener pulsado en Android abre el menú contextual: en el lienzo no hay menú.
+    container.addEventListener('contextmenu', e => e.preventDefault());
 
     this.nav = new Navigation({
       view: this.view,
@@ -157,12 +188,16 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       cancelStroke: () => this.cancelStroke(),
       undo: () => this.undo(),
       redo: () => this.redo(),
+      fingerNavigates: () => !this.fingerDraws(),
+      touchStrokeAge: () => (this.downType === 'touch' && this.isDrawing ? performance.now() - this.strokeStart : -1),
+      penDown: () => this.pens.size > 0,
     });
 
     new PointerInput([container], {
       begin: (_t, p) => this.beginStroke(p),
       move: pts => this.moveStroke(pts),
       end: () => this.endStroke(),
+      accept: e => this.acceptStroke(e),
     });
 
     container.addEventListener('pointerdown', this.onToolDown);
@@ -212,7 +247,43 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   /** Repinta la capa de interfaz (guías de herramientas). */
   requestOverlay() { this.requestFrame(); }
 
-  get isDrawing() { return this.session !== null || this.toolPointer !== null; }
+  get isDrawing() { return this.session !== null || this.toolPointer !== null || this.pending !== null; }
+  /** Sube con cada cambio del documento (hacer, deshacer, rehacer): sirve para saber si hay cambios sin guardar. */
+  get revision() { return this._revision; }
+  private _revision = 0;
+
+  /**
+   * Abre otro documento: descarta el trazo en curso, vacía el historial y las
+   * vistas de capa, y encaja (o restaura) la vista. Las herramientas siguen igual.
+   */
+  loadDocument(doc: Document, view?: ViewState | null) {
+    this.cancelStroke();
+    this.disarmHold();
+    this.picking = null;
+    this.pending = null;
+    this.ghosts = [];
+    this.abandonJob();
+    this.doc = doc;
+    this.history = new History();
+    this.items = new ItemRenderer(this.painter, doc.width, doc.height);
+    this.symmetry = { ...this.symmetry, enabled: false, cx: doc.width / 2, cy: doc.height / 2 };
+    this.ruler = { enabled: false, x0: doc.width * 0.25, y0: doc.height / 2, x1: doc.width * 0.75, y1: doc.height / 2 };
+    for (const v of this.layerViews.values()) v.canvas.remove();
+    this.layerViews.clear();
+    this.selShadeKey = '';
+    this.syncLayers();
+    if (view && view.scale > 0) this.view.set(view); else this.view.fit(this.vw, this.vh, doc.width, doc.height);
+    this._revision++;
+    this.viewChanged();
+    this.invalidateAll(false);
+    this.emit('document', doc);
+    this.emit('history', this.historyState);
+    this.emit('doc', { structure: true, selection: true });
+    this.emitStats(0, false);
+  }
+
+  /** Color del papel (blanco si el fondo es transparente, para mezclas y previsualizaciones). */
+  get paperColor() { return this.doc.settings.background ?? '#ffffff'; }
   get historyState(): HistoryState {
     const h = this.history;
     return { canUndo: h.canUndo, canRedo: h.canRedo, undoDepth: h.undoDepth, redoDepth: h.redoDepth, undoLabel: h.nextUndo, redoLabel: h.nextRedo };
@@ -241,6 +312,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private afterChange(cmd: Command, rendered: boolean) {
+    this._revision++;
     if (cmd.structure) this.syncLayers();
     if (!rendered) for (const id of cmd.layers) { const v = this.layerViews.get(id); if (v) v.dirty = true; }
     if (!rendered && cmd.layers.length) this.rerender(true);
@@ -269,7 +341,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.applyLayerStyle(l);
   }
   /** Confirma propiedades; `from` son los valores previos si hubo vista previa. */
-  setLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'opacity' | 'blend'>>, from?: Partial<Layer>) {
+  setLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend'>>, from?: Partial<Layer>) {
     const l = this.doc.layer(id);
     if (!l) return;
     if (from) Object.assign(l, from);
@@ -325,8 +397,66 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (this.downAlt) { this.pickColor(p.x, p.y); return; }
     const layer = this.editableLayer();
     if (!layer) return;
+    if (layer.alphaLock && this._mode === 'erase') { this.emit('notice', 'La capa tiene el alfa bloqueado: el borrador no puede cambiar su transparencia'); return; }
     this.nav.cancelAnimations();
-    this.finishRendering();
+    this.strokeStart = performance.now();
+    // Capa aún repintándose (p. ej. justo después de un zoom) y cara de terminar: el trazo
+    // espera sin bloquear. Se guardan los puntos y se muestra una línea provisional; si llega
+    // un segundo dedo (gesto), se descarta sin haber congelado la app.
+    if (this.stale().includes(layer) && this.estimate([layer], this.view) > 16) {
+      this.pending = { layer: layer.id, points: [p] };
+      this.rerender(false);
+      this.requestFrame();
+      return;
+    }
+    this.finishLayer(layer.id);
+    this.startSession(layer, p);
+  }
+
+  /** Trazos ya aplicados cuya capa aún se repinta: se siguen viendo como línea provisional. */
+  private ghosts: { layer: string; points: StrokePoint[]; color: string; width: number; erase: boolean }[] = [];
+
+  private commitPendingOffline(): boolean {
+    const pd = this.pending!;
+    const layer = this.doc.layer(pd.layer);
+    const preset = this.preset;
+    if (!layer || !this.stale().includes(layer) || (preset.mix.mode !== 'none' && preset.render.mode === 'stamp')) return false;
+    this.pending = null;
+    this.stabilizer.apply(preset.stabilizer);
+    this.simulate = this.downType === 'mouse' && preset.pressure.simulateMouse;
+    const p0 = pd.points[0];
+    this.sim = { x: p0.x, y: p0.y, t: 0, v: 0, p: 0.6 };
+    this.rulerLocked = this.ruler.enabled && distanceToRuler(this.ruler, this.view.toDoc(p0.x, p0.y)) * this.view.scale <= this.rulerSnap;
+    const pipe = this.stabilizer.pipeline;
+    const out: StrokePoint[] = [...pipe.beginStroke(p0)];
+    for (const q of pd.points.slice(1)) out.push(...pipe.pushPoint(q));
+    out.push(...pipe.endStroke());
+    const docPts = out.map(q => this.toDoc(q));
+    this.rulerLocked = false;
+    const tool = this._mode === 'erase' ? 'eraser' : 'brush';
+    const stroke = finishStrokeOffline(preset, this.color, tool, (Math.random() * 2 ** 32) >>> 0, docPts.length ? docPts : [this.toDoc(p0)], symmetryMatrices(this.symmetry));
+    this.ghosts.push({ layer: layer.id, points: pd.points, color: this.color, width: Math.max(1, preset.size.size * this.view.scale * 0.8), erase: tool === 'eraser' });
+    const item = this.doc.paintItem(layer.id, { kind: 'stroke', stroke }, { clip: this.doc.selection });
+    this.exec(this.doc.cmdAddItems(layer.id, [item], tool === 'eraser' ? 'Borrar' : 'Trazo'), false);
+    return true;
+  }
+
+  /** Trazo esperando a que su capa termine de repintarse. */
+  private pending: { layer: string; points: StrokePoint[] } | null = null;
+
+  /** Arranca el trazo que esperaba (con todos los puntos recibidos mientras tanto). */
+  private flushPending(sync: boolean) {
+    const pd = this.pending;
+    if (!pd) return;
+    const layer = this.doc.layer(pd.layer);
+    if (!layer) { this.pending = null; return; }
+    if (this.stale().includes(layer)) { if (!sync) return; this.finishLayer(layer.id); }
+    this.pending = null;
+    this.startSession(layer, pd.points[0]);
+    if (pd.points.length > 1) this.moveStroke(pd.points.slice(1));
+  }
+
+  private startSession(layer: Layer, p: StrokePoint) {
     const view = this.layerViews.get(layer.id)!;
     const tool = this._mode === 'erase' ? 'eraser' : 'brush';
     const preset = this.preset;
@@ -339,9 +469,9 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.live.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const sel = this.doc.selection;
     this.session = new BrushStrokeSession(this.painter, {
-      target: view.ctx, overlay: this.live, M: this.V, dpr: this.dpr, buffers: this.buffers, paperColor: this.theme.paper,
+      target: view.ctx, overlay: this.live, M: this.V, dpr: this.dpr, buffers: this.buffers, paperColor: this.paperColor,
       clip: sel ? this.items.selectionMask(sel, this.V, this.dpr, view.canvas.width, view.canvas.height) : null,
-      mirrors: symmetryMatrices(this.symmetry),
+      mirrors: symmetryMatrices(this.symmetry), atop: layer.alphaLock,
     }, preset, this.color, tool, (Math.random() * 2 ** 32) >>> 0);
     const first = this.stabilizer.pipeline.beginStroke(p).map(q => this.toDoc(q));
     this.session.begin(first[0] ?? this.toDoc(p));
@@ -351,6 +481,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private moveStroke(points: StrokePoint[]) {
+    if (this.pending) { this.pending.points.push(...points); this.requestFrame(); return; }
     const s = this.session;
     if (!s) return;
     const out: StrokePoint[] = [];
@@ -363,6 +494,10 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private endStroke() {
+    // Se levantó el dedo antes de que la capa estuviera lista: el trazo se calcula sin pintarlo,
+    // se añade al documento y la capa sigue repintándose por partes (sin bloquear).
+    if (this.pending && this.commitPendingOffline()) return;
+    if (this.pending) this.flushPending(true);
     const s = this.session;
     if (!s) return;
     const tail = this.stabilizer.pipeline.endStroke();
@@ -371,19 +506,140 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.session = null;
     this.rulerLocked = false;
     const layer = this.doc.active;
-    const item = this.doc.item({ kind: 'stroke', stroke: finished }, { clip: this.doc.selection });
+    const item = this.doc.paintItem(layer.id, { kind: 'stroke', stroke: finished }, { clip: this.doc.selection });
     this.exec(this.doc.cmdAddItems(layer.id, [item], s.tool === 'eraser' ? 'Borrar' : 'Trazo'), true);
   }
 
   /** Descarta el trazo o gesto en curso (p. ej. al apoyar un segundo dedo). */
   private cancelStroke() {
     if (this.toolPointer !== null) { this.handler?.cancel?.(); this.toolPointer = null; }
+    if (this.pending) { this.pending = null; this.requestFrame(); }
     if (!this.session) return;
     this.stabilizer.pipeline.endStroke();
     this.session.cancel();
     this.session = null;
     this.rulerLocked = false;
     this.requestFrame();
+  }
+
+  // =================== Dedo y lápiz ===================
+
+  /** El dedo dibuja (según `fingerMode` y si ya se ha usado un lápiz). */
+  fingerDraws() { return this.fingerMode === 'draw' || (this.fingerMode === 'auto' && !this.nav.penUsed); }
+
+  /** ¿Puede este puntero empezar un trazo o un gesto de herramienta? */
+  private acceptStroke(e: PointerEvent): boolean {
+    if (this.picking || this.inputLocked || fromOverlayUi(e)) return false;
+    if (e.pointerType === 'pen') return !(e.button === 2 || (e.buttons & 2));
+    if (e.pointerType === 'touch') return this.fingerDraws() && this.pens.size === 0 && this.touches.size <= 1;
+    return true;
+  }
+
+  private local(e: PointerEvent) {
+    const r = this.element.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  private onCaptureDown = (e: PointerEvent) => {
+    if (fromOverlayUi(e)) return;
+    this.downType = e.pointerType;
+    this.downAlt = e.altKey;
+    if (this.hold && this.hold.id !== e.pointerId) this.disarmHold();
+    if (e.pointerType === 'pen') {
+      this.pens.add(e.pointerId);
+      // Extremo borrador (S Pen, Surface Pen…): la app cambia al borrador mientras se usa.
+      const eraser = e.button === 5 || (e.buttons & 32) !== 0;
+      if (eraser !== this.stylusEraser) { this.stylusEraser = eraser; this.emit('stylusEraser', eraser); }
+      // Botón lateral del lápiz: cuentagotas (no dibuja).
+      if ((e.button === 2 || (e.buttons & 2)) && this.holdToPick && this.pickMode()) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        this.startPicking(e.pointerId, this.local(e));
+      }
+      return;
+    }
+    if (e.pointerType === 'touch') {
+      if (this.pens.size) { e.stopImmediatePropagation(); return; } // palma apoyada mientras se dibuja con lápiz
+      this.touches.add(e.pointerId);
+      if (this.touches.size === 1 && this.holdToPick && this.pickMode()) {
+        const p = this.local(e);
+        this.hold = { id: e.pointerId, x: p.x, y: p.y, timer: window.setTimeout(this.fireHold, this.holdDelay) };
+      }
+    }
+  };
+
+  private onCaptureMove = (e: PointerEvent) => {
+    if (this.picking?.id === e.pointerId) { const p = this.local(e); this.picking.x = p.x; this.picking.y = p.y; this.samplePick(); return; }
+    const h = this.hold;
+    if (h && h.id === e.pointerId) {
+      const p = this.local(e);
+      if (Math.hypot(p.x - h.x, p.y - h.y) > 10) this.disarmHold();
+    }
+  };
+
+  private onCaptureUp = (e: PointerEvent) => {
+    if (this.hold?.id === e.pointerId) this.disarmHold();
+    this.touches.delete(e.pointerId);
+    if (this.pens.delete(e.pointerId) && this.stylusEraser) { this.stylusEraser = false; this.emit('stylusEraser', false); }
+    if (this.picking?.id === e.pointerId) {
+      const c = this.picking.color;
+      this.picking = null;
+      if (c && e.type === 'pointerup') this.emit('picked', c);
+      this.requestFrame();
+    }
+  };
+
+  /** Tomar color tiene sentido con herramientas de pintura o si el dedo sólo navega. */
+  private pickMode() {
+    if (this.primaryMode() !== 'draw') return false;
+    return this._mode === 'paint' || !this.fingerDraws();
+  }
+
+  private disarmHold() {
+    if (this.hold) { clearTimeout(this.hold.timer); this.hold = null; }
+  }
+
+  private fireHold = () => {
+    const h = this.hold;
+    this.hold = null;
+    if (!h || this.touches.size !== 1 || this.nav.active) return;
+    // El dedo quieto empezó un punto: se descarta y se pasa a tomar color.
+    this.cancelStroke();
+    this.startPicking(h.id, h);
+    try { navigator.vibrate?.(12); } catch { /* sin vibración */ }
+  };
+
+  private startPicking(id: number, p: { x: number; y: number }) {
+    this.cancelStroke();
+    this.nav.cancelGesture();
+    this.picking = { id, x: p.x, y: p.y, color: null };
+    this.samplePick();
+  }
+
+  private samplePick() {
+    const pk = this.picking;
+    if (!pk) return;
+    const [r, g, b, a] = this.sampleColor(pk.x, pk.y, 'all', 1);
+    pk.color = a > 0 ? `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}` : pk.color;
+    this.requestFrame();
+  }
+
+  /** Lupa del cuentagotas: anillo con el color nuevo (arriba) y el actual (abajo), sobre el dedo. */
+  private drawLoupe(ctx: CanvasRenderingContext2D) {
+    const pk = this.picking;
+    if (!pk) return;
+    const R = 46, cx = pk.x, cy = Math.max(R + 8, pk.y - 90);
+    ctx.save();
+    ctx.lineWidth = 14;
+    ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 0); ctx.strokeStyle = pk.color ?? this.color; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI); ctx.strokeStyle = this.color; ctx.stroke();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath(); ctx.arc(cx, cy, R + 7.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R - 7.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(20,14,40,0.9)';
+    ctx.beginPath(); ctx.moveTo(pk.x - 8, pk.y); ctx.lineTo(pk.x + 8, pk.y); ctx.moveTo(pk.x, pk.y - 8); ctx.lineTo(pk.x, pk.y + 8); ctx.stroke();
+    ctx.restore();
   }
 
   // =================== Herramientas propias ===================
@@ -398,8 +654,9 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private onToolDown = (e: PointerEvent) => {
     if (this._mode !== 'custom' || !this.handler || this.primaryMode() !== 'draw' || this.nav.active || this.toolPointer !== null) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (e.pointerType === 'touch' && this.nav.penUsed) return;
-    this.finishRendering();
+    if (!this.acceptStroke(e)) return;
+    this.finishLayer(this.doc.activeId);
+    this.strokeStart = performance.now();
     this.toolPointer = e.pointerId;
     try { this.element.setPointerCapture(e.pointerId); } catch { /* sin captura */ }
     this.handler.down?.(this.toolEvent(e));
@@ -435,7 +692,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const g = c.getContext('2d', { willReadFrequently: true })!;
     const X = Math.round(sx * this.dpr - half), Y = Math.round(sy * this.dpr - half);
     const layers = mode === 'all' ? this.doc.layers.filter(l => l.visible) : [this.doc.active];
-    if (mode === 'all') { g.fillStyle = this.theme.paper; g.fillRect(0, 0, n, n); }
+    if (mode === 'all' && this.doc.settings.background) { g.fillStyle = this.doc.settings.background; g.fillRect(0, 0, n, n); }
     for (const l of layers) {
       const v = this.layerViews.get(l.id);
       if (!v) continue;
@@ -481,6 +738,108 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       ctx.drawImage(tmp, 0, 0);
     }
     void opts;
+    return out;
+  }
+
+  /**
+   * Imagen del documento (W × H) compuesta con lo que ya está pintado en pantalla,
+   * sin repintar nada: sirve si se ve el documento entero, sin girar, con las capas
+   * al día y con resolución suficiente. Si no, devuelve null (hay que rasterizar).
+   */
+  snapshotFromView(W: number, H: number): HTMLCanvasElement | null {
+    if (this.view.rotation !== 0 || this.isDrawing) return null;
+    const m = this.V, d = this.dpr;
+    const x0 = m[4] * d, y0 = m[5] * d, sw = this.doc.width * m[0] * d, sh = this.doc.height * m[3] * d;
+    if (x0 < -0.5 || y0 < -0.5 || x0 + sw > this.back.width + 0.5 || y0 + sh > this.back.height + 0.5 || sw < W * 0.75) return null;
+    const visible = this.doc.layers.filter(l => l.visible);
+    if (visible.some(l => { const v = this.layerViews.get(l.id); return !v || v.dirty || !v.crisp || !v.crisp.equals(this.view); })) return null;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d')!;
+    if (this.doc.settings.background) { g.fillStyle = this.doc.settings.background; g.fillRect(0, 0, W, H); }
+    g.imageSmoothingQuality = 'high';
+    for (const l of visible) {
+      g.globalAlpha = l.opacity;
+      g.globalCompositeOperation = blendOp(l.blend);
+      g.drawImage(this.layerViews.get(l.id)!.canvas, x0, y0, sw, sh, 0, 0, W, H);
+    }
+    return c;
+  }
+
+  // =================== Efectos ===================
+
+  /** Con la ventana de efectos abierta no se pinta (sólo se navega para inspeccionar). */
+  inputLocked = false;
+  private fxCanvas: HTMLCanvasElement | null = null;
+  private fxHidden: HTMLCanvasElement[] = [];
+
+  /**
+   * Imagen de pantalla (px físicos, vista actual sin girar el contenido) de una
+   * capa o de la composición de las capas visibles, para la vista previa de efectos.
+   * Devuelve también dónde cae el documento y cuántos px de pantalla mide un px de documento.
+   */
+  viewSource(target: { layer: string } | 'all'): { canvas: HTMLCanvasElement; unit: number; doc: [number, number, number, number]; mask: HTMLCanvasElement | null } | null {
+    this.finishRendering();
+    const W = this.back.width, H = this.back.height;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d')!;
+    const layers = target === 'all' ? this.doc.layers.filter(l => l.visible) : [this.doc.layer(target.layer)].filter((l): l is Layer => !!l);
+    if (!layers.length) return null;
+    for (const l of layers) {
+      const v = this.layerViews.get(l.id);
+      if (!v) continue;
+      g.globalAlpha = target === 'all' ? l.opacity : 1;
+      g.globalCompositeOperation = target === 'all' ? blendOp(l.blend) : 'source-over';
+      g.drawImage(v.canvas, 0, 0);
+    }
+    const m = this.V, d = this.dpr;
+    const pts = [[0, 0], [this.doc.width, 0], [0, this.doc.height], [this.doc.width, this.doc.height]].map(([x, y]) => [d * (m[0] * x + m[2] * y + m[4]), d * (m[1] * x + m[3] * y + m[5])]);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const doc: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+    const sel = this.doc.selection;
+    return { canvas: c, unit: this.view.scale * d, doc, mask: sel ? this.items.selectionMask(sel, m, d, W, H) : null };
+  }
+
+  /** Muestra (o quita, con null) el resultado de la vista previa en lugar de la capa o de todas. */
+  showEffectPreview(result: HTMLCanvasElement | null, target: { layer: string } | 'all' = 'all') {
+    for (const c of this.fxHidden) c.style.visibility = '';
+    this.fxHidden = [];
+    this.fxCanvas?.remove();
+    this.fxCanvas = null;
+    for (const l of this.doc.layers) this.applyLayerStyle(l);
+    if (!result) return;
+    const c = result;
+    Object.assign(c.style, { position: 'absolute', left: '0', top: '0', width: `${this.vw}px`, height: `${this.vh}px`, pointerEvents: 'none' });
+    if (target === 'all') {
+      const vis = this.doc.layers.filter(l => l.visible).map(l => this.layerViews.get(l.id)?.canvas).filter((x): x is HTMLCanvasElement => !!x);
+      vis.forEach(x => { x.style.visibility = 'hidden'; });
+      this.fxHidden = vis;
+      (vis[vis.length - 1] ?? this.stack.firstElementChild!).after(c);
+    } else {
+      const l = this.doc.layer(target.layer), v = l && this.layerViews.get(l.id);
+      if (!l || !v) return;
+      c.style.opacity = String(l.opacity);
+      c.style.mixBlendMode = l.blend;
+      v.canvas.style.visibility = 'hidden';
+      this.fxHidden = [v.canvas];
+      v.canvas.after(c);
+    }
+    this.fxCanvas = c;
+  }
+
+  /** Composición de las capas visibles a resolución de documento (con opacidad y fusión). */
+  rasterizeVisible(): HTMLCanvasElement {
+    const out = document.createElement('canvas');
+    out.width = this.doc.width; out.height = this.doc.height;
+    const g = out.getContext('2d')!;
+    for (const l of this.doc.layers) {
+      if (!l.visible || !l.items.length) continue;
+      const r = this.rasterize([l], 1);
+      g.globalAlpha = l.opacity;
+      g.globalCompositeOperation = blendOp(l.blend);
+      g.drawImage(r, 0, 0);
+    }
     return out;
   }
 
@@ -546,6 +905,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private viewChanged() {
+    // Las líneas provisionales están en coordenadas de pantalla: con otra vista ya no encajan.
+    this.ghosts = [];
     this.paperDirty = true;
     this.viewDirty = true;
     this.emit('view', { scale: this.view.scale, rotation: this.view.rotation, x: this.view.x, y: this.view.y });
@@ -573,12 +934,101 @@ export class CanvasEngine extends Emitter<EngineEvents> {
 
   private abandonJob() { if (this.job) { this.job.it.return(); this.job = null; } }
   private lastMs() { let t = 0; for (const v of this.layerViews.values()) t += v.ms; return t; }
-  private stale(): Layer[] {
-    return this.doc.layers.filter(l => { const v = this.layerViews.get(l.id); return v && (v.dirty || !v.crisp || !v.crisp.equals(this.view)); });
+
+  /** Mismo encuadre salvo un resto de traslación inferior a medio píxel físico (no merece repintar). */
+  private nearView(c: ViewTransform, v: ViewTransform) {
+    const tol = 0.5 / this.dpr;
+    return c.scale === v.scale && c.rotation === v.rotation && Math.abs(c.x - v.x) < tol && Math.abs(c.y - v.y) < tol;
   }
 
-  /** Termina en el acto cualquier repintado pendiente (antes de dibujar o muestrear). */
+  private stale(): Layer[] {
+    // Las capas ocultas no se repintan (al mostrarlas se marcan sucias y entran aquí).
+    return this.doc.layers.filter(l => { const v = this.layerViews.get(l.id); return l.visible && v && (v.dirty || !v.crisp || !this.nearView(v.crisp, this.view)); });
+  }
+
+  // ---------- Coste estimado del repintado ----------
+  // Se estima por los sellos que de verdad se van a dibujar (elementos visibles o en la franja
+  // descubierta al desplazar), no por lo que tardó el último repintado: si antes se veía poco
+  // (zoom grande) y ahora todo, el último tiempo engañaba y se repintaba todo de golpe.
+  private static costCache = new WeakMap<object, number>();
+  private msPerUnit = 0.0015;
+  private costOf(it: Item): number {
+    let c = CanvasEngine.costCache.get(it);
+    if (c === undefined) {
+      if (it.kind === 'stroke') c = 30 + (it.stroke.preset.render.mode === 'smooth' ? it.stroke.points.length * 6 : it.stroke.sets.reduce((a, st) => a + st.count, 0));
+      else if (it.kind === 'group') c = 30 + it.items.reduce((a, i) => a + this.costOf(i), 0);
+      else if (it.kind === 'bitmap') c = 400;
+      else c = 150;
+      CanvasEngine.costCache.set(it, c);
+    }
+    return c;
+  }
+
+  /** Desplazamiento puro (misma escala y giro): se reutilizan los píxeles y sólo se pinta lo descubierto. */
+  private shiftOf(v: LayerView, view: ViewTransform): { dx: number; dy: number } | null {
+    const c = v.crisp;
+    if (!c || v.dirty || c.scale !== view.scale || c.rotation !== view.rotation) return null;
+    const d = this.dpr, dx = Math.round((view.x - c.x) * d), dy = Math.round((view.y - c.y) * d);
+    if (Math.abs(dx) >= this.back.width * 0.7 || Math.abs(dy) >= this.back.height * 0.7) return null;
+    return { dx, dy };
+  }
+
+  /** Rectángulos (px físicos) que hay que pintar y la vista con que se pintan. */
+  private plan(v: LayerView, view: ViewTransform): { view: ViewTransform; regions: Rect[]; shift: { dx: number; dy: number } | null } {
+    const W = this.back.width, H = this.back.height;
+    const sh = this.shiftOf(v, view);
+    if (!sh) return { view, regions: [{ x0: 0, y0: 0, x1: W, y1: H }], shift: null };
+    const eff = v.crisp!.clone();
+    eff.x += sh.dx / this.dpr;
+    eff.y += sh.dy / this.dpr;
+    const regions: Rect[] = [];
+    if (sh.dx > 0) regions.push({ x0: 0, y0: 0, x1: sh.dx, y1: H });
+    if (sh.dx < 0) regions.push({ x0: W + sh.dx, y0: 0, x1: W, y1: H });
+    // La franja horizontal no repite la esquina ya cubierta por la vertical (pintar dos veces acumularía alfa).
+    const xa = sh.dx > 0 ? sh.dx : 0, xb = sh.dx < 0 ? W + sh.dx : W;
+    if (sh.dy > 0) regions.push({ x0: xa, y0: 0, x1: xb, y1: sh.dy });
+    if (sh.dy < 0) regions.push({ x0: xa, y0: H + sh.dy, x1: xb, y1: H });
+    return { view: eff, regions, shift: sh };
+  }
+
+  private regionBounds(view: ViewTransform, r: Rect): AABB {
+    const d = this.dpr;
+    const pts = [view.toDoc(r.x0 / d, r.y0 / d), view.toDoc(r.x1 / d, r.y0 / d), view.toDoc(r.x0 / d, r.y1 / d), view.toDoc(r.x1 / d, r.y1 / d)];
+    return { minX: Math.min(...pts.map(p => p.x)), minY: Math.min(...pts.map(p => p.y)), maxX: Math.max(...pts.map(p => p.x)), maxY: Math.max(...pts.map(p => p.y)) };
+  }
+
+  /** ms estimados para repintar estas capas con esta vista. */
+  private estimate(layers: Layer[], view: ViewTransform): number {
+    let units = 0;
+    for (const l of layers) {
+      const v = this.layerViews.get(l.id);
+      if (!v) continue;
+      const pl = this.plan(v, view);
+      for (const r of pl.regions) {
+        const b = this.regionBounds(pl.view, r);
+        for (const it of l.items) if (!(it.bounds.maxX < b.minX || it.bounds.minX > b.maxX || it.bounds.maxY < b.minY || it.bounds.minY > b.maxY)) units += this.costOf(it);
+      }
+    }
+    return units * this.msPerUnit;
+  }
+
+  /** Termina en el acto cualquier repintado pendiente (antes de muestrear colores de todas las capas). */
   finishRendering() { if (this.stale().length || this.job) this.rerender(true, true); }
+
+  /**
+   * Deja al día sólo una capa (la que se va a pintar): las demás siguen
+   * repintándose por partes sin bloquear el primer trazo.
+   */
+  finishLayer(id: string) {
+    const l = this.doc.layer(id);
+    if (!l || !this.stale().includes(l)) return;
+    this.abandonJob();
+    const it = this.renderSteps([l], this.view.clone());
+    this.sliceBudget = Infinity;
+    while (!it.next().done) { /* hasta el final */ }
+    this.sliceBudget = SLICE_MS;
+    if (this.stale().length) this.rerender(false);
+  }
 
   /** Repinta todas las capas ya (síncrono). */
   renderAll() { for (const v of this.layerViews.values()) v.dirty = true; this.rerender(true, true); }
@@ -587,53 +1037,75 @@ export class CanvasEngine extends Emitter<EngineEvents> {
 
   private rerender(preferSync: boolean, force = false) {
     this.abandonJob();
-    const layers = this.stale();
+    // La capa activa primero: es donde se va a dibujar.
+    const layers = this.stale().sort((a, b) => Number(b.id === this.doc.activeId) - Number(a.id === this.doc.activeId));
     if (!layers.length) return;
-    this.job = { it: this.renderSteps(layers, this.view.clone()), view: this.view.clone() };
-    const cost = layers.reduce((t, l) => t + (this.layerViews.get(l.id)?.ms ?? 0), 0);
-    if (force || (preferSync && cost < 40)) {
+    const view = this.view.clone();
+    this.job = { it: this.renderSteps(layers, view), view };
+    if (force || (preferSync && this.estimate(layers, view) < 40)) {
       this.sliceBudget = Infinity;
       while (this.job && !this.job.it.next().done) { /* hasta el final */ }
       this.sliceBudget = SLICE_MS;
     } else this.requestFrame();
   }
 
+  /** Transformación CSS que encaja el contenido pintado (vista `crisp`) con la vista actual. */
+  private layerTransform(v: LayerView) {
+    v.canvas.style.transform = !v.crisp || v.crisp.equals(this.view) ? '' : `matrix(${multiply(this.V, invert(v.crisp.matrix())).join(',')})`;
+  }
+
   private *renderSteps(layers: Layer[], view: ViewTransform): Generator<void, void> {
-    const ctx = this.backCtx, d = this.dpr, m = view.matrix();
-    const bounds = view.visibleDocBounds(this.vw, this.vh);
+    const ctx = this.backCtx, d = this.dpr;
     let sliced = false, total = 0;
     for (const layer of layers) {
       const v = this.layerViews.get(layer.id);
       if (!v) continue;
-      let work = 0, slice = performance.now();
+      const pl = this.plan(v, view);
+      const m = pl.view.matrix();
+      let work = 0, units = 0, slice = performance.now();
       ctx.save();
       try {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, this.back.width, this.back.height);
-        ctx.setTransform(d * m[0], d * m[1], d * m[2], d * m[3], d * m[4], d * m[5]);
-        ctx.beginPath();
-        ctx.rect(0, 0, this.doc.width, this.doc.height);
-        ctx.clip();
-        ctx.setTransform(d, 0, 0, d, 0, 0);
-        for (const it of layer.items) {
-          if (it.bounds.maxX < bounds.minX || it.bounds.minX > bounds.maxX || it.bounds.maxY < bounds.minY || it.bounds.minY > bounds.maxY) continue;
-          this.items.renderItem(ctx, it, m, d);
-          const now = performance.now();
-          if (now - slice > this.sliceBudget) { work += now - slice; sliced = true; yield; slice = performance.now(); }
+        // Desplazamiento: se reutiliza lo ya pintado y sólo se rellenan las franjas nuevas.
+        if (pl.shift) ctx.drawImage(v.canvas, pl.shift.dx, pl.shift.dy);
+        for (const r of pl.regions) {
+          const b = this.regionBounds(pl.view, r);
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.beginPath();
+          ctx.rect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+          ctx.clip();
+          ctx.setTransform(d * m[0], d * m[1], d * m[2], d * m[3], d * m[4], d * m[5]);
+          ctx.beginPath();
+          ctx.rect(0, 0, this.doc.width, this.doc.height);
+          ctx.clip();
+          ctx.setTransform(d, 0, 0, d, 0, 0);
+          try {
+            for (const it of layer.items) {
+              if (it.bounds.maxX < b.minX || it.bounds.minX > b.maxX || it.bounds.maxY < b.minY || it.bounds.minY > b.maxY) continue;
+              this.items.renderItem(ctx, it, m, d);
+              units += this.costOf(it);
+              const now = performance.now();
+              if (now - slice > this.sliceBudget) { work += now - slice; sliced = true; yield; slice = performance.now(); }
+            }
+          } finally { ctx.restore(); }
         }
       } finally { ctx.restore(); }
       work += performance.now() - slice;
+      // Aprende el coste real por sello de este dispositivo (media móvil).
+      if (units > 3000 && work > 2) this.msPerUnit = this.msPerUnit * 0.7 + (work / units) * 0.3;
       // Intercambio: el lienzo de la capa pasa a mostrar el resultado nuevo.
       if (v.clipped) { v.ctx.restore(); v.clipped = false; }
       v.ctx.setTransform(1, 0, 0, 1, 0, 0);
       v.ctx.globalCompositeOperation = 'copy';
       v.ctx.drawImage(this.back, 0, 0);
       v.ctx.globalCompositeOperation = 'source-over';
+      v.crisp = pl.view.clone();
       this.applyClip(v);
-      v.crisp = view.clone();
       v.dirty = false;
       v.ms = work;
-      v.canvas.style.transform = '';
+      this.layerTransform(v);
       total += work;
     }
     this.job = null;
@@ -645,19 +1117,38 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (this.viewDirty) {
       this.viewDirty = false;
       if (this.job && !this.job.view.equals(this.view)) this.abandonJob();
-      for (const v of this.layerViews.values()) {
-        if (v.crisp && !v.crisp.equals(this.view)) v.canvas.style.transform = `matrix(${multiply(this.V, invert(v.crisp.matrix())).join(',')})`;
-      }
-      if (!this.job && this.stale().length) {
-        if (this.lastMs() <= LIVE_RENDER_BUDGET_MS) this.rerender(true, true);
+      for (const v of this.layerViews.values()) this.layerTransform(v);
+      const stale = this.stale();
+      if (!this.job && stale.length) {
+        if (this.estimate(stale, this.view) <= LIVE_RENDER_BUDGET_MS) this.rerender(true, true);
         else {
           clearTimeout(this.settleTimer);
           this.settleTimer = window.setTimeout(() => { if (!this.isDrawing && !this.nav.active) this.rerender(false); else { this.viewDirty = true; this.requestFrame(); } }, SETTLE_MS);
         }
       }
     }
-    if (this.job && this.job.it.next().done === false) this.requestFrame();
+    if (this.job) {
+      // Con un trazo esperando, se dedica más tiempo por fotograma a terminar su capa.
+      this.sliceBudget = this.pending ? 28 : SLICE_MS;
+      if (this.job.it.next().done === false) this.requestFrame();
+      this.sliceBudget = SLICE_MS;
+    }
+    if (this.pending) { this.flushPending(false); if (this.pending) this.requestFrame(); }
+    if (this.ghosts.length) { const st = new Set(this.stale().map(l => l.id)); this.ghosts = this.ghosts.filter(g => st.has(g.layer)); }
     this.drawLive();
+  }
+
+  private checkerPattern: CanvasPattern | null = null;
+  private checker(ctx: CanvasRenderingContext2D) {
+    if (!this.checkerPattern) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 16;
+      const g = c.getContext('2d')!;
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, 16, 16);
+      g.fillStyle = '#e4e1ec'; g.fillRect(0, 0, 8, 8); g.fillRect(8, 8, 8, 8);
+      this.checkerPattern = ctx.createPattern(c, 'repeat')!;
+    }
+    return this.checkerPattern;
   }
 
   private drawPaper() {
@@ -670,9 +1161,19 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
     ctx.shadowBlur = 24 * d;
     ctx.shadowOffsetY = 6 * d;
-    ctx.fillStyle = this.theme.paper;
+    const bg = this.doc.settings.background;
+    ctx.fillStyle = bg ?? '#ffffff';
     ctx.fillRect(0, 0, this.doc.width, this.doc.height);
     ctx.restore();
+    if (!bg) {
+      // Fondo transparente: damero de tamaño fijo en pantalla, recortado al documento.
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, this.doc.width, this.doc.height); ctx.clip();
+      ctx.setTransform(d, 0, 0, d, 0, 0);
+      ctx.fillStyle = this.checker(ctx);
+      ctx.fillRect(0, 0, this.vw, this.vh);
+      ctx.restore();
+    }
     ctx.strokeStyle = this.theme.frame;
     ctx.lineWidth = 1 / this.view.scale;
     ctx.strokeRect(0, 0, this.doc.width, this.doc.height);
@@ -758,9 +1259,26 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       this.drawAssists(ctx);
       return;
     }
+    // Líneas provisionales mientras la capa termina de repintarse.
+    const provisional = [...this.ghosts];
+    if (this.pending) provisional.push({ layer: this.pending.layer, points: this.pending.points, color: this.color, width: Math.max(1, this.preset.size.size * this.view.scale * 0.8), erase: this._mode === 'erase' });
+    for (const g of provisional) {
+      const pts = g.points;
+      ctx.save();
+      ctx.strokeStyle = g.erase ? 'rgba(255,255,255,0.8)' : g.color;
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = g.width;
+      ctx.lineCap = ctx.lineJoin = 'round';
+      ctx.beginPath();
+      pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      if (pts.length === 1) ctx.lineTo(pts[0].x + 0.01, pts[0].y);
+      ctx.stroke();
+      ctx.restore();
+    }
     this.drawSelection(ctx);
     this.drawAssists(ctx);
     if (this.handler?.overlay) { ctx.save(); this.handler.overlay(ctx); ctx.restore(); }
+    if (this.picking) { this.drawLoupe(ctx); return; }
     const h = this.hover;
     if (h && h.type !== 'touch' && (this._mode === 'paint' || this._mode === 'erase') && this.primaryMode() === 'draw' && !this.nav.active) {
       const r = Math.max(1.5, (this.preset.size.size * this.view.scale) / 2);

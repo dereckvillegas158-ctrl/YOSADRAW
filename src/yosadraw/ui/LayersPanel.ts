@@ -1,5 +1,7 @@
 import type { Layer } from '../doc/Document';
-import type { LayerBlend } from '../doc/items';
+import type { Item, LayerBlend } from '../doc/items';
+import { ItemRenderer } from '../doc/ItemRenderer';
+import type { Mat } from '../engine/ViewTransform';
 import type { CanvasEngine } from '../engine';
 import { h, toast } from './dom';
 
@@ -15,6 +17,8 @@ const I = {
   eye: svg('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
   eyeOff: svg('<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7c1.7 0 3.2-.5 4.5-1.2"/>'),
   lock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+  /** Alfa bloqueado: damero (transparencia) con candado. */
+  alpha: svg('<path d="M4 4h6v6H4zM10 10h6v6h-6z" fill="currentColor" stroke="none" opacity=".55"/><rect x="4" y="4" width="12" height="12" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1.2"/><path d="M15.5 15v-1.5a2 2 0 0 1 4 0V15"/>'),
   unlock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   dup: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>'),
@@ -72,7 +76,12 @@ export class LayersPanel {
     });
     this.blend.addEventListener('change', () => engine.setLayerProps(d().activeId, { blend: this.blend.value as LayerBlend }));
 
-    engine.on('doc', () => this.render());
+    engine.on('doc', () => {
+      this.render();
+      // Capas que ya no existen (borradas u otro documento): fuera su ráster de miniatura.
+      for (const id of this.raster.keys()) if (!d().layer(id)) this.raster.delete(id);
+      for (const id of this.thumbs.keys()) if (!d().layer(id)) this.thumbs.delete(id);
+    });
     engine.on('history', () => { for (const l of d().layers) this.dirtyThumbs.add(l.id); this.scheduleThumbs(); });
     this.render();
     for (const l of d().layers) this.dirtyThumbs.add(l.id);
@@ -95,22 +104,69 @@ export class LayersPanel {
     return c;
   }
 
+  /**
+   * Miniaturas de capa incrementales: cada capa guarda un ráster pequeño y qué
+   * elementos tiene ya dibujados. Un trazo nuevo sólo pinta ese trazo; deshacer
+   * u otros cambios rehacen la miniatura por tandas sin bloquear la interfaz.
+   * Antes se rasterizaban todas las capas enteras tras cada trazo.
+   */
+  private raster = new Map<string, { canvas: HTMLCanvasElement; count: number; last: Item | null; first: Item | null; doc: object }>();
+  private renderer: { r: ItemRenderer; doc: object } | null = null;
+  private thumbRun = 0;
+
   private scheduleThumbs() {
     clearTimeout(this.thumbTimer);
     this.thumbTimer = window.setTimeout(() => {
       if (this.engine.isDrawing) { this.scheduleThumbs(); return; }
-      const doc = this.engine.doc;
-      for (const id of this.dirtyThumbs) {
-        const l = doc.layer(id), c = this.thumbs.get(id);
-        if (!l || !c) continue;
-        const k = Math.min(c.width / doc.width, c.height / doc.height);
-        const r = this.engine.rasterize([l], k * 2);
-        const g = c.getContext('2d')!;
-        g.clearRect(0, 0, c.width, c.height);
-        g.drawImage(r, (c.width - doc.width * k) / 2, (c.height - doc.height * k) / 2, doc.width * k, doc.height * k);
+      void this.updateThumbs();
+    }, 250);
+  }
+
+  private async updateThumbs() {
+    const run = ++this.thumbRun;
+    const doc = this.engine.doc;
+    if (this.renderer?.doc !== doc) this.renderer = { r: new ItemRenderer(this.engine.painter, doc.width, doc.height), doc };
+    const renderer = this.renderer.r;
+    let slice = performance.now();
+    for (const id of [...this.dirtyThumbs]) {
+      const l = doc.layer(id), c = this.thumbs.get(id);
+      this.dirtyThumbs.delete(id);
+      if (!l || !c) continue;
+      const k = Math.min(c.width / doc.width, c.height / doc.height) * 2;
+      let st = this.raster.get(id);
+      if (!st || st.doc !== doc) {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(doc.width * k)); canvas.height = Math.max(1, Math.round(doc.height * k));
+        st = { canvas, count: 0, last: null, first: null, doc };
+        this.raster.set(id, st);
       }
-      this.dirtyThumbs.clear();
-    }, 350);
+      const items = l.items;
+      // ¿Sólo se añadieron elementos encima? Entonces basta con pintar los nuevos.
+      const additive = st.count <= items.length && (st.count === 0 ? st.first === null : items[st.count - 1] === st.last && items[0] === st.first);
+      if (additive && st.count === items.length) { this.blitThumb(c, st.canvas, doc, k); continue; }
+      const g = st.canvas.getContext('2d')!;
+      let from = st.count;
+      if (!additive) { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, st.canvas.width, st.canvas.height); from = 0; }
+      const V: Mat = [k, 0, 0, k, 0, 0];
+      for (let i = from; i < items.length; i++) {
+        renderer.renderItem(g, items[i], V, 1);
+        if (performance.now() - slice > 8) {
+          await new Promise(r => setTimeout(r, 0));
+          slice = performance.now();
+          // Cambió algo mientras tanto: se vuelve a empezar con el estado nuevo.
+          if (run !== this.thumbRun || this.engine.doc !== doc || l.items !== items) { st.count = 0; st.last = st.first = null; this.dirtyThumbs.add(id); this.scheduleThumbs(); return; }
+        }
+      }
+      st.count = items.length; st.last = items[items.length - 1] ?? null; st.first = items[0] ?? null;
+      this.blitThumb(c, st.canvas, doc, k);
+    }
+  }
+
+  private blitThumb(c: HTMLCanvasElement, src: HTMLCanvasElement, doc: { width: number; height: number }, k2: number) {
+    const k = k2 / 2;
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, c.width, c.height);
+    g.drawImage(src, (c.width - doc.width * k) / 2, (c.height - doc.height * k) / 2, doc.width * k, doc.height * k);
   }
 
   private row(l: Layer, active: boolean): HTMLElement {
@@ -126,6 +182,11 @@ export class LayersPanel {
       input.focus(); input.select();
     });
     const vis = h('button', { type: 'button', class: 'icon sm', 'aria-pressed': String(l.visible), title: l.visible ? 'Ocultar capa' : 'Mostrar capa', 'aria-label': l.visible ? `Ocultar ${l.name}` : `Mostrar ${l.name}`, html: l.visible ? I.eye : I.eyeOff, on: { click: (ev: Event) => { ev.stopPropagation(); e.setLayerProps(l.id, { visible: !l.visible }, undefined); } } });
+    const alpha = h('button', {
+      type: 'button', class: 'icon sm alpha-lock', 'aria-pressed': String(l.alphaLock), title: l.alphaLock ? 'Desbloquear alfa (/)' : 'Bloquear alfa: pintar sólo sobre lo que ya hay (/)',
+      'aria-label': l.alphaLock ? `Desbloquear alfa de ${l.name}` : `Bloquear alfa de ${l.name}`, html: I.alpha,
+      on: { click: (ev: Event) => { ev.stopPropagation(); e.setLayerProps(l.id, { alphaLock: !l.alphaLock }); } },
+    });
     const lock = h('button', { type: 'button', class: 'icon sm', 'aria-pressed': String(l.locked), title: l.locked ? 'Desbloquear capa' : 'Bloquear capa', 'aria-label': l.locked ? `Desbloquear ${l.name}` : `Bloquear ${l.name}`, html: l.locked ? I.lock : I.unlock, on: { click: (ev: Event) => { ev.stopPropagation(); e.setLayerProps(l.id, { locked: !l.locked }); } } });
     return h('li', {
       class: `layer-row${l.visible ? '' : ' hidden-layer'}`, role: 'option', tabindex: '0', 'aria-selected': String(active),
@@ -133,7 +194,7 @@ export class LayersPanel {
         click: () => e.setActiveLayer(l.id),
         keydown: (ev: Event) => { const k = (ev as KeyboardEvent).key; if (k === 'Enter' || k === ' ') { ev.preventDefault(); e.setActiveLayer(l.id); } },
       },
-    }, vis, h('span', { class: 'layer-thumb' }, this.thumb(l.id)), h('span', { class: 'layer-meta' }, name, h('span', { class: 'layer-sub' }, `${Math.round(l.opacity * 100)}% · ${BLENDS.find(b => b.value === l.blend)?.label}${l.items.length ? '' : ' · vacía'}`)), lock);
+    }, vis, h('span', { class: 'layer-thumb' }, this.thumb(l.id)), h('span', { class: 'layer-meta' }, name, h('span', { class: 'layer-sub' }, `${Math.round(l.opacity * 100)}% · ${BLENDS.find(b => b.value === l.blend)?.label}${l.alphaLock ? ' · alfa bloqueado' : ''}${l.items.length ? '' : ' · vacía'}`)), alpha, lock);
     void d;
   }
 

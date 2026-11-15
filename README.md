@@ -2,8 +2,8 @@
 
 Aplicación de dibujo en **TypeScript + Canvas 2D** con un motor de pinceles completo, un
 estabilizador de trazos de cuatro etapas y un lienzo de alta resolución con zoom, giro y
-desplazamiento fluidos. Funciona en el navegador y como **aplicación de escritorio para
-Windows x64** (Electron).
+desplazamiento fluidos. Funciona en el navegador, como **aplicación de escritorio para
+Windows x64** (Electron) y como **app de Android** (APK, Capacitor) adaptada a dedo y lápiz.
 
 ## Empezar
 
@@ -27,8 +27,8 @@ npm run desktop:dev    # la app en Electron, con recarga en caliente
 
 | Comando | Resultado en `release/` | Dónde se puede generar |
 |---|---|---|
-| `npm run dist:win` | `YOSADRAW-Setup-1.0.0-x64.exe` (instalador) y `YOSADRAW-1.0.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
-| `npm run dist:win:zip` | `YOSADRAW-1.0.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
+| `npm run dist:win` | `YOSADRAW-Setup-1.2.0-x64.exe` (instalador) y `YOSADRAW-1.2.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
+| `npm run dist:win:zip` | `YOSADRAW-1.2.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
 | `npm run dist:win:dir` | `release/win-unpacked/YOSADRAW.exe` | Cualquier sistema |
 
 El workflow `.github/workflows/build-windows.yml` compila el instalador y la versión portable
@@ -49,6 +49,52 @@ Notas:
   cargar y guardar la biblioteca, exportar e importar con diálogos nativos, y la versión.
 - No se puede navegar fuera de la app. Los enlaces https se abren en el navegador del sistema.
 - Instancia única: abrir YOSADRAW de nuevo enfoca la ventana existente.
+
+## App de Android (APK)
+
+| Comando | Resultado |
+|---|---|
+| `npm run apk` | `android/app/build/outputs/apk/release/app-release.apk` (firmado) |
+| `npm run apk:debug` | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| `npm run android:sync` | compila la web y la copia al proyecto `android/` |
+| `npm run android:open` | abre el proyecto en Android Studio |
+
+Requisitos para compilar: JDK 21 y el SDK de Android (plataforma 36, build-tools 35/36), con
+`sdk.dir` en `android/local.properties` o `ANDROID_HOME`. Android 7.0 (API 24) o superior.
+
+**Firma.** `android/keystore.properties` (no se sube a git) apunta a la clave `.jks`:
+```
+storeFile=yosadraw-release.jks
+storePassword=…
+keyAlias=yosadraw
+keyPassword=…
+```
+Sin ese archivo, la release se firma con la clave de depuración. Guarda la clave: las
+actualizaciones solo se instalan encima si van firmadas con la misma.
+
+### Qué cambia en el teléfono
+- **Interfaz**: barra superior compacta (deshacer, rehacer, zoom, exportar, color, «Más» y paneles);
+  herramientas abajo en vertical y a la izquierda en horizontal; capas, color y pinceles en una
+  hoja inferior que se cierra deslizando; diálogos y editor de pinceles a pantalla completa;
+  respeta muescas y barra de gestos. En tableta se mantiene el diseño de escritorio con controles
+  táctiles más grandes.
+- **Deslizadores rápidos** de tamaño y opacidad junto al borde del lienzo (lado configurable).
+- **Dedo**: *Automático* (dibuja hasta que se usa un lápiz; luego sólo navega y la palma no pinta),
+  *Dibuja* o *Sólo navega*. Dos dedos: mover, ampliar y girar a la vez. Toque con dos dedos:
+  deshacer; con tres: rehacer. Un segundo dedo que llega tarde a un trazo largo se ignora.
+- **Mantener pulsado** con el dedo: cuentagotas con lupa; se arrastra para afinar.
+- **Lápiz** (S Pen, lápices activos USI): presión, inclinación y vista previa del pincel al pasar por
+  encima. Botón lateral: cuentagotas. Extremo borrador: borra y al levantarlo vuelve la herramienta.
+- **Botón Atrás**: cierra el diálogo, menú o panel abierto; sin nada abierto, envía la app al fondo.
+- **Guardado**: biblioteca y preferencias en archivos privados de la app (se guardan también al
+  salir al fondo).
+- **Exportar**: las imágenes van a *Imágenes/YOSADRAW* (aparecen en la galería) y los PDF a
+  *Descargas/YOSADRAW*, con MediaStore (sin permisos en Android 10+). Los datos pasan al lado nativo
+  por trozos de 1,5 MB, así que un TIFF de 50 MB no bloquea el puente. Al terminar: **Abrir** y
+  **Compartir**.
+
+Código: `src/yosadraw/platform/android.ts` (puente JS), `src/yosadraw/ui/Mobile.ts` y `mobile.css`
+(interfaz), `android/app/src/main/java/com/yosadraw/app/YosaFilesPlugin.java` (archivos nativos).
 
 ## Arquitectura
 
@@ -182,6 +228,113 @@ del bote y una selección levantada para transformarla, porque son operaciones d
    `tools/handlers/` (`down`/`move`/`up`, `overlay` para sus guías, `key` para Intro/Esc).
 3. Para modificar el documento, crea elementos con `doc.item(...)` y ejecuta un comando
    (`engine.exec(doc.cmdAddItems(...))`). Deshacer y rehacer funcionan solos.
+
+## Rendimiento
+Medido con un documento de 4096 × 3072 con 400 trazos y 1 millón de sellos, en Chromium con la CPU
+4 veces más lenta (equivalente a un teléfono de gama media). «Bloqueo» = la tarea más larga del hilo
+de la interfaz.
+
+| Operación | Antes (1.1.0) | Ahora | Por qué |
+|---|---|---|---|
+| Zoom con dos dedos | bloqueo de 4,7 s | 0,07 s | el coste se estima por los sellos visibles (antes, por el último repintado) y lo caro se repinta por partes |
+| Desplazar con dos dedos | 1,5 s | 0,1 s | se reutilizan los píxeles y sólo se pintan las franjas descubiertas; zona muerta de 4 % de zoom y 6° de giro |
+| Empezar un trazo tras un zoom | 1,4 s | 0,09 s | sólo espera su capa; si es cara, el trazo se dibuja provisional y se aplica cuando la capa está lista |
+| Después de cada trazo | 0,3 s | 0 | miniaturas de capa incrementales (sólo el trazo nuevo) |
+| Copia de recuperación | 3,3 s | 0,06 s | ZIP en un Web Worker, sin miniatura, serialización por tandas |
+| Guardar | 3,4 s | 0 | miniatura compuesta desde la pantalla o rasterizada por tandas |
+| Abrir proyecto | 1,3 s | 0,8 s | descompresión en el worker |
+| Arranque (JS principal) | 1,39 MB | 0,34 MB | el codificador de exportación (PSD, WebP) se carga al exportar por primera vez |
+| Memoria | 144 MB | 97 MB | |
+
+## Efectos
+Botón ✦ **Efectos** en la barra superior (en el teléfono, en «Más»), o **Ctrl+Mayús+F**. Se elige un
+efecto, se ajusta con **vista previa en vivo** sobre el lienzo y se aplica a:
+- **la capa activa**: su contenido se sustituye por el resultado (un solo paso deshacible);
+- **el lienzo completo**: la composición de las capas visibles se procesa en una capa nueva
+  «Efecto · …» y las de origen se ocultan (no se pierde nada).
+
+Si hay selección, sólo se aplica dentro. Si la capa tiene el **alfa bloqueado**, se conserva su
+transparencia. Cada efecto tiene además **Intensidad del efecto** (mezcla con el original), botón
+**Antes / después** (mantener pulsado) y **Restablecer** (doble clic en un deslizador = su valor por
+defecto). Los últimos ajustes de cada efecto se recuerdan.
+
+| Categoría | Efectos |
+|---|---|
+| Color | Tono/saturación/luminosidad (con «Colorear»), Cambiar un tono (rango de tono → otro tono), Brillo y contraste, Exposición y gamma, Niveles, Equilibrio de color (sombras/medios/luces), Temperatura y tinte, Intensidad (vibrance), Filtro de color (multiplicar/teñir/superponer/trama), Mapa de degradado, Blanco y negro, Sepia, Invertir, Posterizar, Umbral |
+| Desenfoque | Gaussiano, Movimiento, Radial (zoom), Giratorio, Lente (bokeh), Miniatura (tilt-shift) |
+| Nitidez | Máscara de enfoque, Claridad (contraste local) |
+| Estilizar | Aberración cromática (radial o lineal), Resplandor (bloom), Sombra paralela, Contorno exterior, Viñeta, Semitono (CMYK o mono), Pixelar, Detectar bordes, Relieve, Pintura al óleo (Kuwahara), Glitch, Pantalla CRT |
+| Distorsión | Ondas, Remolino, Abultar/pellizcar |
+| Textura | Ruido/grano, Tramado (Bayer), Textura de papel |
+
+**Cómo están hechos (y por qué van rápido)**
+- Todo en la **GPU con WebGL2** (`src/yosadraw/effects/`): cada efecto es una cadena de shaders.
+- Texturas en **alfa premultiplicado**: los desenfoques no dejan halos oscuros en los bordes de los trazos.
+- **Desenfoque gaussiano separable con pirámide**: para radios grandes se reduce la imagen a la mitad
+  las veces necesarias, así un radio de 200 px cuesta casi lo mismo que uno de 6. El bokeh y la pintura
+  al óleo también trabajan a menor resolución cuando el radio es grande.
+- Las medidas están en **px de documento**: la vista previa (a resolución de pantalla, con la escala de
+  la vista) se ve igual que el resultado final (a resolución completa).
+- Documentos grandes: **mosaicos de 2048 px** con un margen igual al alcance del efecto, alineados a
+  64 px para que las reducciones caigan en la misma rejilla; probado que el resultado con y sin
+  mosaicos coincide (diferencia ≤ 2/255). Fuera de la imagen todo es transparente.
+- Vista previa: la imagen de origen se guarda mientras no cambian la vista ni el documento, y se usan
+  dos lienzos alternos; al cerrar se libera la memoria de vídeo.
+
+## Bloquear alfa
+Botón con damero en cada capa, o tecla **/**. Con el alfa bloqueado, lo que se pinta (pinceles, bote,
+degradado, formas, rellenar selección) sólo cambia el color de lo que ya hay: la transparencia no cambia
+(`source-atop`, exacto con fusión normal; con otras fusiones se recorta por el alfa de la capa). Lo
+pintado así queda marcado y sigue igual al repintar, al reabrir y al exportar, aunque luego se
+desbloquee la capa. El borrador y «Borrar selección» no actúan en una capa con el alfa bloqueado
+(cambiarían su transparencia). Se guarda en el `.yosa` y en el PSD («bloquear píxeles transparentes»).
+
+## Proyectos y galería
+Al abrir YOSADRAW aparece la **galería**: miniaturas grandes, nombre, fecha de modificación,
+resolución, formato, capas e indicador **Sin guardar** (hay una copia de recuperación más nueva que
+lo guardado).
+
+- **Secciones**: Todos, Recientes (14 días), Favoritos, Carpetas y Papelera (30 días).
+- **Búsqueda** por nombre, filtros por orientación y «Sin guardar», orden por modificado, nombre,
+  creado o tamaño.
+- **Acciones de cada proyecto** (menú ⋯, clic derecho o mantener pulsado): abrir, renombrar, duplicar,
+  favorito, mover a carpeta, exportar imagen, exportar `.yosa`, historial de versiones, información
+  y eliminar. En la papelera: restaurar o eliminar definitivamente; también se puede vaciar.
+- **Importar**: archivos `.yosa` (siempre como proyecto nuevo) e imágenes PNG, JPEG o WebP (quedan
+  como capa editable, con su transparencia).
+- **Nuevo proyecto**: nombre, ancho, alto, DPI, fondo blanco o transparente, perfil de color (sRGB,
+  Display P3, gris) y plantillas (móvil, cuadrado, A4, A5, carta, cómic B5, 4:5, 4K, 4:3, icono).
+  Límite: 8192 px por lado y 50 MP. El fondo, el DPI y el perfil se usan al exportar.
+
+### Guardar sin perder nada
+| Mecanismo | Qué hace |
+|---|---|
+| **Guardar** (Ctrl+S) | Escribe el proyecto. Lo que había antes pasa al **historial de versiones** (15 por proyecto). |
+| **Guardar como** (Ctrl+Mayús+S) | Crea una copia con otro nombre y sigue en la copia; el original no cambia. Los nombres nunca se repiten («Retrato (2)»). |
+| **Guardado automático** | Cada 2 min con cambios y sin estar dibujando (se puede desactivar en el menú del proyecto). Guarda una versión en el historial como mucho cada 15 min, para no desplazar las de los guardados manuales. |
+| **Copia de recuperación** | Unos segundos después de dejar de dibujar (más espaciada en documentos muy grandes), al cambiar de pestaña, al pasar la app a segundo plano (Android) y al cerrar. Si la app se cierra de golpe, la galería ofrece **Recuperar cambios** o **Abrir lo guardado**. |
+| **Escritura segura** | Archivo temporal + fsync + renombrado (escritorio y Android) o transacción de IndexedDB (web): nunca queda un proyecto a medias. |
+| **Sin sobrescribir por accidente** | Cada guardado lleva una revisión. Si otra ventana o pestaña guardó antes, se pregunta: *Guardar como copia*, *Sobrescribir* (lo otro pasa al historial) o *Cancelar*. Salir con cambios pregunta *Guardar / No guardar / Cancelar*; cerrar la ventana del escritorio también. |
+| **Papelera** | Eliminar no borra: 30 días para restaurar. |
+| **Índice reconstruible** | Si el índice de la galería se pierde o se daña, se rehace leyendo los proyectos. |
+
+### Formato nativo `.yosa`
+Un ZIP con `mimetype` (`application/x-yosadraw`), `project.json` (metadatos, capas con nombre,
+visibilidad, bloqueo, opacidad y fusión, elementos editables, selección, pinceles congelados
+deduplicados), `bin/*.bin` (sellos, colores y puntos de cada trazo), `img/*.png` (mapas de bits del
+bote y de la selección levantada, máscaras de la varita y de los recortes) y `thumb.png`. Al reabrir
+todo sigue editable y se ve igual píxel a píxel (comprobado). Los archivos de versiones futuras se
+rechazan con un aviso en vez de abrirse mal.
+
+### Dónde se guardan
+| Versión | Ubicación |
+|---|---|
+| Escritorio (Windows) | `%APPDATA%/YOSADRAW/projects/` |
+| Android | almacenamiento interno de la app (`files/projects`); `.yosa` exportado a *Descargas/YOSADRAW* |
+| Web | IndexedDB del navegador (con almacenamiento persistente solicitado) |
+
+Código: `src/yosadraw/project/` (`format.ts`, `store.ts`, `library.ts`, `session.ts`) y
+`src/yosadraw/ui/` (`Gallery.ts`, `NewProjectDialog.ts`, `modal.ts`, `gallery.css`).
 
 ## Exportación
 Botón **Exportar** (barra superior) o **Ctrl+Mayús+E**. La exportación trabaja sobre una copia

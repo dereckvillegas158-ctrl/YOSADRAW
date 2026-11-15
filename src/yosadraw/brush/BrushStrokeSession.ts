@@ -33,6 +33,8 @@ export interface SessionSurface {
   clip?: HTMLCanvasElement | null;
   /** Copias de simetría (sin la identidad). */
   mirrors?: Mat[];
+  /** Alfa de la capa bloqueado: el trazo sólo cubre lo que ya hay. */
+  atop?: boolean;
 }
 
 export interface FinishedStroke extends PaintStroke { seed: number; bounds: AABB }
@@ -187,7 +189,7 @@ export class BrushStrokeSession {
     const w = r.x1 - r.x0, h = r.y1 - r.y0;
     const fixedGrain = p.grain.enabled && p.grain.mode === 'fixed';
     const clip = this.surf.clip;
-    if (!clip && !this.painter.usesBuffer(p, this.tool)) {
+    if (!clip && !this.painter.usesBuffer(p, this.tool, !!this.surf.atop)) {
       t.save(); t.setTransform(1, 0, 0, 1, 0, 0);
       t.drawImage(b.buf, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
       t.restore();
@@ -203,7 +205,7 @@ export class BrushStrokeSession {
       if (clip) this.painter.applyClip(b.tmpCtx, clip, r);
       src = b.tmp;
     }
-    this.painter.composite(t, src, r, p, this.tool);
+    this.painter.composite(t, src, r, p, this.tool, !!this.surf.atop);
   }
 
   /** Termina el trazo y lo pinta en su forma final. */
@@ -234,7 +236,7 @@ export class BrushStrokeSession {
     const fr = this.painter.strokeRect(stroke, M, dpr, target.canvas.width, target.canvas.height);
     const rc = this.clampToTarget(unionRect({ ...this.rect }, fr));
     if (!rectEmpty(rc)) this.restore(rc);
-    this.painter.paint(target, stroke, M, dpr, buffers.bufCtx, this.surf.clip);
+    this.painter.paint(target, stroke, M, dpr, buffers.bufCtx, this.surf.clip, !!this.surf.atop);
     return stroke;
   }
 
@@ -242,6 +244,30 @@ export class BrushStrokeSession {
     const t = this.surf.target;
     this.restore({ x0: 0, y0: 0, x1: t.canvas.width, y1: t.canvas.height });
   }
+}
+
+/**
+ * Trazo terminado sin pintarlo (mismos sellos que `BrushStrokeSession.end`):
+ * para aplicar un trazo cuando su capa aún se está repintando. No vale para
+ * pinceles que mezclan color (necesitan leer el lienzo).
+ */
+export function finishStrokeOffline(preset: BrushPreset, color: string, tool: StrokeTool, seed: number, docPts: StrokePoint[], mirrors: Mat[]): FinishedStroke {
+  const sets: DabSet[] = [];
+  let total = 0;
+  [null, ...mirrors].forEach((m, i) => {
+    const pts = m ? docPts.map(p => ({ ...p, ...applyMat(m, p.x, p.y) })) : docPts;
+    const a = new DabGenerator(preset, seed + i * 7919);
+    for (const p of pts) a.push(p);
+    a.finish();
+    if (i === 0) total = a.length;
+    const b = new DabGenerator(preset, seed + i * 7919, { totalLength: a.length });
+    for (const p of pts) b.push(p);
+    b.finish();
+    sets.push({ dabs: b.dabs.trimmed(), count: b.dabs.count });
+  });
+  const stroke: FinishedStroke = { preset, color, tool, seed, sets, points: docPts, total, mirrors: mirrors.length ? mirrors : undefined, bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 } };
+  stroke.bounds = strokeBounds(stroke);
+  return stroke;
 }
 
 /** Caja envolvente en coordenadas de documento. */
