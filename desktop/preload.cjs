@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('yosadraw', {
   version: versionArg ? versionArg.split('=')[1] : '',
   loadLibrary: () => ipcRenderer.invoke('library:load'),
   saveLibrary: json => ipcRenderer.invoke('library:save', String(json)),
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: json => ipcRenderer.invoke('settings:save', String(json)),
   exportFile: (name, content) => ipcRenderer.invoke('file:export', String(name), String(content)),
   importFiles: () => ipcRenderer.invoke('file:import'),
 });

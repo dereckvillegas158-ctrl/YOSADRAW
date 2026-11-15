@@ -28,7 +28,7 @@ export class Thumbnails {
     view.scale = scale;
     const pts = sampleStroke(cssW / scale, cssH / scale, Math.max(p.size.size * 0.6, 10 / scale));
     if (this.scratch.canvas.width < c.width || this.scratch.canvas.height < c.height) { this.scratch.canvas.width = c.width; this.scratch.canvas.height = c.height; }
-    this.painter.paint(ctx, buildStroke(p, pts, 11, color), view, dpr, this.scratch);
+    this.painter.paint(ctx, buildStroke(p, pts, 11, color), view.matrix(), dpr, this.scratch);
     if (this.painter.ready(p)) {
       this.cache.set(key, c);
       if (this.cache.size > 200) this.cache.delete(this.cache.keys().next().value!);

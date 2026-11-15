@@ -29,6 +29,7 @@ const MIME = {
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 const libraryFile = () => path.join(app.getPath('userData'), 'brushes.json');
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 const sanitize = name => String(name || 'pinceles.yosabrush').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120);
 
 async function writeAtomic(file, content) {
@@ -57,6 +58,17 @@ function registerIpc() {
     JSON.parse(json); // nunca escribir algo que no se pueda volver a leer
     try { await fs.copyFile(libraryFile(), `${libraryFile()}.bak`); } catch { /* primera vez */ }
     await writeAtomic(libraryFile(), json);
+  });
+
+  ipcMain.handle('settings:load', async () => {
+    try { const text = await fs.readFile(settingsFile(), 'utf8'); JSON.parse(text); return text; }
+    catch (e) { if (e.code !== 'ENOENT') console.error('No se pudo leer settings.json', e.message); return null; }
+  });
+
+  ipcMain.handle('settings:save', async (_e, json) => {
+    if (typeof json !== 'string' || json.length > 5 * 1024 * 1024) throw new Error('Preferencias no válidas');
+    JSON.parse(json);
+    await writeAtomic(settingsFile(), json);
   });
 
   ipcMain.handle('file:export', async (e, name, content) => {

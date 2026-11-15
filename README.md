@@ -56,30 +56,41 @@ Notas:
 src/
   core/ filters/ input/ render/   estabilizador original + StrokeRenderer + PointerInput
   yosadraw/
+    doc/                          documento (lógica pura, sin interfaz)
+      Document.ts                 capas, elementos, selección y comandos deshacibles + History
+      items.ts                    elementos: trazo, forma, degradado, mapa de bits, borrado, grupo
+      Selection.ts                selecciones combinables (rect., elipse, polígono, máscara, invertida)
+      geometry.ts                 formas, simetría (matrices) y regla
+      flood.ts                    relleno por inundación, dilatar y suavizar bordes
+      ItemRenderer.ts             dibuja elementos con su matriz y su recorte de selección
     brush/                        motor de pinceles (sin interfaz)
       BrushPreset.ts              formato v1, valores por defecto, validación de importaciones
-      schema.ts                   descripción declarativa del editor (secciones y controles)
+      schema.ts                   descripción declarativa del Brush Studio
       dynamics.ts                 presión (curva), inclinación, velocidad y afilado → tamaño/flujo
       DabGenerator.ts             puntos → sellos (Catmull-Rom centrípeta, determinista)
-      StrokePainter.ts            sellos/línea lisa → píxeles: grano, fusión, acumulación, borrador
-      BrushStrokeSession.ts       trazo en vivo: snapshot + búfer, recomposición por rectángulo
+      ColorMixer.ts               mezcla de color por sello (óleo, acuarela húmeda, difuminador)
+      StrokePainter.ts            sellos/línea lisa → píxeles con matriz afín general
+      BrushStrokeSession.ts       trazo en vivo: simetría, recorte, mezcla, recomposición por rectángulo
       TipCache.ts GrainCache.ts   puntas y texturas procedurales o importadas, en caché
-      PressureCurve.ts            curva monótona (Fritsch–Carlson) + tabla de 256 valores
-      BrushLibrary.ts storage.ts  biblioteca: CRUD, importar/exportar, guardado automático
-      builtin.ts                  16 pinceles de fábrica
-    engine/                       lienzo: vista, navegación, historial, render progresivo
-    ui/                           interfaz: App, LibraryPanel, BrushStudio, PreviewPad, controles
+      BrushLibrary.ts storage.ts  biblioteca, pincel por herramienta, migración, guardado
+      builtin.ts                  28 pinceles de fábrica
+    engine/                       lienzo: un <canvas> por capa, vista, navegación, render progresivo
+    tools/                        herramientas
+      registry.ts                 definición de cada herramienta (icono, atajo, propiedades, gestos)
+      handlers/                   selección, bote, degradado, formas, regla, simetría, transformar, cuentagotas
+      ToolManager.ts keymap.ts    activación, ajustes, colores, atajos configurables
+    ui/                           Toolbar, PropertiesBar, LayersPanel, ColorPanel, BrushStudio, diálogos
 desktop/                          proceso principal y preload de Electron
 ```
 
-La interfaz solo habla con el motor a través de su API y sus eventos. El motor de pinceles
-no conoce la interfaz: el lienzo, la vista previa del editor y las miniaturas de la biblioteca
-usan el mismo código de dibujo.
+La interfaz solo habla con el motor a través de su API y sus eventos. El documento y el
+motor de pinceles no conocen la interfaz.
 
 ## Motor de pinceles
 
 Todos los parámetros cambian el comportamiento real del pincel. `tests/brush.test.ts` lo
-comprueba parámetro a parámetro.
+comprueba parámetro a parámetro. Los pinceles se usan desde las herramientas de Dibujo,
+Pintura y Edición, y se editan en el **Brush Studio** (Intro o «Editar pincel…»).
 
 | Sección (editor) | Parámetros |
 |---|---|
@@ -93,6 +104,7 @@ comprueba parámetro a parámetro.
 | Sensibilidad a la presión · *Pressure Sensitivity* | curva editable, presión → tamaño, presión → flujo, presión simulada con ratón |
 | Dinámica de inclinación · *Tilt Dynamics* | umbral, inclinación → tamaño, → flujo, → aplanar la punta |
 | Renderizado del trazo · *Stroke Rendering* | motor (sellos o línea lisa vectorial), acumulación (veladura o acumulativa), 8 modos de fusión |
+| Mezcla de color | color puro, húmedo (óleo/acuarela) o difuminar; recoger color, persistencia, pintura nueva |
 | Estabilización | StreamLine, Stabilization, Motion Filtering y suavizado de presión e inclinación, guardados en cada pincel |
 
 Claves del diseño:
@@ -109,10 +121,12 @@ Claves del diseño:
 ### Biblioteca
 Crear, duplicar, editar en el Brush Studio, guardar o guardar como nuevo, restablecer de
 fábrica, eliminar (con confirmación), importar y exportar archivos `.yosabrush` (JSON
-versionado), y restaurar los pinceles de fábrica. El pincel y el borrador tienen cada uno su
-preset activo. Todo se guarda solo: en un archivo en la app de escritorio y en `localStorage`
-en el navegador. Las importaciones se validan: los campos que faltan se completan, los valores
-fuera de rango se corrigen y las imágenes que no son válidas se descartan.
+versionado), y restaurar los pinceles de fábrica. Cada herramienta de pincel (lápiz, pluma,
+óleo, borrador…) recuerda su propio pincel activo. Todo se guarda solo: en un archivo en la
+app de escritorio y en `localStorage` en el navegador. Las importaciones se validan: los
+campos que faltan se completan, los valores fuera de rango se corrigen y las imágenes que no
+son válidas se descartan. Las bibliotecas guardadas con una versión anterior se migran solas:
+reciben los pinceles y categorías nuevos sin perder los cambios del usuario.
 
 ### Cómo añadir un parámetro nuevo
 1. Añádelo a `BrushPreset` y a `DEFAULT_PRESET`, con su rango en `normalizePreset`.
@@ -121,16 +135,53 @@ fuera de rango se corrigen y las imágenes que no son válidas se descartan.
 
 Los presets antiguos siguen cargando: el campo nuevo toma su valor por defecto.
 
-### Atajos
+## Herramientas
 
-| Acción | Atajo |
-|---|---|
-| Pincel · borrador · mano · rotar | B · E · H · R |
-| Editar el pincel activo | Enter, o doble clic en la biblioteca |
-| Tamaño del pincel | [ · ] |
-| Deshacer · rehacer | Ctrl Z · Ctrl Mayús Z (táctil: toque con dos o tres dedos) |
-| Guardar la biblioteca ya | Ctrl S |
-| Dentro del Brush Studio | Ctrl S guarda · Esc cierra (avisa si hay cambios) |
+La barra de la izquierda agrupa las herramientas por categorías. Cada una tiene un icono,
+un atajo configurable y su propio panel de propiedades en la barra superior. Pulsa
+**⌨ Atajos** para cambiar cualquier atajo; si eliges uno ocupado, se le quita a la otra
+herramienta y se avisa. Pulsa **▦ Personalizar** para mover la barra a la derecha, mostrar
+los nombres, ocultar herramientas o reordenarlas. Las categorías se pliegan haciendo clic en
+su título. Todo se guarda: `settings.json` en escritorio y `localStorage` en el navegador.
+
+| Categoría | Herramienta (atajo) | Qué hace |
+|---|---|---|
+| Dibujo | Lápiz (N) · Pluma (P) · Marcador (K) · Pincel (B) | Herramientas del motor de pinceles; cada una recuerda su pincel, de sus categorías de la biblioteca |
+| Pintura | Aerógrafo (A) · Acuarela (Q) · Óleo (O) | Igual; acuarela húmeda y óleo **mezclan** con el color que hay en la capa |
+| | Bote de pintura (G) | Relleno por inundación a resolución del documento: tolerancia, expandir (cubre el borde suavizado de las líneas), contiguo, muestra de la capa o de todas, bordes suaves, opacidad |
+| | Degradado (Mayús G) | Lineal o radial, de principal a secundario o a transparente; Mayús: ángulos de 15° |
+| Edición | Borrador (E) · Difuminador (S) | El borrador usa cualquier pincel; el difuminador arrastra y funde el color existente |
+| Selección | Rectangular (M) · Elíptica (Mayús M) · Lazo (L) · Varita mágica (W) | Nueva/añadir/restar/intersecar (o Mayús/Alt); lazo libre o poligonal; varita con tolerancia |
+| Geometría | Formas (U) | Rectángulo (con esquinas redondeadas), elipse, línea, polígono, estrella, flecha; relleno, contorno o ambos |
+| | Regla (J) | Los trazos que empiezan cerca siguen la regla exactamente |
+| | Simetría (Y) | Vertical, horizontal, cuadrantes, radial o mandala (2–16 copias), para pinceles y borrador |
+| Transformación | Transformar (V, Ctrl T) | Mover, escalar (Mayús proporción, Alt desde el centro), girar (Mayús 15°), voltear, ±90°. Sin selección transforma la capa **sin rasterizar**; con selección, levanta lo seleccionado |
+| Color | Cuentagotas (I) | Muestra de la capa o de todas, promedio 1–11 px; con cualquier pincel: Alt + clic |
+| Vista | Mano (H) · Rotar vista (R) | Navegación (también Espacio, rueda, dos dedos) |
+
+Otras acciones con atajo configurable: deshacer y rehacer, seleccionar todo (Ctrl A),
+deseleccionar (Ctrl D), invertir (Ctrl Mayús I), borrar la selección (Supr), rellenar la
+selección (Alt Retroceso), nueva capa (Ctrl Mayús N), duplicar (Ctrl J), combinar hacia abajo
+(Ctrl E), intercambiar colores (X), colores por defecto (D), tamaño del pincel ([ ]), editar
+el pincel (Intro), zoom, encajar, 100 % y enderezar la vista.
+
+### Capas
+Hasta 32 capas, con visibilidad, bloqueo, nombre (doble clic), opacidad, 11 modos de fusión,
+orden, duplicar, combinar hacia abajo (conserva opacidad y fusión sin rasterizar), vaciar y
+eliminar. Todo pasa por el historial. Cada capa es un `<canvas>` propio, así que el navegador
+las compone con su modo de fusión exacto.
+
+### Cómo se mantiene la calidad
+Los trazos, formas y degradados son datos vectoriales con su propia matriz: transformar una
+capa entera no pierde calidad. Solo son píxeles (a la resolución del documento) el relleno
+del bote y una selección levantada para transformarla, porque son operaciones de píxeles.
+
+### Cómo añadir una herramienta
+1. Añade su definición en `tools/registry.ts`: id, categoría, icono, atajo y `props()`.
+2. Si actúa sobre el lienzo con sus propios gestos, implementa un `ToolHandler` en
+   `tools/handlers/` (`down`/`move`/`up`, `overlay` para sus guías, `key` para Intro/Esc).
+3. Para modificar el documento, crea elementos con `doc.item(...)` y ejecuta un comando
+   (`engine.exec(doc.cmdAddItems(...))`). Deshacer y rehacer funcionan solos.
 
 ## Lienzo
 - **Sin pérdida de calidad al ampliar.** Los trazos se guardan como datos (puntos ya
@@ -143,15 +194,16 @@ Los presets antiguos siguen cargando: el campo nuevo toma su valor por defecto.
   - Al alejar, se omiten puntos a menos de 0,6 px de pantalla del anterior.
   - Mientras dibujas no se repinta nada: cada segmento se pinta una sola vez, y el tramo
     provisional va en una capa aparte.
-  - Si un repintado completo tarda más de 7 ms, durante el gesto la capa de tinta se mueve
-    con una transformación CSS (GPU) y, al parar, se repinta **por lotes de ~9 ms** en un lienzo
-    oculto que se intercambia al terminar: la interfaz nunca se congela.
+  - Si un repintado completo tarda más de 7 ms, durante el gesto cada capa se mueve con una
+    transformación CSS (GPU) y, al parar, se repinta **por lotes de ~9 ms**, capa por capa: la
+    interfaz nunca se congela. Deshacer solo repinta las capas afectadas.
+  - Al alejar, los sellos casi superpuestos se funden en uno con la opacidad acumulada exacta.
 - **Estabilización a escala de pantalla.** El pipeline trabaja en píxeles de pantalla, así
   que StreamLine y Stabilization se sienten igual a cualquier zoom. Al soltar, los puntos se
   convierten a coordenadas de documento.
 - **Presión.** La presión y la inclinación del lápiz llegan intactas al trazo guardado.
   El panel muestra la presión en vivo.
-- **Borrador** con `destination-out` y su propio pincel (cualquier preset de la biblioteca). Es un trazo más del historial.
+- **Borrador** con `destination-out` y su propio pincel (cualquier preset de la biblioteca). Es un elemento más de la capa.
 
 ### Controles del lienzo
 

@@ -128,6 +128,14 @@ export const SECTIONS: Section[] = [
     ],
   },
   {
+    id: 'mix', title: 'Mezcla de color', subtitle: 'Color Mixing', controls: [
+      { type: 'segmented', path: 'mix.mode', label: 'Comportamiento', options: [{ value: 'none', label: 'Color puro' }, { value: 'wet', label: 'Húmedo (óleo)' }, { value: 'smudge', label: 'Difuminar' }], help: 'Húmedo: mezcla el color del pincel con la pintura de la capa. Difuminar: arrastra el color que ya hay sin añadir pintura.' },
+      { type: 'slider', path: 'mix.pickup', label: 'Recoger color', min: 0, max: 1, step: 0.01, unit: '%', display: 100, when: p => p.mix.mode !== 'none' },
+      { type: 'slider', path: 'mix.persistence', label: 'Persistencia', min: 0, max: 1, step: 0.01, unit: '%', display: 100, help: 'Cuánto dura a lo largo del trazo el color recogido.', when: p => p.mix.mode !== 'none' },
+      { type: 'slider', path: 'mix.paint', label: 'Pintura nueva', min: 0, max: 1, step: 0.01, unit: '%', display: 100, help: 'Cuánto color del pincel se añade en cada sello.', when: p => p.mix.mode === 'wet' },
+    ],
+  },
+  {
     id: 'stabilizer', title: 'Estabilización', subtitle: 'Stabilizer', controls: [
       { type: 'slider', path: 'stabilizer.streamLine', label: 'StreamLine', min: 0, max: 100, step: 1, unit: '%', help: 'Suaviza la trayectoria y conserva las esquinas.' },
       { type: 'slider', path: 'stabilizer.stabilization', label: 'Stabilization', min: 0, max: 100, step: 1, unit: '%', help: 'Elimina el temblor; actúa más cuanto más lento dibujas.' },

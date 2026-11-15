@@ -6,7 +6,17 @@ export interface LibraryData {
   presets: BrushPreset[];
   activeBrushId: string;
   activeEraserId: string;
+  /** Pincel activo de cada herramienta de pincel. */
+  slots?: Record<string, string>;
+  /** Versión del juego de fábrica con que se guardó (para migrar). */
+  factory?: number;
   color?: string;
+}
+
+/** Preferencias de la app: atajos, barra de herramientas, ajustes de cada herramienta, colores. */
+export interface SettingsStorage {
+  load(): Promise<Record<string, unknown> | null>;
+  save(data: Record<string, unknown>): Promise<void>;
 }
 
 /** Dónde se guarda la biblioteca. La app de escritorio usa archivos; el navegador, localStorage. */
@@ -22,6 +32,8 @@ export interface DesktopBridge {
   version: string;
   loadLibrary(): Promise<string | null>;
   saveLibrary(json: string): Promise<void>;
+  loadSettings?(): Promise<string | null>;
+  saveSettings?(json: string): Promise<void>;
   exportFile(defaultName: string, content: string): Promise<boolean>;
   importFiles(): Promise<{ name: string; content: string }[]>;
 }
@@ -60,4 +72,21 @@ export function defaultStorage(): LibraryStorage {
   const b = desktopBridge();
   if (b) return new DesktopStorage(b);
   try { localStorage.getItem('x'); return new BrowserStorage(); } catch { return new MemoryStorage(); }
+}
+
+/** Preferencias: archivo settings.json en escritorio, localStorage en el navegador. */
+export function defaultSettingsStorage(): SettingsStorage {
+  const b = desktopBridge();
+  if (b?.loadSettings && b.saveSettings) {
+    const bridge = b;
+    return {
+      load: async () => { const s = await bridge.loadSettings!(); return s ? JSON.parse(s) : null; },
+      save: async d => { await bridge.saveSettings!(JSON.stringify(d)); },
+    };
+  }
+  const key = 'yosadraw.settings.v1';
+  return {
+    load: async () => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : null; } catch { return null; } },
+    save: async d => { try { localStorage.setItem(key, JSON.stringify(d)); } catch { /* sin almacenamiento */ } },
+  };
 }

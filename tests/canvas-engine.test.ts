@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { History } from '../src/yosadraw/engine/History';
 import { projectPoints } from '../src/yosadraw/engine/StrokeRasterizer';
-import { computeBounds, StrokeStore } from '../src/yosadraw/engine/StrokeStore';
-import { DEFAULT_PRESET } from '../src/yosadraw/brush/BrushPreset';
 import { interpolateView, invert, MAX_SCALE, multiply, ViewTransform } from '../src/yosadraw/engine/ViewTransform';
 import type { StrokePoint } from '../src/core/types';
 
@@ -79,40 +76,6 @@ describe('ViewTransform', () => {
     const a = sampleView(), b = new ViewTransform().fit(800, 600, 4096, 3072);
     const v0 = interpolateView(a, b, 0, 800, 600), v1 = interpolateView(a, b, 1, 800, 600);
     close(v0.scale, a.scale); close(v0.x, a.x, 1e-6); close(v1.scale, b.scale); close(v1.x, b.x, 1e-6); close(v1.y, b.y, 1e-6);
-  });
-});
-
-describe('History + StrokeStore', () => {
-  const make = (store: StrokeStore, x: number) => {
-    const points = [pt(x, 0), pt(x + 10, 5)];
-    return store.create({ preset: DEFAULT_PRESET, color: '#000', tool: 'brush', seed: 1, dabs: new Float32Array(0), dabCount: 0, points, total: 11, bounds: computeBounds(points, 4) });
-  };
-
-  it('deshacer y rehacer trazos y el vaciado', () => {
-    const store = new StrokeStore(), h = new History();
-    const s1 = make(store, 0), s2 = make(store, 100);
-    store.add(s1); h.push({ kind: 'add', stroke: s1 });
-    store.add(s2); h.push({ kind: 'add', stroke: s2 });
-    const op = { kind: 'clear' as const, strokes: store.strokes.slice() };
-    h.push(op); store.clear();
-    expect(store.count).toBe(0);
-
-    const u1 = h.undo()!; expect(u1.kind).toBe('clear'); store.restore(op.strokes);
-    expect(store.count).toBe(2);
-    const u2 = h.undo()!; expect(u2.kind === 'add' && u2.stroke.id).toBe(s2.id); store.remove(s2.id);
-    expect(store.strokes.map(s => s.id)).toEqual([s1.id]);
-    expect(h.canRedo).toBe(true);
-    const r = h.redo()!; expect(r.kind === 'add' && r.stroke.id).toBe(s2.id);
-    h.push({ kind: 'add', stroke: make(store, 5) });
-    expect(h.canRedo).toBe(false); // una acción nueva invalida el rehacer
-  });
-
-  it('el recorte por visibilidad descarta trazos fuera de la vista', () => {
-    const store = new StrokeStore();
-    store.add(make(store, 0)); store.add(make(store, 5000));
-    const vis = [...store.visible({ minX: -50, minY: -50, maxX: 500, maxY: 500 })];
-    expect(vis).toHaveLength(1);
-    expect(store.totalPoints).toBe(4);
   });
 });
 

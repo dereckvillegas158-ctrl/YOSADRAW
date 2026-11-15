@@ -19,6 +19,35 @@ export function multiply(m: Mat, n: Mat): Mat {
   ];
 }
 
+export const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
+
+export function applyMat(m: Mat, x: number, y: number): { x: number; y: number } {
+  return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
+
+/** Escala de una matriz: media geométrica (área) y valor singular máximo. */
+export function matScale(m: Mat): { mean: number; max: number } {
+  const det = Math.abs(m[0] * m[3] - m[1] * m[2]);
+  const t = m[0] * m[0] + m[1] * m[1] + m[2] * m[2] + m[3] * m[3];
+  return { mean: Math.sqrt(det), max: Math.sqrt((t + Math.sqrt(Math.max(0, t * t - 4 * det * det))) / 2) };
+}
+
+/** Caja envolvente de una caja transformada por m. */
+export function transformAABB(m: Mat, b: AABB): AABB {
+  const pts = [applyMat(m, b.minX, b.minY), applyMat(m, b.maxX, b.minY), applyMat(m, b.minX, b.maxY), applyMat(m, b.maxX, b.maxY)];
+  return {
+    minX: Math.min(...pts.map(p => p.x)), minY: Math.min(...pts.map(p => p.y)),
+    maxX: Math.max(...pts.map(p => p.x)), maxY: Math.max(...pts.map(p => p.y)),
+  };
+}
+
+export const translateMat = (x: number, y: number): Mat => [1, 0, 0, 1, x, y];
+export const scaleMat = (sx: number, sy: number, cx = 0, cy = 0): Mat => [sx, 0, 0, sy, cx - sx * cx, cy - sy * cy];
+export function rotateMat(rad: number, cx = 0, cy = 0): Mat {
+  const c = Math.cos(rad), s = Math.sin(rad);
+  return [c, s, -s, c, cx - c * cx + s * cy, cy - s * cx - c * cy];
+}
+
 export function invert(m: Mat): Mat {
   const det = m[0] * m[3] - m[1] * m[2];
   const a = m[3] / det, b = -m[1] / det, c = -m[2] / det, d = m[0] / det;
