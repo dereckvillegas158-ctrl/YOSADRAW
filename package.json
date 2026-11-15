@@ -1,0 +1,82 @@
+{
+  "name": "yosadraw",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "YOSADRAW: aplicación de dibujo con motor de pinceles y estabilizador de trazos",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "desktop:dev": "node scripts/desktop-dev.mjs",
+    "desktop": "npm run build && electron .",
+    "dist:win": "npm run build && electron-builder --win nsis portable --x64",
+    "dist:win:dir": "npm run build && electron-builder --win dir --x64",
+    "artifact": "node scripts/build-artifact.mjs index.html yosadraw.html YOSADRAW && node scripts/build-artifact.mjs lab.html trazo-estable.html \"Trazo Estable\"",
+    "dist:win:zip": "npm run build && electron-builder --win zip --x64"
+  },
+  "devDependencies": {
+    "@fontsource/instrument-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/outfit": "^5.3.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0"
+  },
+  "productName": "YOSADRAW",
+  "author": "YOSADRAW",
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "com.yosadraw.app",
+    "productName": "YOSADRAW",
+    "copyright": "© 2026 YOSADRAW",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "executableName": "YOSADRAW"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "YOSADRAW",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "artifactName": "YOSADRAW-Setup-${version}-x64.${ext}"
+    },
+    "portable": {
+      "artifactName": "YOSADRAW-${version}-x64-portable.${ext}"
+    },
+    "publish": null
+  }
+}

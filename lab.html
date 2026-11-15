@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trazo Estable</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <h1>Trazo Estable</h1>
+    <p>StreamLine · Stabilization · Motion Filtering</p>
+  </div>
+  <div class="tools">
+    <fieldset class="group">
+      <legend>Pincel</legend>
+      <label class="mini" for="brush-size"><span>Grosor</span><input type="range" id="brush-size" min="1" max="40" value="6"><output for="brush-size"></output></label>
+      <label class="swatch" for="brush-color"><span class="sr">Color de tinta</span><input type="color" id="brush-color" value="#1b2233"></label>
+      <label class="check" for="use-pressure"><input type="checkbox" id="use-pressure" checked><span>Presión</span></label>
+    </fieldset>
+    <fieldset class="group">
+      <legend>Perturbar la entrada</legend>
+      <label class="mini" for="noise-tremor"><span>Temblor</span><input type="range" id="noise-tremor" min="0" max="100" value="40"><output for="noise-tremor"></output></label>
+      <label class="mini" for="noise-spikes"><span>Picos</span><input type="range" id="noise-spikes" min="0" max="100" value="25"><output for="noise-spikes"></output></label>
+    </fieldset>
+    <fieldset class="group">
+      <legend>Vista</legend>
+      <label class="check" for="compare"><input type="checkbox" id="compare" checked><span>Comparar A/B</span></label>
+      <label class="check" for="show-raw"><input type="checkbox" id="show-raw" checked><span>Trazo crudo</span></label>
+    </fieldset>
+    <fieldset class="group">
+      <legend>Zona de pruebas</legend>
+      <select id="pattern" aria-label="Patrón de prueba"></select>
+      <button type="button" id="load-pattern">Cargar patrón</button>
+      <button type="button" id="replay">Reproducir</button>
+      <button type="button" id="clear" class="ghost">Borrar</button>
+    </fieldset>
+  </div>
+</header>
+<main class="stage" id="stage" data-compare="true" data-raw="true">
+  <section class="pane" data-pane="A"></section>
+  <section class="pane" data-pane="B"></section>
+</main>
+<p class="foot">Dibuja en cualquiera de los dos lienzos: ambos reciben exactamente la misma entrada. Al mover un control, lo ya dibujado se vuelve a procesar con los nuevos valores.</p>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

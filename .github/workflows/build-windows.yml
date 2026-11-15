@@ -1,0 +1,30 @@
+# Compila YOSADRAW para Windows x64 (instalador NSIS + versión portable)
+# en una máquina Windows de GitHub. Los .exe quedan como artefactos del run.
+name: Build Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YOSADRAW-windows-x64
+          path: |
+            release/*.exe
+            release/*.blockmap
+          if-no-files-found: error
