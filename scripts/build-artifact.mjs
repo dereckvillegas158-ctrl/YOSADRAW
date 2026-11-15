@@ -4,7 +4,7 @@
 // Uso: node scripts/build-artifact.mjs [entrada.html] [salida.html] [título]
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { build } from 'vite';
+import { build, loadConfigFromFile } from 'vite';
 
 const [entry = 'index.html', outName = 'yosadraw.html', title = 'YOSADRAW'] = process.argv.slice(2);
 // La vista previa publicada no permite descargas: la UI exporta copiando al portapapeles.
@@ -12,7 +12,11 @@ process.env.VITE_TARGET = 'artifact';
 const root = new URL('..', import.meta.url).pathname;
 const outDir = join(root, 'dist-single', entry.replace(/\.html$/, ''));
 
+// Reutiliza el plugin ?base64 (wasm de WebP incrustado) de vite.config.ts.
+const loaded = await loadConfigFromFile({ command: 'build', mode: 'production' }, join(root, 'vite.config.ts'));
 await build({
+  plugins: loaded.config.plugins,
+  worker: loaded.config.worker,
   root,
   logLevel: 'warn',
   configFile: false,

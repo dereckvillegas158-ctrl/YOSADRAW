@@ -7,7 +7,7 @@ import { defineConfig, type Plugin } from 'vite';
  * Así el WebAssembly viaja dentro del worker de exportación (sin archivos
  * sueltos), también en la versión de una sola página.
  */
-function base64Plugin(): Plugin {
+export function base64Plugin(): Plugin {
   return {
     name: 'yosadraw-base64',
     enforce: 'pre',
