@@ -244,6 +244,30 @@ export class BrushStrokeSession {
   }
 }
 
+/**
+ * Trazo terminado sin pintarlo (mismos sellos que `BrushStrokeSession.end`):
+ * para aplicar un trazo cuando su capa aún se está repintando. No vale para
+ * pinceles que mezclan color (necesitan leer el lienzo).
+ */
+export function finishStrokeOffline(preset: BrushPreset, color: string, tool: StrokeTool, seed: number, docPts: StrokePoint[], mirrors: Mat[]): FinishedStroke {
+  const sets: DabSet[] = [];
+  let total = 0;
+  [null, ...mirrors].forEach((m, i) => {
+    const pts = m ? docPts.map(p => ({ ...p, ...applyMat(m, p.x, p.y) })) : docPts;
+    const a = new DabGenerator(preset, seed + i * 7919);
+    for (const p of pts) a.push(p);
+    a.finish();
+    if (i === 0) total = a.length;
+    const b = new DabGenerator(preset, seed + i * 7919, { totalLength: a.length });
+    for (const p of pts) b.push(p);
+    b.finish();
+    sets.push({ dabs: b.dabs.trimmed(), count: b.dabs.count });
+  });
+  const stroke: FinishedStroke = { preset, color, tool, seed, sets, points: docPts, total, mirrors: mirrors.length ? mirrors : undefined, bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 } };
+  stroke.bounds = strokeBounds(stroke);
+  return stroke;
+}
+
 /** Caja envolvente en coordenadas de documento. */
 export function strokeBounds(s: PaintStroke): AABB {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;

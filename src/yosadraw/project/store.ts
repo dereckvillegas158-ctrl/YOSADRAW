@@ -57,7 +57,7 @@ class IdbStore implements BlobStore {
     });
   }
   async get(key: string) { check(key); const v = await this.tx('readonly', s => s.get(key)); return v instanceof Uint8Array ? v : v ? new Uint8Array(v as ArrayBuffer) : null; }
-  async put(key: string, data: Uint8Array) { check(key); await this.tx('readwrite', s => s.put(data.slice(), key)); }
+  async put(key: string, data: Uint8Array) { check(key); await this.tx('readwrite', s => s.put(data, key)); }
   async delete(key: string) { check(key); await this.tx('readwrite', s => s.delete(key)); }
   async list(prefix: string) { return (await this.tx('readonly', s => s.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)))).map(String); }
   async location() { return 'almacenamiento del navegador (IndexedDB)'; }

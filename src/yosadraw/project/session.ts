@@ -1,12 +1,13 @@
 import { Document, type DocProfile } from '../doc/Document';
 import type { CanvasEngine } from '../engine';
-import { blendOp } from '../doc/ItemRenderer';
+import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
+import type { Mat } from '../engine/ViewTransform';
 import { Emitter } from '../engine/Emitter';
 import { browserImageCodec, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SIDE, normalizeMeta, readProject, writeProject, type ImageCodec, type ProjectMeta } from './format';
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.1.1';
 
 export interface NewProjectSpec {
   name: string;
@@ -57,6 +58,8 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
   private lastChange = 0;
   private lastRecovery = 0;
   private lastSave = 0;
+  /** Fecha del último guardado real (para mostrarla). */
+  private savedAt = 0;
   private saving: Promise<unknown> | null = null;
   private imageCache = new WeakMap<object, Uint8Array>();
   private timer = 0;
@@ -68,7 +71,7 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
   }
 
   get dirty() { return !!this.entry && this.engine.revision !== this.savedRevision; }
-  get state(): SessionState { return { entry: this.entry, dirty: this.dirty, saving: !!this.saving, recoveredAt: this.lastRecovery, lastSaved: this.lastSave }; }
+  get state(): SessionState { return { entry: this.entry, dirty: this.dirty, saving: !!this.saving, recoveredAt: this.lastRecovery, lastSaved: this.savedAt }; }
   private changed() { this.emit('state', this.state); }
   /** Vuelve a avisar del estado (tras renombrar desde fuera). */
   refresh() { if (this.entry) this.entry = this.library.get(this.entry.id) ?? this.entry; this.changed(); }
@@ -108,7 +111,10 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     this.engine.loadDocument(doc);
     this.savedRevision = this.engine.revision;
     this.recoveryRevision = this.engine.revision;
-    this.lastSave = e.modified;
+    // El reloj del guardado automático empieza al abrir (no salta nada más hacer el primer trazo).
+    this.lastSave = Date.now();
+    this.savedAt = e.modified;
+    this.lastVersion = 0;
     this.lastRecovery = 0;
     this.imageCache = new WeakMap();
   }
@@ -154,27 +160,38 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
 
   // ---------------------------------------------------------------- guardar
 
-  private async serialize(doc: Document, meta: ProjectMeta) {
-    const thumb = await this.thumbnail(doc);
+  /** Cuánto tardó la última serialización (ms): sirve para espaciar las copias automáticas. */
+  private lastSerializeMs = 0;
+
+  private async serialize(doc: Document, meta: ProjectMeta, withThumb = true) {
+    const t = performance.now();
+    // La miniatura repinta todo el documento: sólo hace falta al guardar, no en la copia de recuperación.
+    const thumb = withThumb ? await this.thumbnail(doc) : null;
     const bytes = await writeProject(doc, { ...meta, width: doc.width, height: doc.height, layers: doc.layers.length }, { codec: this.codec, cache: this.imageCache, thumb });
+    this.lastSerializeMs = performance.now() - t;
     return { bytes, thumb, meta: { layers: doc.layers.length } };
   }
 
   /** Guarda en el proyecto abierto. Si otra ventana lo guardó antes, lanza ConflictError (salvo `force`). */
-  async save(force = false): Promise<boolean> {
+  /** Último momento en que se conservó una versión (los guardados automáticos crean como mucho una cada 15 min). */
+  private lastVersion = 0;
+
+  async save(force = false, auto = false): Promise<boolean> {
     const e = this.entry;
     if (!e) return false;
     if (this.saving) await this.saving.catch(() => undefined);
     const revAtStart = this.engine.revision;
     const doc = this.engine.doc;
-    const job = this.library.save(e.id, e.rev, m => this.serialize(doc, m), force);
+    const keepVersion = !auto || Date.now() - this.lastVersion > 15 * 60_000;
+    if (keepVersion) this.lastVersion = Date.now();
+    const job = this.library.save(e.id, e.rev, m => this.serialize(doc, m), force, keepVersion);
     this.saving = job;
     this.changed();
     try {
       this.entry = await job;
       this.savedRevision = revAtStart;
       this.recoveryRevision = revAtStart;
-      this.lastSave = Date.now();
+      this.lastSave = this.savedAt = Date.now();
       return true;
     } finally {
       this.saving = null;
@@ -197,7 +214,7 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     this.entry = e;
     this.savedRevision = revAtStart;
     this.recoveryRevision = revAtStart;
-    this.lastSave = Date.now();
+    this.lastSave = this.savedAt = Date.now();
     this.changed();
     return e;
   }
@@ -212,11 +229,18 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
   // ---------------------------------------------------------------- automático
 
   /** Copia de recuperación inmediata (al pasar la app a segundo plano o cerrar). */
-  async flushRecovery() {
+  private recovering: Promise<void> | null = null;
+  flushRecovery(): Promise<void> {
+    // Nunca dos copias a la vez (pausa de Android + temporizador): la segunda espera a la primera.
+    if (this.recovering) return this.recovering;
+    this.recovering = this.writeRecoveryNow().finally(() => { this.recovering = null; });
+    return this.recovering;
+  }
+  private async writeRecoveryNow() {
     const e = this.entry;
     if (!e || !this.dirty || this.engine.revision === this.recoveryRevision || this.engine.isDrawing) return;
     const rev = this.engine.revision;
-    const { bytes } = await this.serialize(this.engine.doc, { ...e, modified: Date.now() });
+    const { bytes } = await this.serialize(this.engine.doc, { ...e, modified: Date.now() }, false);
     if (this.entry?.id !== e.id) return;
     await this.library.writeRecovery(e.id, bytes);
     this.recoveryRevision = rev;
@@ -233,8 +257,8 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     try {
       const now = Date.now();
       if (this.prefs.autoSave && now - this.lastSave > this.prefs.autoSaveMinutes * 60_000 && this.savedRevision !== -1) {
-        await this.save();
-      } else if (this.engine.revision !== this.recoveryRevision && now - this.lastRecovery > 12_000) {
+        await this.save(false, true);
+      } else if (this.engine.revision !== this.recoveryRevision && now - this.lastRecovery > Math.max(12_000, this.lastSerializeMs * 25)) {
         await this.flushRecovery();
       }
     } catch (err) {
@@ -249,23 +273,30 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
   async thumbnail(doc: Document = this.engine.doc, max = 640): Promise<Uint8Array> {
     const k = Math.min(1, max / Math.max(doc.width, doc.height));
     const W = Math.max(1, Math.round(doc.width * k)), H = Math.max(1, Math.round(doc.height * k));
+    // Lo más barato: componer lo que ya está pintado en pantalla (sin repintar un solo sello).
+    if (this.engine.doc === doc) { const snap = this.engine.snapshotFromView(W, H); if (snap) return browserImageCodec.encode(snap); }
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const g = c.getContext('2d')!;
     if (doc.settings.background) { g.fillStyle = doc.settings.background; g.fillRect(0, 0, W, H); }
-    const prev = this.engine.doc;
-    const own = prev === doc;
+    // Si no, se rasteriza elemento a elemento cediendo el hilo cada ~10 ms: guardar no congela la interfaz.
+    const renderer = new ItemRenderer(this.engine.painter, doc.width, doc.height);
+    const tmp = document.createElement('canvas');
+    tmp.width = W; tmp.height = H;
+    const t = tmp.getContext('2d')!;
+    const V: Mat = [k, 0, 0, k, 0, 0];
+    let slice = performance.now();
     for (const l of doc.layers) {
       if (!l.visible || !l.items.length) continue;
-      const layer = own ? this.engine.rasterize([l], k) : null;
-      if (!layer) continue;
+      t.setTransform(1, 0, 0, 1, 0, 0);
+      t.clearRect(0, 0, W, H);
+      for (const it of l.items) {
+        renderer.renderItem(t, it, V, 1);
+        if (performance.now() - slice > 10) { await new Promise(r => setTimeout(r, 0)); slice = performance.now(); }
+      }
       g.globalAlpha = l.opacity;
       g.globalCompositeOperation = blendOp(l.blend);
-      g.drawImage(layer, 0, 0, W, H);
-    }
-    if (!own && doc.layers.some(l => l.items.length)) {
-      // Documento que no está en el motor (crear desde imagen antes de cargarlo): sólo mapas de bits.
-      for (const l of doc.layers) for (const it of l.items) if (it.kind === 'bitmap' && l.visible) { g.globalAlpha = l.opacity; g.drawImage(it.image, it.x * k, it.y * k, it.w * k, it.h * k); }
+      g.drawImage(tmp, 0, 0);
     }
     return browserImageCodec.encode(c);
   }

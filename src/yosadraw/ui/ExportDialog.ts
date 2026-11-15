@@ -34,6 +34,9 @@ export class ExportDialog {
    * Al abrir o crear un proyecto, la exportación parte de sus datos: nombre,
    * DPI, perfil de color y fondo (transparente o el color del papel).
    */
+  /** El proyecto cambió de nombre (renombrar, guardar como): la exportación lo sigue. */
+  setName(name: string) { if (name && name !== this.o.name) { this.o = normalizeOptions({ ...this.o, name }); this.persist(this.o); } }
+
   adoptProject(p: { name: string; dpi: number; profile: 'srgb' | 'p3' | 'gray'; background: string | null }) {
     this.o = normalizeOptions({ ...this.o, name: p.name, dpi: p.dpi, profile: p.profile, transparent: p.background === null, background: p.background ?? this.o.background });
     this.persist(this.o);
@@ -280,7 +283,7 @@ export class ExportDialog {
       h('div', { class: 'ex-actions' },
         reveal ? h('button', { type: 'button', class: 'btn', on: { click: reveal.run } }, reveal.label) : null,
         share ? h('button', { type: 'button', class: 'btn', on: { click: share } }, 'Compartir') : null,
-        h('button', { type: 'button', class: 'btn ghost', on: { click: () => this.render() } }, 'Exportar otra vez'),
+        h('button', { type: 'button', class: 'btn ghost', on: { click: () => { this.render(); (this.root?.querySelector('.fmt[aria-checked="true"]') as HTMLElement | null)?.focus(); } } }, 'Exportar otra vez'),
         h('button', { type: 'button', class: 'btn primary', on: { click: () => this.close() } }, 'Cerrar')));
   }
 }

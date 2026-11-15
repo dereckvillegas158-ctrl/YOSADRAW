@@ -1,4 +1,5 @@
-import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
+import { strFromU8, strToU8, unzipSync, type Zippable } from 'fflate';
+import { unzipAsync, zipAsync } from './zip';
 import type { FinishedStroke } from '../brush/BrushStrokeSession';
 import type { BrushPreset } from '../brush/BrushPreset';
 import { DAB_STRIDE } from '../brush/DabGenerator';
@@ -74,9 +75,13 @@ class Writer {
   private jobs: Promise<void>[] = [];
   constructor(private codec: ImageCodec, private cache: WeakMap<object, Uint8Array>) {}
 
+  /** Copias propias (no compartidas): se pueden transferir al hilo de compresión sin copiar otra vez. */
+  owned: ArrayBuffer[] = [];
   bin(data: ArrayBufferView): string {
     const name = `bin/${++this.n}.bin`;
-    this.files[name] = [new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)), { level: 1 }];
+    const copy = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    this.owned.push(copy);
+    this.files[name] = [new Uint8Array(copy), { level: 1 }];
     return name;
   }
 
@@ -138,13 +143,26 @@ function writeItem(w: Writer, it: Item): J {
 /** Serializa el documento a un archivo .yosa. `cache` reutiliza los PNG ya codificados entre guardados. */
 export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec: ImageCodec; cache?: WeakMap<object, Uint8Array>; thumb?: Uint8Array | null; view?: ViewState | null }): Promise<Uint8Array> {
   const w = new Writer(o.codec, o.cache ?? new WeakMap());
-  const layers = doc.layers.map(l => ({ id: l.id, name: l.name, visible: l.visible, locked: l.locked, opacity: l.opacity, blend: l.blend, items: l.items.map(i => writeItem(w, i)) }));
+  // Se toma una instantánea de las listas (los elementos son inmutables) y se serializa por
+  // tandas cediendo el hilo, para no congelar la interfaz con documentos grandes.
+  const snapshot = doc.layers.map(l => ({ l: { ...l }, items: l.items.slice() }));
   const selection = writeSelection(w, doc.selection);
+  const activeId = doc.activeId, counters = doc.counters;
+  const layers = [];
+  let slice = performance.now();
+  for (const { l, items } of snapshot) {
+    const out = [];
+    for (const it of items) {
+      out.push(writeItem(w, it));
+      if (performance.now() - slice > 12) { await new Promise(r => setTimeout(r, 0)); slice = performance.now(); }
+    }
+    layers.push({ id: l.id, name: l.name, visible: l.visible, locked: l.locked, opacity: l.opacity, blend: l.blend, items: out });
+  }
   await w.done();
   const project = {
     format: FORMAT_ID, version: FORMAT_VERSION,
     meta: { ...meta, width: doc.width, height: doc.height, dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, layers: doc.layers.length },
-    document: { activeId: doc.activeId, counters: doc.counters, layers, selection },
+    document: { activeId, counters, layers, selection },
     presets: w.presetTable,
     view: o.view ?? null,
   };
@@ -154,7 +172,7 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
     ...w.files,
   };
   if (o.thumb) files['thumb.png'] = [o.thumb, { level: 0 }];
-  return zipSync(files);
+  return zipAsync(files, w.owned);
 }
 
 // ---------------------------------------------------------------- lectura
@@ -287,7 +305,8 @@ export function readProjectInfo(bytes: Uint8Array): { meta: ProjectMeta; thumb: 
 
 /** Abre un archivo .yosa completo. */
 export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise<ProjectFile> {
-  const files = unzip(bytes);
+  let files: Record<string, Uint8Array>;
+  try { files = await unzipAsync(bytes); } catch { throw new ProjectFormatError('El archivo no es un proyecto de YOSADRAW o está dañado'); }
   const p = parseProject(files);
   const meta = normalizeMeta(p.meta);
   if (meta.width < MIN_DOC_SIDE || meta.height < MIN_DOC_SIDE || meta.width > MAX_DOC_SIDE || meta.height > MAX_DOC_SIDE) throw new ProjectFormatError(`Tamaño de lienzo no válido (${meta.width} × ${meta.height})`);

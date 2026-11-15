@@ -231,9 +231,11 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   $('save-btn').innerHTML = GI.save;
   $('gallery-btn').addEventListener('click', () => void toGallery());
   $('save-btn').addEventListener('click', () => void projectAction('save'));
+  let lastName = '';
   const showSession = () => {
     const st = session.state;
     const name = st.entry?.name ?? 'Sin título';
+    if (st.entry && name !== lastName) { if (lastName) exportDialog.setName(name); lastName = name; }
     $('project-name').textContent = name;
     $('dirty-dot').hidden = !st.dirty;
     $('project-chip').title = `${name}${st.dirty ? ' · cambios sin guardar' : ' · guardado'}`;
@@ -269,6 +271,8 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   // ---------- Teclado ----------
   window.addEventListener('keydown', e => {
     const t = e.target as HTMLElement;
+    // Esc con el foco fuera de un diálogo (p. ej. tras pulsar un botón que desaparece): cierra lo de encima.
+    if (e.key === 'Escape' && !studio.open && !t.closest('.dialog-backdrop, .studio-backdrop, .menu, .popover') && closeTopOverlay()) { e.preventDefault(); return; }
     if (studio.open || exportDialog.open || t.closest('.dialog-backdrop, .menu, .popover')) return;
     if (gallery.visible) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault(); return; }
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'radio', 'color'].includes(t.type))) return;

@@ -27,8 +27,8 @@ npm run desktop:dev    # la app en Electron, con recarga en caliente
 
 | Comando | Resultado en `release/` | Dónde se puede generar |
 |---|---|---|
-| `npm run dist:win` | `YOSADRAW-Setup-1.1.0-x64.exe` (instalador) y `YOSADRAW-1.1.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
-| `npm run dist:win:zip` | `YOSADRAW-1.1.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
+| `npm run dist:win` | `YOSADRAW-Setup-1.1.1-x64.exe` (instalador) y `YOSADRAW-1.1.1-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
+| `npm run dist:win:zip` | `YOSADRAW-1.1.1-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
 | `npm run dist:win:dir` | `release/win-unpacked/YOSADRAW.exe` | Cualquier sistema |
 
 El workflow `.github/workflows/build-windows.yml` compila el instalador y la versión portable
@@ -229,6 +229,23 @@ del bote y una selección levantada para transformarla, porque son operaciones d
 3. Para modificar el documento, crea elementos con `doc.item(...)` y ejecuta un comando
    (`engine.exec(doc.cmdAddItems(...))`). Deshacer y rehacer funcionan solos.
 
+## Rendimiento
+Medido con un documento de 4096 × 3072 con 400 trazos y 1 millón de sellos, en Chromium con la CPU
+4 veces más lenta (equivalente a un teléfono de gama media). «Bloqueo» = la tarea más larga del hilo
+de la interfaz.
+
+| Operación | Antes (1.1.0) | Ahora | Por qué |
+|---|---|---|---|
+| Zoom con dos dedos | bloqueo de 4,7 s | 0,07 s | el coste se estima por los sellos visibles (antes, por el último repintado) y lo caro se repinta por partes |
+| Desplazar con dos dedos | 1,5 s | 0,1 s | se reutilizan los píxeles y sólo se pintan las franjas descubiertas; zona muerta de 4 % de zoom y 6° de giro |
+| Empezar un trazo tras un zoom | 1,4 s | 0,09 s | sólo espera su capa; si es cara, el trazo se dibuja provisional y se aplica cuando la capa está lista |
+| Después de cada trazo | 0,3 s | 0 | miniaturas de capa incrementales (sólo el trazo nuevo) |
+| Copia de recuperación | 3,3 s | 0,06 s | ZIP en un Web Worker, sin miniatura, serialización por tandas |
+| Guardar | 3,4 s | 0 | miniatura compuesta desde la pantalla o rasterizada por tandas |
+| Abrir proyecto | 1,3 s | 0,8 s | descompresión en el worker |
+| Arranque (JS principal) | 1,39 MB | 0,34 MB | el codificador de exportación (PSD, WebP) se carga al exportar por primera vez |
+| Memoria | 144 MB | 97 MB | |
+
 ## Proyectos y galería
 Al abrir YOSADRAW aparece la **galería**: miniaturas grandes, nombre, fecha de modificación,
 resolución, formato, capas e indicador **Sin guardar** (hay una copia de recuperación más nueva que
@@ -251,8 +268,8 @@ lo guardado).
 |---|---|
 | **Guardar** (Ctrl+S) | Escribe el proyecto. Lo que había antes pasa al **historial de versiones** (15 por proyecto). |
 | **Guardar como** (Ctrl+Mayús+S) | Crea una copia con otro nombre y sigue en la copia; el original no cambia. Los nombres nunca se repiten («Retrato (2)»). |
-| **Guardado automático** | Cada 2 min con cambios y sin estar dibujando (se puede desactivar en el menú del proyecto). |
-| **Copia de recuperación** | 12 s después de dejar de dibujar, al cambiar de pestaña, al pasar la app a segundo plano (Android) y al cerrar. Si la app se cierra de golpe, la galería ofrece **Recuperar cambios** o **Abrir lo guardado**. |
+| **Guardado automático** | Cada 2 min con cambios y sin estar dibujando (se puede desactivar en el menú del proyecto). Guarda una versión en el historial como mucho cada 15 min, para no desplazar las de los guardados manuales. |
+| **Copia de recuperación** | Unos segundos después de dejar de dibujar (más espaciada en documentos muy grandes), al cambiar de pestaña, al pasar la app a segundo plano (Android) y al cerrar. Si la app se cierra de golpe, la galería ofrece **Recuperar cambios** o **Abrir lo guardado**. |
 | **Escritura segura** | Archivo temporal + fsync + renombrado (escritorio y Android) o transacción de IndexedDB (web): nunca queda un proyecto a medias. |
 | **Sin sobrescribir por accidente** | Cada guardado lleva una revisión. Si otra ventana o pestaña guardó antes, se pregunta: *Guardar como copia*, *Sobrescribir* (lo otro pasa al historial) o *Cancelar*. Salir con cambios pregunta *Guardar / No guardar / Cancelar*; cerrar la ventana del escritorio también. |
 | **Papelera** | Eliminar no borra: 30 días para restaurar. |

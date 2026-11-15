@@ -1,4 +1,4 @@
-import { interpolateView, ViewTransform, type ViewState } from './ViewTransform';
+import { interpolateView, MAX_SCALE, MIN_SCALE, ViewTransform, type ViewState } from './ViewTransform';
 
 export type NavMode = 'draw' | 'pan' | 'rotate';
 
@@ -23,7 +23,17 @@ export interface NavHost {
 type Gesture =
   | { kind: 'pan'; id: number; x: number; y: number }
   | { kind: 'rotate'; id: number; angle: number; raw: number; cx: number; cy: number }
-  | { kind: 'pinch'; a: number; b: number; dA: { x: number; y: number }; dB: { x: number; y: number } };
+  | {
+    kind: 'pinch'; a: number; b: number;
+    /** Escala y giro al empezar, distancia y ángulo de los dedos, y punto del documento bajo el centro. */
+    s0: number; r0: number; d0: number; a0: number; mid: { x: number; y: number };
+    /** null mientras el zoom (o el giro) está en la zona muerta; luego, la referencia desde la que cuenta. */
+    zoomFrom: number | null; rotFrom: number | null;
+  };
+
+/** Zona muerta del gesto con dos dedos: por debajo, desplazar no amplía ni gira por accidente. */
+const PINCH_ZOOM_DEAD = 0.04;
+const PINCH_ROT_DEAD = 6 * (Math.PI / 180);
 
 const DEG = Math.PI / 180;
 
@@ -164,7 +174,11 @@ export class Navigation {
       if (touches.length === 2) {
         this.host.cancelStroke();
         const [[a, pa], [b, pb]] = touches;
-        this.start({ kind: 'pinch', a, b, dA: this.host.view.toDoc(pa.x, pa.y), dB: this.host.view.toDoc(pb.x, pb.y) }, e);
+        const v = this.host.view;
+        this.start({
+          kind: 'pinch', a, b, s0: v.scale, r0: v.rotation, d0: Math.hypot(pb.x - pa.x, pb.y - pa.y), a0: Math.atan2(pb.y - pa.y, pb.x - pa.x),
+          mid: v.toDoc((pa.x + pb.x) / 2, (pa.y + pb.y) / 2), zoomFrom: null, rotFrom: null,
+        }, e);
         return;
       }
       if (touches.length === 1) {
@@ -217,7 +231,17 @@ export class Navigation {
     } else if (g.kind === 'pinch') {
       const a = this.pointers.get(g.a), b = this.pointers.get(g.b);
       if (!a || !b) return;
-      view.fromPointPairs(g.dA, g.dB, a, b);
+      const ratio = Math.hypot(b.x - a.x, b.y - a.y) / Math.max(1e-6, g.d0);
+      let dAng = Math.atan2(b.y - a.y, b.x - a.x) - g.a0;
+      dAng = Math.atan2(Math.sin(dAng), Math.cos(dAng));
+      // Fuera de la zona muerta el zoom/giro sigue desde ese momento (sin salto).
+      if (g.zoomFrom === null && Math.abs(ratio - 1) > PINCH_ZOOM_DEAD) g.zoomFrom = ratio;
+      if (g.rotFrom === null && Math.abs(dAng) > PINCH_ROT_DEAD) g.rotFrom = dAng;
+      // Mientras el zoom y el giro estén quietos, escala y giro quedan exactamente iguales:
+      // el motor reutiliza los píxeles al desplazar en vez de repintar la capa entera.
+      view.scale = g.zoomFrom === null ? g.s0 : Math.min(MAX_SCALE, Math.max(MIN_SCALE, g.s0 * (ratio / g.zoomFrom)));
+      view.rotation = g.rotFrom === null ? g.r0 : Math.atan2(Math.sin(g.r0 + dAng - g.rotFrom), Math.cos(g.r0 + dAng - g.rotFrom));
+      view.pin(g.mid.x, g.mid.y, (a.x + b.x) / 2, (a.y + b.y) / 2);
     } else return;
     this.host.viewChanged();
   };

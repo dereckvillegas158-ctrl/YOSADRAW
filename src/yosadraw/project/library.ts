@@ -1,4 +1,5 @@
-import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
+import { strFromU8, strToU8, type Zippable } from 'fflate';
+import { unzipAsync, zipAsync } from './zip';
 import { Emitter } from '../engine/Emitter';
 import { normalizeMeta, ProjectFormatError, readProjectInfo, type ProjectMeta } from './format';
 import type { BlobStore } from './store';
@@ -34,9 +35,9 @@ const pKey = (id: string) => `p/${id}.yosa`, tKey = (id: string) => `t/${id}.png
 const vPrefix = (id: string) => `v/${id}~`;
 
 /** Cambia metadatos dentro de un .yosa sin decodificar sus capas (renombrar, duplicar, importar). */
-export function patchProjectMeta(bytes: Uint8Array, patch: Partial<ProjectMeta>): Uint8Array {
+export async function patchProjectMeta(bytes: Uint8Array, patch: Partial<ProjectMeta>): Promise<Uint8Array> {
   let files: Record<string, Uint8Array>;
-  try { files = unzipSync(bytes); } catch { throw new ProjectFormatError('El proyecto está dañado'); }
+  try { files = await unzipAsync(bytes); } catch { throw new ProjectFormatError('El proyecto está dañado'); }
   if (!files['project.json']) throw new ProjectFormatError('El proyecto está dañado');
   const p = JSON.parse(strFromU8(files['project.json']));
   p.meta = { ...p.meta, ...patch };
@@ -46,7 +47,7 @@ export function patchProjectMeta(bytes: Uint8Array, patch: Partial<ProjectMeta>)
     if (name === 'mimetype') continue;
     out[name] = name === 'project.json' ? [strToU8(JSON.stringify(p)), { level: 6 }] : [data, { level: name.endsWith('.png') ? 0 : 1 }];
   }
-  return zipSync(out);
+  return zipAsync(out);
 }
 
 /**
@@ -153,7 +154,7 @@ export class ProjectLibrary extends Emitter<{ change: void }> {
    * Guarda sobre el proyecto `id`. `baseRev` es la revisión que se abrió: si en el
    * almacén hay otra, lanza ConflictError (salvo `force`). Lo anterior pasa al historial.
    */
-  async save(id: string, baseRev: number, build: (meta: ProjectMeta) => Promise<{ bytes: Uint8Array; thumb: Uint8Array | null; meta: Partial<ProjectMeta> }>, force = false): Promise<ProjectEntry> {
+  async save(id: string, baseRev: number, build: (meta: ProjectMeta) => Promise<{ bytes: Uint8Array; thumb: Uint8Array | null; meta: Partial<ProjectMeta> }>, force = false, keepVersion = true): Promise<ProjectEntry> {
     const cur = this.projects.get(id);
     if (!cur) throw new Error('El proyecto ya no existe en la galería; usa «Guardar como».');
     // La revisión de verdad es la del archivo (otra pestaña o ventana pudo guardar sin que este índice lo sepa).
@@ -161,7 +162,8 @@ export class ProjectLibrary extends Emitter<{ change: void }> {
     let stored = { rev: cur.rev, modified: cur.modified };
     if (prev) { try { const m = readProjectInfo(prev).meta; stored = { rev: m.rev, modified: m.modified }; } catch { /* archivo dañado: se sustituye */ } }
     if ((stored.rev !== baseRev || cur.rev !== baseRev) && !force) throw new ConflictError({ ...cur, ...stored });
-    if (prev) {
+    // `keepVersion` = false en los guardados automáticos seguidos: no llenan el historial.
+    if (prev && keepVersion) {
       await this.store.put(`${vPrefix(id)}${stored.modified}.yosa`, prev);
       await this.pruneVersions(id);
     }
@@ -222,7 +224,7 @@ export class ProjectLibrary extends Emitter<{ change: void }> {
     const e = this.projects.get(id);
     name = name.trim().slice(0, 120);
     if (!e || !name || name === e.name) return;
-    await this.store.put(pKey(id), patchProjectMeta(await this.read(id), { name }));
+    await this.store.put(pKey(id), await patchProjectMeta(await this.read(id), { name }));
     e.name = name;
     await this.writeIndex();
   }
@@ -234,13 +236,13 @@ export class ProjectLibrary extends Emitter<{ change: void }> {
     const copyName = name ?? this.uniqueName(`${e.name} copia`);
     const thumb = await this.thumb(id);
     const src = await this.read(id);
-    return this.create({ ...e, id: newId(), name: copyName }, async m => ({ bytes: patchProjectMeta(src, { id: m.id, name: m.name, created: m.created, modified: m.modified, rev: m.rev }), thumb }), { folder: e.folder, favorite: false });
+    return this.create({ ...e, id: newId(), name: copyName }, async m => ({ bytes: await patchProjectMeta(src, { id: m.id, name: m.name, created: m.created, modified: m.modified, rev: m.rev }), thumb }), { folder: e.folder, favorite: false });
   }
 
   /** Importa un archivo .yosa como proyecto nuevo (nunca sustituye a uno existente). */
   async importFile(bytes: Uint8Array, folder: string | null = null): Promise<ProjectEntry> {
     const info = readProjectInfo(bytes);
-    return this.create({ ...info.meta, id: newId(), name: this.uniqueName(info.meta.name) }, async m => ({ bytes: patchProjectMeta(bytes, { id: m.id, name: m.name, created: m.created, modified: m.modified, rev: m.rev }), thumb: info.thumb }), { folder });
+    return this.create({ ...info.meta, id: newId(), name: this.uniqueName(info.meta.name) }, async m => ({ bytes: await patchProjectMeta(bytes, { id: m.id, name: m.name, created: m.created, modified: m.modified, rev: m.rev }), thumb: info.thumb }), { folder });
   }
 
   /** Nombre que no repite el de otro proyecto: «Dibujo», «Dibujo (2)»… */

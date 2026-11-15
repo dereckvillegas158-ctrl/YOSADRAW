@@ -159,6 +159,8 @@ export class Gallery {
     this.renderHead();
     if (this.lib.storeKind === 'memory') this.head.prepend(h('p', { class: 'ex-warn' }, 'Este navegador no permite guardar datos aquí: los proyectos sólo duran mientras la página esté abierta. Exporta el archivo .yosa para conservarlos, o usa la app de escritorio o de Android.'));
     if (this.section === 'folders' && !this.folder) { this.renderFolders(); return; }
+    // Miniaturas de proyectos que ya no existen: se liberan.
+    for (const [id, t] of this.thumbs) if (!this.lib.get(id)) { URL.revokeObjectURL(t.url); this.thumbs.delete(id); }
     const list = this.visibleEntries();
     if (!list.length) { this.grid.replaceChildren(this.emptyState()); return; }
     const cards = list.map((e, i) => this.card(e, i));
