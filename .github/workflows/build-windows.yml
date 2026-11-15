@@ -47,5 +47,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" release/YOSADRAW-Setup-$v-x64.exe release/YOSADRAW-$v-x64-portable.exe "release/YOSADRAW-$v.apk" \
-            --title "YOSADRAW $v" --notes-file RELEASE_NOTES.md
+          files=(release/YOSADRAW-Setup-$v-x64.exe release/YOSADRAW-$v-x64-portable.exe "release/YOSADRAW-$v.apk")
+          # Si la release ya existe (creada desde la web de GitHub), sólo se le añaden los archivos.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "YOSADRAW $v" --notes-file RELEASE_NOTES.md; fi
