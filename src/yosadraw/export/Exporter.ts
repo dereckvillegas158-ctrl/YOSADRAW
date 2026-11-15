@@ -126,7 +126,8 @@ export class Exporter {
     if (bridge?.writeExport && folder) {
       const paths: string[] = [];
       for (const f of files) paths.push(await bridge.writeExport(folder, f.name, f.data, overwrite));
-      return { mode: 'desktop', paths, folder, total, names: paths.map(p => p.split(/[\\/]/).pop()!) };
+      const names = paths.map(p => bridge.describe?.(p).name ?? p.split(/[\\/]/).pop()!);
+      return { mode: 'desktop', paths, folder, total, names };
     }
     let blob: Blob, name: string;
     if (files.length === 1) { blob = new Blob([files[0].data as Uint8Array<ArrayBuffer>], { type: files[0].mime }); name = files[0].name; }

@@ -11,6 +11,7 @@ import { h, toast } from './dom';
 import { ICONS } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { LibraryPanel } from './LibraryPanel';
+import { closeTopOverlay, dragToClose, isPhone, normalizeTouch, openMore, QuickSliders, type TouchPrefs, watchDevice } from './Mobile';
 import { PropertiesBar } from './PropertiesBar';
 import { Thumbnails } from './thumbnails';
 import { normalizeLayout, Toolbar } from './Toolbar';
@@ -33,12 +34,15 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   mgr.load((saved?.tools as Record<string, unknown>) ?? null);
   let layout = normalizeLayout(saved?.toolbar);
   let tab = typeof saved?.tab === 'string' ? saved.tab : 'layers';
+  let touch: TouchPrefs = normalizeTouch(saved?.touch);
+  const applyTouch = () => { engine.fingerMode = touch.finger; engine.holdToPick = touch.hold; };
+  applyTouch();
 
   // ---------- Guardado de preferencias ----------
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts }), 500);
+    saveTimer = window.setTimeout(() => void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch }), 500);
   };
   mgr.onChange = save;
 
@@ -59,7 +63,15 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   ];
   const tabButtons = tabs.map(t => h('button', { type: 'button', role: 'tab', id: `tab-${t.id}`, 'aria-controls': `pane-${t.id}`, on: { click: () => showTab(t.id) } }, t.label));
   const panes = tabs.map(t => h('div', { role: 'tabpanel', id: `pane-${t.id}`, 'aria-labelledby': `tab-${t.id}`, class: 'pane' }, t.el));
-  $('panel').append(h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Paneles' }, ...tabButtons), ...panes);
+  const grip = h('div', { class: 'sheet-grip panel-grip', 'aria-hidden': 'true' });
+  $('panel').append(grip, h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Paneles' }, ...tabButtons), ...panes);
+  const setPanel = (open: boolean) => {
+    document.body.classList.toggle('panel-open', open);
+    $('panel-toggle').setAttribute('aria-expanded', String(open));
+  };
+  // En el teléfono el panel es una hoja: se cierra tocando fuera o deslizando el asa hacia abajo.
+  $('panel-scrim').addEventListener('pointerdown', () => setPanel(false));
+  dragToClose($('panel'), grip, () => setPanel(false));
   function showTab(id: string) {
     tab = id;
     tabs.forEach((t, i) => { tabButtons[i].setAttribute('aria-selected', String(t.id === id)); panes[i].hidden = t.id !== id; });
@@ -86,6 +98,7 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   const icon = (id: string, key: keyof typeof ICONS) => { $(id).innerHTML = ICONS[key]; };
   icon('undo', 'undo'); icon('redo', 'redo'); icon('zoom-in', 'zoomIn'); icon('zoom-out', 'zoomOut'); icon('fit', 'fit');
   icon('rot-left', 'rotL'); icon('rot-right', 'rotR'); icon('panel-toggle', 'sliders'); icon('keys-btn', 'keyboard'); icon('customize-btn', 'layout');
+  icon('more-btn', 'more');
   $('export-btn').insertAdjacentHTML('afterbegin', ICONS.export);
   $('export-btn').addEventListener('click', () => void exportDialog.show());
   $('undo').addEventListener('click', () => engine.undo());
@@ -97,11 +110,33 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   $('rot-left').addEventListener('click', () => engine.rotateBy(-15));
   $('rot-right').addEventListener('click', () => engine.rotateBy(15));
   $('rot-value').addEventListener('click', () => engine.setRotation(0));
+  const customize = () => openCustomize(mgr, layout, l => { layout = l; toolbar.setLayout(l); save(); });
   $('keys-btn').addEventListener('click', () => openShortcuts(mgr, save));
-  $('customize-btn').addEventListener('click', () => openCustomize(mgr, layout, l => { layout = l; toolbar.setLayout(l); save(); }));
-  $('panel-toggle').addEventListener('click', () => {
-    const open = document.body.classList.toggle('panel-open');
-    $('panel-toggle').setAttribute('aria-expanded', String(open));
+  $('customize-btn').addEventListener('click', customize);
+  $('panel-toggle').addEventListener('click', () => setPanel(!document.body.classList.contains('panel-open')));
+  // Color actual en la barra superior: abre el panel de color.
+  const colorDot = $('color-btn').querySelector<HTMLElement>('.color-dot')!;
+  const showColor = () => { colorDot.style.background = mgr.colors.primary; $('color-btn').title = `Color ${mgr.colors.primary}`; };
+  mgr.on('colors', showColor);
+  showColor();
+  $('color-btn').addEventListener('click', () => {
+    const open = document.body.classList.contains('panel-open') && tab === 'color';
+    if (!open) showTab('color');
+    setPanel(!open);
+  });
+
+  // ---------- Táctil y teléfono ----------
+  const quick = new QuickSliders(mgr, () => touch);
+  $('canvas-host').append(quick.el);
+  const setTouch = (p: TouchPrefs) => { touch = p; applyTouch(); quick.render(); save(); };
+  $('more-btn').addEventListener('click', () => openMore({ engine, prefs: () => touch, setPrefs: setTouch, openCustomize: customize, openShortcuts: () => openShortcuts(mgr, save) }));
+  // Al pasar a teléfono el panel empieza cerrado (es una hoja sobre el lienzo).
+  watchDevice(() => { if (isPhone()) setPanel(false); });
+  // Extremo borrador del lápiz: borrador mientras se usa; al levantarlo vuelve la herramienta anterior.
+  let beforeEraser: string | null = null;
+  engine.on('stylusEraser', on => {
+    if (on && mgr.current.id !== 'eraser') { beforeEraser = mgr.current.id; mgr.select('eraser'); }
+    else if (!on && beforeEraser) { const id = beforeEraser; beforeEraser = null; setTimeout(() => mgr.select(id), 0); }
   });
 
   const undoBtn = $<HTMLButtonElement>('undo'), redoBtn = $<HTMLButtonElement>('redo');
@@ -144,7 +179,8 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
     $('st-items').textContent = `${s.layers} capas · ${s.items} elementos`;
     $('st-render').textContent = `${s.renderMs.toFixed(1)} ms${s.progressive ? ' (por lotes)' : ''}`;
   });
-  const where = lib.storageKind === 'desktop' ? 'en este equipo' : lib.storageKind === 'browser' ? 'en el navegador' : 'solo en esta sesión';
+  const android = document.documentElement.classList.contains('android');
+  const where = lib.storageKind === 'desktop' ? (android ? 'en este dispositivo' : 'en este equipo') : lib.storageKind === 'browser' ? 'en el navegador' : 'solo en esta sesión';
   $('st-save').textContent = `Biblioteca ${where}`;
   lib.on('saved', r => {
     $('st-save').textContent = r.ok ? `Guardado ${where} · ${new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}` : 'Error al guardar';
@@ -163,9 +199,10 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   });
   window.addEventListener('keyup', e => { if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(false); } });
   window.addEventListener('blur', () => engine.setSpacePan(false));
-  window.addEventListener('beforeunload', () => { void lib.saveNow(); void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts }); });
+  window.addEventListener('yosadraw:persist', () => { clearTimeout(saveTimer); void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch }); });
+  window.addEventListener('beforeunload', () => { void lib.saveNow(); void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch }); });
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog };
+  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog, closeTopOverlay, quick };
 }

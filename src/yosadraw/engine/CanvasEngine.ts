@@ -9,7 +9,7 @@ import { distanceToRuler, projectOnRuler, symmetryMatrices, type Ruler, type Sym
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
 import { strokeSelectionOutline } from '../doc/Selection';
 import { Emitter } from './Emitter';
-import { Navigation, type NavMode } from './Navigation';
+import { fromOverlayUi, Navigation, type NavMode } from './Navigation';
 import { invert, multiply, ViewTransform, type Mat, type ViewState } from './ViewTransform';
 
 export type EngineMode = 'paint' | 'erase' | 'pan' | 'rotate' | 'custom';
@@ -45,7 +45,12 @@ export type EngineEvents = {
   /** Color tomado con Alt + clic. */
   picked: string;
   notice: string;
+  /** El extremo borrador del lápiz se apoyó (true) o se levantó (false). */
+  stylusEraser: boolean;
 };
+
+/** Qué hace un dedo sobre el lienzo. */
+export type FingerMode = 'auto' | 'draw' | 'navigate';
 
 export interface CanvasEngineOptions {
   width: number;
@@ -88,6 +93,14 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   symmetry: Symmetry = { enabled: false, mode: 'vertical', cx: 0, cy: 0, count: 6 };
   /** Distancia (px de pantalla) a la que un trazo se engancha a la regla. */
   rulerSnap = 60;
+  /**
+   * Dedo: 'auto' dibuja hasta que se usa un lápiz (luego sólo navega: rechazo de palma),
+   * 'draw' siempre dibuja, 'navigate' sólo mueve, amplía y gira.
+   */
+  fingerMode: FingerMode = 'auto';
+  /** Mantener el dedo quieto (o pulsar el botón del lápiz) toma el color. */
+  holdToPick = true;
+  holdDelay = 500;
 
   private preset: BrushPreset;
   private _mode: EngineMode = 'paint';
@@ -119,6 +132,13 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private simulate = false;
   private sim = { x: 0, y: 0, t: 0, v: 0, p: 1 };
   private toolPointer: number | null = null;
+  private pens = new Set<number>();
+  private touches = new Set<number>();
+  private strokeStart = 0;
+  private hold: { id: number; x: number; y: number; timer: number } | null = null;
+  /** Puntero que está tomando color (mantener pulsado o botón del lápiz) y su lupa. */
+  private picking: { id: number; x: number; y: number; color: string | null } | null = null;
+  private stylusEraser = false;
   private hover: { x: number; y: number; pressure: number; tilt: number; type: string } | null = null;
   private nav: Navigation;
   private resizeObs: ResizeObserver;
@@ -146,7 +166,11 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.paper = paperCanvas.getContext('2d', { alpha: false })!;
     this.live = this.liveCanvas.getContext('2d', { desynchronized: true })!;
 
-    container.addEventListener('pointerdown', e => { this.downType = e.pointerType; this.downAlt = e.altKey; }, { capture: true });
+    container.addEventListener('pointerdown', this.onCaptureDown, { capture: true });
+    container.addEventListener('pointermove', this.onCaptureMove, { capture: true, passive: true });
+    for (const t of ['pointerup', 'pointercancel'] as const) container.addEventListener(t, this.onCaptureUp, { capture: true });
+    // Mantener pulsado en Android abre el menú contextual: en el lienzo no hay menú.
+    container.addEventListener('contextmenu', e => e.preventDefault());
 
     this.nav = new Navigation({
       view: this.view,
@@ -157,12 +181,16 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       cancelStroke: () => this.cancelStroke(),
       undo: () => this.undo(),
       redo: () => this.redo(),
+      fingerNavigates: () => !this.fingerDraws(),
+      touchStrokeAge: () => (this.downType === 'touch' && this.isDrawing ? performance.now() - this.strokeStart : -1),
+      penDown: () => this.pens.size > 0,
     });
 
     new PointerInput([container], {
       begin: (_t, p) => this.beginStroke(p),
       move: pts => this.moveStroke(pts),
       end: () => this.endStroke(),
+      accept: e => this.acceptStroke(e),
     });
 
     container.addEventListener('pointerdown', this.onToolDown);
@@ -327,6 +355,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (!layer) return;
     this.nav.cancelAnimations();
     this.finishRendering();
+    this.strokeStart = performance.now();
     const view = this.layerViews.get(layer.id)!;
     const tool = this._mode === 'erase' ? 'eraser' : 'brush';
     const preset = this.preset;
@@ -386,6 +415,126 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.requestFrame();
   }
 
+  // =================== Dedo y lápiz ===================
+
+  /** El dedo dibuja (según `fingerMode` y si ya se ha usado un lápiz). */
+  fingerDraws() { return this.fingerMode === 'draw' || (this.fingerMode === 'auto' && !this.nav.penUsed); }
+
+  /** ¿Puede este puntero empezar un trazo o un gesto de herramienta? */
+  private acceptStroke(e: PointerEvent): boolean {
+    if (this.picking || fromOverlayUi(e)) return false;
+    if (e.pointerType === 'pen') return !(e.button === 2 || (e.buttons & 2));
+    if (e.pointerType === 'touch') return this.fingerDraws() && this.pens.size === 0 && this.touches.size <= 1;
+    return true;
+  }
+
+  private local(e: PointerEvent) {
+    const r = this.element.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  private onCaptureDown = (e: PointerEvent) => {
+    if (fromOverlayUi(e)) return;
+    this.downType = e.pointerType;
+    this.downAlt = e.altKey;
+    if (this.hold && this.hold.id !== e.pointerId) this.disarmHold();
+    if (e.pointerType === 'pen') {
+      this.pens.add(e.pointerId);
+      // Extremo borrador (S Pen, Surface Pen…): la app cambia al borrador mientras se usa.
+      const eraser = e.button === 5 || (e.buttons & 32) !== 0;
+      if (eraser !== this.stylusEraser) { this.stylusEraser = eraser; this.emit('stylusEraser', eraser); }
+      // Botón lateral del lápiz: cuentagotas (no dibuja).
+      if ((e.button === 2 || (e.buttons & 2)) && this.holdToPick && this.pickMode()) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        this.startPicking(e.pointerId, this.local(e));
+      }
+      return;
+    }
+    if (e.pointerType === 'touch') {
+      if (this.pens.size) { e.stopImmediatePropagation(); return; } // palma apoyada mientras se dibuja con lápiz
+      this.touches.add(e.pointerId);
+      if (this.touches.size === 1 && this.holdToPick && this.pickMode()) {
+        const p = this.local(e);
+        this.hold = { id: e.pointerId, x: p.x, y: p.y, timer: window.setTimeout(this.fireHold, this.holdDelay) };
+      }
+    }
+  };
+
+  private onCaptureMove = (e: PointerEvent) => {
+    if (this.picking?.id === e.pointerId) { const p = this.local(e); this.picking.x = p.x; this.picking.y = p.y; this.samplePick(); return; }
+    const h = this.hold;
+    if (h && h.id === e.pointerId) {
+      const p = this.local(e);
+      if (Math.hypot(p.x - h.x, p.y - h.y) > 10) this.disarmHold();
+    }
+  };
+
+  private onCaptureUp = (e: PointerEvent) => {
+    if (this.hold?.id === e.pointerId) this.disarmHold();
+    this.touches.delete(e.pointerId);
+    if (this.pens.delete(e.pointerId) && this.stylusEraser) { this.stylusEraser = false; this.emit('stylusEraser', false); }
+    if (this.picking?.id === e.pointerId) {
+      const c = this.picking.color;
+      this.picking = null;
+      if (c && e.type === 'pointerup') this.emit('picked', c);
+      this.requestFrame();
+    }
+  };
+
+  /** Tomar color tiene sentido con herramientas de pintura o si el dedo sólo navega. */
+  private pickMode() {
+    if (this.primaryMode() !== 'draw') return false;
+    return this._mode === 'paint' || !this.fingerDraws();
+  }
+
+  private disarmHold() {
+    if (this.hold) { clearTimeout(this.hold.timer); this.hold = null; }
+  }
+
+  private fireHold = () => {
+    const h = this.hold;
+    this.hold = null;
+    if (!h || this.touches.size !== 1 || this.nav.active) return;
+    // El dedo quieto empezó un punto: se descarta y se pasa a tomar color.
+    this.cancelStroke();
+    this.startPicking(h.id, h);
+    try { navigator.vibrate?.(12); } catch { /* sin vibración */ }
+  };
+
+  private startPicking(id: number, p: { x: number; y: number }) {
+    this.cancelStroke();
+    this.nav.cancelGesture();
+    this.picking = { id, x: p.x, y: p.y, color: null };
+    this.samplePick();
+  }
+
+  private samplePick() {
+    const pk = this.picking;
+    if (!pk) return;
+    const [r, g, b, a] = this.sampleColor(pk.x, pk.y, 'all', 1);
+    pk.color = a > 0 ? `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}` : pk.color;
+    this.requestFrame();
+  }
+
+  /** Lupa del cuentagotas: anillo con el color nuevo (arriba) y el actual (abajo), sobre el dedo. */
+  private drawLoupe(ctx: CanvasRenderingContext2D) {
+    const pk = this.picking;
+    if (!pk) return;
+    const R = 46, cx = pk.x, cy = Math.max(R + 8, pk.y - 90);
+    ctx.save();
+    ctx.lineWidth = 14;
+    ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 0); ctx.strokeStyle = pk.color ?? this.color; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI); ctx.strokeStyle = this.color; ctx.stroke();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath(); ctx.arc(cx, cy, R + 7.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R - 7.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(20,14,40,0.9)';
+    ctx.beginPath(); ctx.moveTo(pk.x - 8, pk.y); ctx.lineTo(pk.x + 8, pk.y); ctx.moveTo(pk.x, pk.y - 8); ctx.lineTo(pk.x, pk.y + 8); ctx.stroke();
+    ctx.restore();
+  }
+
   // =================== Herramientas propias ===================
 
   private toolEvent(e: PointerEvent): ToolEvent {
@@ -398,8 +547,9 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private onToolDown = (e: PointerEvent) => {
     if (this._mode !== 'custom' || !this.handler || this.primaryMode() !== 'draw' || this.nav.active || this.toolPointer !== null) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (e.pointerType === 'touch' && this.nav.penUsed) return;
+    if (!this.acceptStroke(e)) return;
     this.finishRendering();
+    this.strokeStart = performance.now();
     this.toolPointer = e.pointerId;
     try { this.element.setPointerCapture(e.pointerId); } catch { /* sin captura */ }
     this.handler.down?.(this.toolEvent(e));
@@ -761,6 +911,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.drawSelection(ctx);
     this.drawAssists(ctx);
     if (this.handler?.overlay) { ctx.save(); this.handler.overlay(ctx); ctx.restore(); }
+    if (this.picking) { this.drawLoupe(ctx); return; }
     const h = this.hover;
     if (h && h.type !== 'touch' && (this._mode === 'paint' || this._mode === 'erase') && this.primaryMode() === 'draw' && !this.nav.active) {
       const r = Math.max(1.5, (this.preset.size.size * this.view.scale) / 2);

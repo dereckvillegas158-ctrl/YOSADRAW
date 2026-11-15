@@ -15,9 +15,14 @@
     "dist:win": "npm run build && electron-builder --win nsis portable --x64",
     "dist:win:dir": "npm run build && electron-builder --win dir --x64",
     "artifact": "node scripts/build-artifact.mjs index.html yosadraw.html YOSADRAW && node scripts/build-artifact.mjs lab.html trazo-estable.html \"Trazo Estable\"",
-    "dist:win:zip": "npm run build && electron-builder --win zip --x64"
+    "dist:win:zip": "npm run build && electron-builder --win zip --x64",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android",
+    "apk": "npm run android:sync && cd android && ./gradlew assembleRelease",
+    "apk:debug": "npm run android:sync && cd android && ./gradlew assembleDebug"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.4.3",
     "@fontsource/instrument-sans": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/outfit": "^5.3.0",
@@ -45,7 +50,8 @@
       "dist/**/*",
       "desktop/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!node_modules/@capacitor/**"
     ],
     "asar": true,
     "win": {
@@ -81,5 +87,10 @@
       "artifactName": "YOSADRAW-${version}-x64-portable.${ext}"
     },
     "publish": null
+  },
+  "dependencies": {
+    "@capacitor/android": "8.4.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.4.3"
   }
 }

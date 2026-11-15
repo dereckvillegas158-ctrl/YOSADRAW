@@ -100,6 +100,8 @@ export class ExportDialog {
     nameInput.addEventListener('input', () => { this.o = normalizeOptions({ ...this.o, name: nameInput.value || 'Dibujo' }); this.persist(this.o); this.updateSummary(); });
     const folderRow = IS_ARTIFACT
       ? h('p', { class: 'ex-warn' }, 'La vista previa web no puede guardar archivos. Usa la app de escritorio o la versión local para exportar.')
+      : bridge?.platform === 'android'
+        ? h('p', { class: 'muted' }, o.format === 'pdf' ? 'Se guardará en Descargas/YOSADRAW.' : 'Se guardará en Imágenes/YOSADRAW (aparece en la galería).')
       : bridge?.chooseFolder
         ? h('div', { class: 'ex-folder' }, h('span', { class: 'ex-path', title: this.folder ?? '' }, this.folder ?? 'Imágenes'),
           h('button', { type: 'button', class: 'btn sm', on: { click: async () => { const f = await bridge.chooseFolder!(this.folder ?? ''); if (f) { this.folder = f; this.render(); } } } }, 'Cambiar…'))
@@ -240,12 +242,14 @@ export class ExportDialog {
       const secs = ((performance.now() - t0) / 1000).toFixed(1);
       const what = res.names.length === 1 ? res.names[0] : `${res.names.length} archivos`;
       const msg = `Exportado: ${what} (${fmtBytes(res.total)}) en ${secs} s`;
-      const reveal = res.mode === 'desktop' && bridge?.revealFile ? { label: 'Abrir carpeta', run: () => void bridge.revealFile!(res.paths[0]) } : undefined;
+      const android = bridge?.platform === 'android';
+      const reveal = res.mode === 'desktop' && bridge?.revealFile ? { label: android ? 'Abrir' : 'Abrir carpeta', run: () => void bridge.revealFile!(res.paths[0]).catch(err => toast(String(err?.message ?? err), 'error')) } : undefined;
+      const share = android && bridge?.shareFile ? () => void bridge.shareFile!(res.paths[0]).catch(err => toast(String(err?.message ?? err), 'error')) : undefined;
       toast(msg, 'ok', reveal);
       this.notifySystem(msg);
       this.busy = false;
       this.root?.classList.remove('busy');
-      this.showDone(msg, res.mode === 'desktop' ? res.paths : [], reveal);
+      this.showDone(msg, res.mode === 'desktop' ? res.paths.map(p => bridge?.describe?.(p).path ?? p) : [], reveal, share);
     } catch (e) {
       this.busy = false;
       this.root?.classList.remove('busy');
@@ -259,13 +263,14 @@ export class ExportDialog {
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification('YOSADRAW', { body: msg }); } catch { /* sin notificaciones */ }
   }
 
-  private showDone(msg: string, paths: string[], reveal?: { label: string; run: () => void }) {
+  private showDone(msg: string, paths: string[], reveal?: { label: string; run: () => void }, share?: () => void) {
     if (!this.root) return;
     const foot = this.root.querySelector('.ex-foot')!;
     foot.replaceChildren(
       h('div', { class: 'ex-done', role: 'status' }, h('strong', null, '✓ ', msg), paths.length ? h('span', { class: 'ex-path', title: paths.join('\n') }, paths[0]) : h('span', { class: 'muted' }, 'Revisa la carpeta de descargas del navegador.')),
       h('div', { class: 'ex-actions' },
-        reveal ? h('button', { type: 'button', class: 'btn', on: { click: reveal.run } }, 'Abrir carpeta') : null,
+        reveal ? h('button', { type: 'button', class: 'btn', on: { click: reveal.run } }, reveal.label) : null,
+        share ? h('button', { type: 'button', class: 'btn', on: { click: share } }, 'Compartir') : null,
         h('button', { type: 'button', class: 'btn ghost', on: { click: () => this.render() } }, 'Exportar otra vez'),
         h('button', { type: 'button', class: 'btn primary', on: { click: () => this.close() } }, 'Cerrar')));
   }

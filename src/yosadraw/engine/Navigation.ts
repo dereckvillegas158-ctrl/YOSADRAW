@@ -12,6 +12,12 @@ export interface NavHost {
   cancelStroke(): void;
   undo(): void;
   redo(): void;
+  /** Un dedo solo navega (no dibuja). */
+  fingerNavigates(): boolean;
+  /** ms desde que empezó el trazo con el dedo en curso, o -1 si no hay. */
+  touchStrokeAge(): number;
+  /** Hay un lápiz apoyado (los toques son la palma). */
+  penDown(): boolean;
 }
 
 type Gesture =
@@ -20,6 +26,9 @@ type Gesture =
   | { kind: 'pinch'; a: number; b: number; dA: { x: number; y: number }; dB: { x: number; y: number } };
 
 const DEG = Math.PI / 180;
+
+/** Controles flotantes dentro del lienzo (marcados con data-ui): no son toques del lienzo. */
+export const fromOverlayUi = (e: Event) => !!(e.target as Element | null)?.closest?.('[data-ui]');
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 /**
@@ -28,7 +37,9 @@ const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
  * - Botón central del ratón, herramienta Mano o barra espaciadora: desplaza.
  * - Herramienta Rotar: gira alrededor del centro (Mayús: pasos de 15°).
  * - Táctil: dos dedos = zoom + giro + desplazamiento simultáneos;
- *   toque con dos dedos = deshacer, con tres = rehacer.
+ *   toque con dos dedos = deshacer, con tres = rehacer. Un dedo desplaza si
+ *   el dedo no dibuja. Un segundo dedo que llega tarde a un trazo ya largo se
+ *   ignora (apoyo accidental), y con el lápiz apoyado no cuenta ningún toque.
  */
 export class Navigation {
   private pointers = new Map<number, { x: number; y: number; type: string }>();
@@ -51,6 +62,8 @@ export class Navigation {
   }
 
   get active() { return this.gesture !== null; }
+  /** Suelta el gesto en curso sin terminarlo (p. ej. al pasar a tomar color). */
+  cancelGesture() { if (this.gesture) { this.gesture = null; this.host.viewChanged(); } }
   get panning() { return this.gesture?.kind === 'pan'; }
   /** Se ha usado un lápiz: a partir de ahí el dedo sólo navega. */
   get penUsed() { return this.penSeen; }
@@ -137,8 +150,11 @@ export class Navigation {
 
   // ---------- Punteros ----------
   private onDown = (e: PointerEvent) => {
+    if (fromOverlayUi(e)) return;
     const p = this.local(e);
     if (e.pointerType === 'pen') this.penSeen = true;
+    if (e.pointerType === 'touch' && this.host.penDown()) return;
+    if (e.pointerType === 'touch' && this.host.touchStrokeAge() > 350) return;
     this.pointers.set(e.pointerId, { ...p, type: e.pointerType });
 
     if (e.pointerType === 'touch') {
@@ -151,7 +167,10 @@ export class Navigation {
         this.start({ kind: 'pinch', a, b, dA: this.host.view.toDoc(pa.x, pa.y), dB: this.host.view.toDoc(pb.x, pb.y) }, e);
         return;
       }
-      if (touches.length === 1 && (this.penSeen || this.host.primaryMode() !== 'draw')) this.startPrimary(e, p);
+      if (touches.length === 1) {
+        if (this.host.primaryMode() !== 'draw') this.startPrimary(e, p);
+        else if (this.host.fingerNavigates()) this.start({ kind: 'pan', id: e.pointerId, ...p }, e);
+      }
       return;
     }
     if (e.pointerType === 'mouse' && e.button === 1) { e.preventDefault(); this.start({ kind: 'pan', id: e.pointerId, ...p }, e); return; }

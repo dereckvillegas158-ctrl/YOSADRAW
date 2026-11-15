@@ -4,6 +4,11 @@ export interface PointerSink {
   begin(target: HTMLElement, p: StrokePoint): void;
   move(points: StrokePoint[]): void;
   end(): void;
+  /**
+   * Opcional: decide si este puntero puede empezar un trazo (política de dedo/lápiz
+   * de la app). Si no se da, se usa el rechazo de palma por defecto.
+   */
+  accept?(e: PointerEvent): boolean;
 }
 
 /**
@@ -48,7 +53,8 @@ export class PointerInput {
   private onDown = (e: PointerEvent) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if (e.pointerType === 'pen') this.penSeen = true;
-    if (e.pointerType === 'touch' && this.penSeen) return; // rechazo de palma
+    if (this.sink.accept) { if (!this.sink.accept(e)) return; }
+    else if (e.pointerType === 'touch' && this.penSeen) return; // rechazo de palma
     if (this.activeId !== null) return;
     const el = e.currentTarget as HTMLElement;
     this.activeId = e.pointerId;

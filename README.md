@@ -2,8 +2,8 @@
 
 Aplicación de dibujo en **TypeScript + Canvas 2D** con un motor de pinceles completo, un
 estabilizador de trazos de cuatro etapas y un lienzo de alta resolución con zoom, giro y
-desplazamiento fluidos. Funciona en el navegador y como **aplicación de escritorio para
-Windows x64** (Electron).
+desplazamiento fluidos. Funciona en el navegador, como **aplicación de escritorio para
+Windows x64** (Electron) y como **app de Android** (APK, Capacitor) adaptada a dedo y lápiz.
 
 ## Empezar
 
@@ -49,6 +49,52 @@ Notas:
   cargar y guardar la biblioteca, exportar e importar con diálogos nativos, y la versión.
 - No se puede navegar fuera de la app. Los enlaces https se abren en el navegador del sistema.
 - Instancia única: abrir YOSADRAW de nuevo enfoca la ventana existente.
+
+## App de Android (APK)
+
+| Comando | Resultado |
+|---|---|
+| `npm run apk` | `android/app/build/outputs/apk/release/app-release.apk` (firmado) |
+| `npm run apk:debug` | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| `npm run android:sync` | compila la web y la copia al proyecto `android/` |
+| `npm run android:open` | abre el proyecto en Android Studio |
+
+Requisitos para compilar: JDK 21 y el SDK de Android (plataforma 36, build-tools 35/36), con
+`sdk.dir` en `android/local.properties` o `ANDROID_HOME`. Android 7.0 (API 24) o superior.
+
+**Firma.** `android/keystore.properties` (no se sube a git) apunta a la clave `.jks`:
+```
+storeFile=yosadraw-release.jks
+storePassword=…
+keyAlias=yosadraw
+keyPassword=…
+```
+Sin ese archivo, la release se firma con la clave de depuración. Guarda la clave: las
+actualizaciones solo se instalan encima si van firmadas con la misma.
+
+### Qué cambia en el teléfono
+- **Interfaz**: barra superior compacta (deshacer, rehacer, zoom, exportar, color, «Más» y paneles);
+  herramientas abajo en vertical y a la izquierda en horizontal; capas, color y pinceles en una
+  hoja inferior que se cierra deslizando; diálogos y editor de pinceles a pantalla completa;
+  respeta muescas y barra de gestos. En tableta se mantiene el diseño de escritorio con controles
+  táctiles más grandes.
+- **Deslizadores rápidos** de tamaño y opacidad junto al borde del lienzo (lado configurable).
+- **Dedo**: *Automático* (dibuja hasta que se usa un lápiz; luego sólo navega y la palma no pinta),
+  *Dibuja* o *Sólo navega*. Dos dedos: mover, ampliar y girar a la vez. Toque con dos dedos:
+  deshacer; con tres: rehacer. Un segundo dedo que llega tarde a un trazo largo se ignora.
+- **Mantener pulsado** con el dedo: cuentagotas con lupa; se arrastra para afinar.
+- **Lápiz** (S Pen, lápices activos USI): presión, inclinación y vista previa del pincel al pasar por
+  encima. Botón lateral: cuentagotas. Extremo borrador: borra y al levantarlo vuelve la herramienta.
+- **Botón Atrás**: cierra el diálogo, menú o panel abierto; sin nada abierto, envía la app al fondo.
+- **Guardado**: biblioteca y preferencias en archivos privados de la app (se guardan también al
+  salir al fondo).
+- **Exportar**: las imágenes van a *Imágenes/YOSADRAW* (aparecen en la galería) y los PDF a
+  *Descargas/YOSADRAW*, con MediaStore (sin permisos en Android 10+). Los datos pasan al lado nativo
+  por trozos de 1,5 MB, así que un TIFF de 50 MB no bloquea el puente. Al terminar: **Abrir** y
+  **Compartir**.
+
+Código: `src/yosadraw/platform/android.ts` (puente JS), `src/yosadraw/ui/Mobile.ts` y `mobile.css`
+(interfaz), `android/app/src/main/java/com/yosadraw/app/YosaFilesPlugin.java` (archivos nativos).
 
 ## Arquitectura
 
