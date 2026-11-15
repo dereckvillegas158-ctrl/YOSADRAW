@@ -27,8 +27,8 @@ npm run desktop:dev    # la app en Electron, con recarga en caliente
 
 | Comando | Resultado en `release/` | Dónde se puede generar |
 |---|---|---|
-| `npm run dist:win` | `YOSADRAW-Setup-1.1.1-x64.exe` (instalador) y `YOSADRAW-1.1.1-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
-| `npm run dist:win:zip` | `YOSADRAW-1.1.1-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
+| `npm run dist:win` | `YOSADRAW-Setup-1.2.0-x64.exe` (instalador) y `YOSADRAW-1.2.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
+| `npm run dist:win:zip` | `YOSADRAW-1.2.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
 | `npm run dist:win:dir` | `release/win-unpacked/YOSADRAW.exe` | Cualquier sistema |
 
 El workflow `.github/workflows/build-windows.yml` compila el instalador y la versión portable
@@ -245,6 +245,49 @@ de la interfaz.
 | Abrir proyecto | 1,3 s | 0,8 s | descompresión en el worker |
 | Arranque (JS principal) | 1,39 MB | 0,34 MB | el codificador de exportación (PSD, WebP) se carga al exportar por primera vez |
 | Memoria | 144 MB | 97 MB | |
+
+## Efectos
+Botón ✦ **Efectos** en la barra superior (en el teléfono, en «Más»), o **Ctrl+Mayús+F**. Se elige un
+efecto, se ajusta con **vista previa en vivo** sobre el lienzo y se aplica a:
+- **la capa activa**: su contenido se sustituye por el resultado (un solo paso deshacible);
+- **el lienzo completo**: la composición de las capas visibles se procesa en una capa nueva
+  «Efecto · …» y las de origen se ocultan (no se pierde nada).
+
+Si hay selección, sólo se aplica dentro. Si la capa tiene el **alfa bloqueado**, se conserva su
+transparencia. Cada efecto tiene además **Intensidad del efecto** (mezcla con el original), botón
+**Antes / después** (mantener pulsado) y **Restablecer** (doble clic en un deslizador = su valor por
+defecto). Los últimos ajustes de cada efecto se recuerdan.
+
+| Categoría | Efectos |
+|---|---|
+| Color | Tono/saturación/luminosidad (con «Colorear»), Cambiar un tono (rango de tono → otro tono), Brillo y contraste, Exposición y gamma, Niveles, Equilibrio de color (sombras/medios/luces), Temperatura y tinte, Intensidad (vibrance), Filtro de color (multiplicar/teñir/superponer/trama), Mapa de degradado, Blanco y negro, Sepia, Invertir, Posterizar, Umbral |
+| Desenfoque | Gaussiano, Movimiento, Radial (zoom), Giratorio, Lente (bokeh), Miniatura (tilt-shift) |
+| Nitidez | Máscara de enfoque, Claridad (contraste local) |
+| Estilizar | Aberración cromática (radial o lineal), Resplandor (bloom), Sombra paralela, Contorno exterior, Viñeta, Semitono (CMYK o mono), Pixelar, Detectar bordes, Relieve, Pintura al óleo (Kuwahara), Glitch, Pantalla CRT |
+| Distorsión | Ondas, Remolino, Abultar/pellizcar |
+| Textura | Ruido/grano, Tramado (Bayer), Textura de papel |
+
+**Cómo están hechos (y por qué van rápido)**
+- Todo en la **GPU con WebGL2** (`src/yosadraw/effects/`): cada efecto es una cadena de shaders.
+- Texturas en **alfa premultiplicado**: los desenfoques no dejan halos oscuros en los bordes de los trazos.
+- **Desenfoque gaussiano separable con pirámide**: para radios grandes se reduce la imagen a la mitad
+  las veces necesarias, así un radio de 200 px cuesta casi lo mismo que uno de 6. El bokeh y la pintura
+  al óleo también trabajan a menor resolución cuando el radio es grande.
+- Las medidas están en **px de documento**: la vista previa (a resolución de pantalla, con la escala de
+  la vista) se ve igual que el resultado final (a resolución completa).
+- Documentos grandes: **mosaicos de 2048 px** con un margen igual al alcance del efecto, alineados a
+  64 px para que las reducciones caigan en la misma rejilla; probado que el resultado con y sin
+  mosaicos coincide (diferencia ≤ 2/255). Fuera de la imagen todo es transparente.
+- Vista previa: la imagen de origen se guarda mientras no cambian la vista ni el documento, y se usan
+  dos lienzos alternos; al cerrar se libera la memoria de vídeo.
+
+## Bloquear alfa
+Botón con damero en cada capa, o tecla **/**. Con el alfa bloqueado, lo que se pinta (pinceles, bote,
+degradado, formas, rellenar selección) sólo cambia el color de lo que ya hay: la transparencia no cambia
+(`source-atop`, exacto con fusión normal; con otras fusiones se recorta por el alfa de la capa). Lo
+pintado así queda marcado y sigue igual al repintar, al reabrir y al exportar, aunque luego se
+desbloquee la capa. El borrador y «Borrar selección» no actúan en una capa con el alfa bloqueado
+(cambiarían su transparencia). Se guarda en el `.yosa` y en el PSD («bloquear píxeles transparentes»).
 
 ## Proyectos y galería
 Al abrir YOSADRAW aparece la **galería**: miniaturas grandes, nombre, fecha de modificación,

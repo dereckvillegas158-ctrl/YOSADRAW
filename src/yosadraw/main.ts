@@ -8,6 +8,7 @@ import '@fontsource/jetbrains-mono/latin-500.css';
 import './ui/yosadraw.css';
 import './ui/mobile.css';
 import './ui/gallery.css';
+import './ui/effects.css';
 import { BrushLibrary } from './brush/BrushLibrary';
 import { GrainCache } from './brush/GrainCache';
 import { ImageStore } from './brush/ImageStore';

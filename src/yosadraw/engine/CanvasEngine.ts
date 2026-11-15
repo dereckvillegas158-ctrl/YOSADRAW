@@ -341,7 +341,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.applyLayerStyle(l);
   }
   /** Confirma propiedades; `from` son los valores previos si hubo vista previa. */
-  setLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'opacity' | 'blend'>>, from?: Partial<Layer>) {
+  setLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend'>>, from?: Partial<Layer>) {
     const l = this.doc.layer(id);
     if (!l) return;
     if (from) Object.assign(l, from);
@@ -397,6 +397,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (this.downAlt) { this.pickColor(p.x, p.y); return; }
     const layer = this.editableLayer();
     if (!layer) return;
+    if (layer.alphaLock && this._mode === 'erase') { this.emit('notice', 'La capa tiene el alfa bloqueado: el borrador no puede cambiar su transparencia'); return; }
     this.nav.cancelAnimations();
     this.strokeStart = performance.now();
     // Capa aún repintándose (p. ej. justo después de un zoom) y cara de terminar: el trazo
@@ -435,7 +436,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const tool = this._mode === 'erase' ? 'eraser' : 'brush';
     const stroke = finishStrokeOffline(preset, this.color, tool, (Math.random() * 2 ** 32) >>> 0, docPts.length ? docPts : [this.toDoc(p0)], symmetryMatrices(this.symmetry));
     this.ghosts.push({ layer: layer.id, points: pd.points, color: this.color, width: Math.max(1, preset.size.size * this.view.scale * 0.8), erase: tool === 'eraser' });
-    const item = this.doc.item({ kind: 'stroke', stroke }, { clip: this.doc.selection });
+    const item = this.doc.paintItem(layer.id, { kind: 'stroke', stroke }, { clip: this.doc.selection });
     this.exec(this.doc.cmdAddItems(layer.id, [item], tool === 'eraser' ? 'Borrar' : 'Trazo'), false);
     return true;
   }
@@ -470,7 +471,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.session = new BrushStrokeSession(this.painter, {
       target: view.ctx, overlay: this.live, M: this.V, dpr: this.dpr, buffers: this.buffers, paperColor: this.paperColor,
       clip: sel ? this.items.selectionMask(sel, this.V, this.dpr, view.canvas.width, view.canvas.height) : null,
-      mirrors: symmetryMatrices(this.symmetry),
+      mirrors: symmetryMatrices(this.symmetry), atop: layer.alphaLock,
     }, preset, this.color, tool, (Math.random() * 2 ** 32) >>> 0);
     const first = this.stabilizer.pipeline.beginStroke(p).map(q => this.toDoc(q));
     this.session.begin(first[0] ?? this.toDoc(p));
@@ -505,7 +506,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.session = null;
     this.rulerLocked = false;
     const layer = this.doc.active;
-    const item = this.doc.item({ kind: 'stroke', stroke: finished }, { clip: this.doc.selection });
+    const item = this.doc.paintItem(layer.id, { kind: 'stroke', stroke: finished }, { clip: this.doc.selection });
     this.exec(this.doc.cmdAddItems(layer.id, [item], s.tool === 'eraser' ? 'Borrar' : 'Trazo'), true);
   }
 
@@ -528,7 +529,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
 
   /** ¿Puede este puntero empezar un trazo o un gesto de herramienta? */
   private acceptStroke(e: PointerEvent): boolean {
-    if (this.picking || fromOverlayUi(e)) return false;
+    if (this.picking || this.inputLocked || fromOverlayUi(e)) return false;
     if (e.pointerType === 'pen') return !(e.button === 2 || (e.buttons & 2));
     if (e.pointerType === 'touch') return this.fingerDraws() && this.pens.size === 0 && this.touches.size <= 1;
     return true;
@@ -763,6 +764,83 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       g.drawImage(this.layerViews.get(l.id)!.canvas, x0, y0, sw, sh, 0, 0, W, H);
     }
     return c;
+  }
+
+  // =================== Efectos ===================
+
+  /** Con la ventana de efectos abierta no se pinta (sólo se navega para inspeccionar). */
+  inputLocked = false;
+  private fxCanvas: HTMLCanvasElement | null = null;
+  private fxHidden: HTMLCanvasElement[] = [];
+
+  /**
+   * Imagen de pantalla (px físicos, vista actual sin girar el contenido) de una
+   * capa o de la composición de las capas visibles, para la vista previa de efectos.
+   * Devuelve también dónde cae el documento y cuántos px de pantalla mide un px de documento.
+   */
+  viewSource(target: { layer: string } | 'all'): { canvas: HTMLCanvasElement; unit: number; doc: [number, number, number, number]; mask: HTMLCanvasElement | null } | null {
+    this.finishRendering();
+    const W = this.back.width, H = this.back.height;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d')!;
+    const layers = target === 'all' ? this.doc.layers.filter(l => l.visible) : [this.doc.layer(target.layer)].filter((l): l is Layer => !!l);
+    if (!layers.length) return null;
+    for (const l of layers) {
+      const v = this.layerViews.get(l.id);
+      if (!v) continue;
+      g.globalAlpha = target === 'all' ? l.opacity : 1;
+      g.globalCompositeOperation = target === 'all' ? blendOp(l.blend) : 'source-over';
+      g.drawImage(v.canvas, 0, 0);
+    }
+    const m = this.V, d = this.dpr;
+    const pts = [[0, 0], [this.doc.width, 0], [0, this.doc.height], [this.doc.width, this.doc.height]].map(([x, y]) => [d * (m[0] * x + m[2] * y + m[4]), d * (m[1] * x + m[3] * y + m[5])]);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const doc: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+    const sel = this.doc.selection;
+    return { canvas: c, unit: this.view.scale * d, doc, mask: sel ? this.items.selectionMask(sel, m, d, W, H) : null };
+  }
+
+  /** Muestra (o quita, con null) el resultado de la vista previa en lugar de la capa o de todas. */
+  showEffectPreview(result: HTMLCanvasElement | null, target: { layer: string } | 'all' = 'all') {
+    for (const c of this.fxHidden) c.style.visibility = '';
+    this.fxHidden = [];
+    this.fxCanvas?.remove();
+    this.fxCanvas = null;
+    for (const l of this.doc.layers) this.applyLayerStyle(l);
+    if (!result) return;
+    const c = result;
+    Object.assign(c.style, { position: 'absolute', left: '0', top: '0', width: `${this.vw}px`, height: `${this.vh}px`, pointerEvents: 'none' });
+    if (target === 'all') {
+      const vis = this.doc.layers.filter(l => l.visible).map(l => this.layerViews.get(l.id)?.canvas).filter((x): x is HTMLCanvasElement => !!x);
+      vis.forEach(x => { x.style.visibility = 'hidden'; });
+      this.fxHidden = vis;
+      (vis[vis.length - 1] ?? this.stack.firstElementChild!).after(c);
+    } else {
+      const l = this.doc.layer(target.layer), v = l && this.layerViews.get(l.id);
+      if (!l || !v) return;
+      c.style.opacity = String(l.opacity);
+      c.style.mixBlendMode = l.blend;
+      v.canvas.style.visibility = 'hidden';
+      this.fxHidden = [v.canvas];
+      v.canvas.after(c);
+    }
+    this.fxCanvas = c;
+  }
+
+  /** Composición de las capas visibles a resolución de documento (con opacidad y fusión). */
+  rasterizeVisible(): HTMLCanvasElement {
+    const out = document.createElement('canvas');
+    out.width = this.doc.width; out.height = this.doc.height;
+    const g = out.getContext('2d')!;
+    for (const l of this.doc.layers) {
+      if (!l.visible || !l.items.length) continue;
+      const r = this.rasterize([l], 1);
+      g.globalAlpha = l.opacity;
+      g.globalCompositeOperation = blendOp(l.blend);
+      g.drawImage(r, 0, 0);
+    }
+    return out;
   }
 
   /** Vista previa de una transformación de capa (GPU, sin repintar). null = quitar. */

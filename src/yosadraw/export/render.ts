@@ -97,7 +97,7 @@ export async function renderForExport(engine: CanvasEngine, o: ExportOptions, on
       const empty = x1 <= x0 || y1 <= y0;
       const lw = empty ? 1 : x1 - x0, lh = empty ? 1 : y1 - y0;
       job.layers.push({
-        name: layer.name, opacity: layer.opacity, blend: layer.blend, hidden: !layer.visible,
+        name: layer.name, opacity: layer.opacity, blend: layer.blend, hidden: !layer.visible, alphaLock: layer.alphaLock,
         data: empty ? new Uint8ClampedArray(4) : ctx.getImageData(x0, y0, lw, lh).data, left: empty ? 0 : x0, top: empty ? 0 : y0, width: lw, height: lh,
       });
     } else if (o.layers === 'individual' && !maxSide && !tile && layer.visible) {

@@ -5,6 +5,8 @@ export interface PsdLayerInput {
   opacity: number;
   blend: string;
   hidden: boolean;
+  /** Alfa bloqueado («Bloquear píxeles transparentes» en Photoshop). */
+  alphaLock?: boolean;
   /** RGBA del recorte de la capa y su posición en el documento exportado. */
   data: Uint8ClampedArray;
   left: number;
@@ -26,6 +28,7 @@ export function encodePSD(width: number, height: number, composite: Uint8Clamped
   o: { dpi: number; icc?: Uint8Array; compress: boolean }): Uint8Array {
   const children: Layer[] = layers.map(l => ({
     name: l.name.slice(0, 255), opacity: l.opacity, blendMode: BLEND[l.blend] ?? 'normal', hidden: l.hidden,
+    ...(l.alphaLock ? { transparencyProtected: true, protected: { transparency: true } } : {}),
     left: l.left, top: l.top, right: l.left + l.width, bottom: l.top + l.height,
     imageData: { data: l.data, width: l.width, height: l.height },
   }));

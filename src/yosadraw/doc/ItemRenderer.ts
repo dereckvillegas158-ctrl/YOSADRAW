@@ -114,7 +114,7 @@ export class ItemRenderer {
 
     if (it.kind === 'stroke') {
       if (!this.painter.ready(it.stroke.preset)) return;
-      this.painter.paint(ctx, it.stroke, M, dpr, scratch, clip);
+      this.painter.paint(ctx, it.stroke, M, dpr, scratch, clip, !!it.lock);
       return;
     }
     const r = this.deviceRect(it.bounds, V, dpr, W, H);
@@ -152,6 +152,15 @@ export class ItemRenderer {
       op = blendOp(it.blend);
     }
     iso.setTransform(1, 0, 0, 1, 0, 0);
+    // Alfa bloqueado: sólo sobre lo que ya hay en la capa (exacto con fusión normal).
+    if (it.lock) {
+      if (op === 'source-over') op = 'source-atop';
+      else {
+        iso.globalCompositeOperation = 'destination-in';
+        iso.drawImage(ctx.canvas, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+        iso.globalCompositeOperation = 'source-over';
+      }
+    }
     if (clip) {
       iso.globalCompositeOperation = 'destination-in';
       iso.drawImage(clip, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);

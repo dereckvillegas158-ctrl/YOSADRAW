@@ -268,6 +268,12 @@ function createWindow() {
   }
 }
 
+// Efectos (WebGL2): en PCs con la GPU en la lista negra de Chromium (controladores antiguos) o sin GPU,
+// se usa el rasterizador por software SwiftShader en vez de quedarse sin efectos. La app sólo
+// carga su propio contenido local, así que el aviso «unsafe» (pensado para webs) no aplica.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

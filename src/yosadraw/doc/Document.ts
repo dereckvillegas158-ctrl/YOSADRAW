@@ -8,6 +8,8 @@ export interface Layer {
   name: string;
   visible: boolean;
   locked: boolean;
+  /** Bloquear alfa: lo que se pinta sólo cambia el color de lo que ya hay, nunca la transparencia. */
+  alphaLock: boolean;
   opacity: number;
   blend: LayerBlend;
   items: Item[];
@@ -78,7 +80,7 @@ export class Document {
 
   newLayer(name?: string): Layer {
     const n = this.nextLayer++;
-    return { id: `L${n}_${Math.random().toString(36).slice(2, 7)}`, name: name ?? `Capa ${n}`, visible: true, locked: false, opacity: 1, blend: 'normal', items: [] };
+    return { id: `L${n}_${Math.random().toString(36).slice(2, 7)}`, name: name ?? `Capa ${n}`, visible: true, locked: false, alphaLock: false, opacity: 1, blend: 'normal', items: [] };
   }
 
   /** Crea un elemento con identificador y cajas calculadas. */
@@ -89,6 +91,16 @@ export class Document {
     if (sb) local = { minX: Math.max(local.minX, sb.minX), minY: Math.max(local.minY, sb.minY), maxX: Math.min(local.maxX, sb.maxX), maxY: Math.min(local.maxY, sb.maxY) };
     const m = extra.m ?? null;
     return { ...data, id: this.nextItem++, m, clip: extra.clip ?? null, local, bounds: m ? transformAABB(m, local) : local } as Item;
+  }
+
+  /**
+   * Elemento pintado por una herramienta de pintura (pincel, bote, degradado, formas):
+   * si la capa tiene el alfa bloqueado, queda marcado para dibujarse sólo sobre lo existente.
+   */
+  paintItem(layerId: string, data: ItemData, extra: { m?: Mat | null; clip?: Selection | null } = {}): Item {
+    const it = this.item(data, extra);
+    if (this.layer(layerId)?.alphaLock) it.lock = true;
+    return it;
   }
 
   /* ---------- Comandos ---------- */
@@ -149,7 +161,7 @@ export class Document {
     return { label: 'Mover capa', layers: [id], structure: true, redo: () => move(from, to), undo: () => move(to, from) };
   }
 
-  cmdLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'opacity' | 'blend'>>, label = 'Propiedades de capa'): Command {
+  cmdLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend'>>, label = 'Propiedades de capa'): Command {
     const l = this.layer(id)!;
     const before = Object.fromEntries(Object.keys(patch).map(k => [k, (l as unknown as Record<string, unknown>)[k]])) as typeof patch;
     return {

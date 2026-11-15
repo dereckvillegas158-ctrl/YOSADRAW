@@ -33,6 +33,8 @@ export interface SessionSurface {
   clip?: HTMLCanvasElement | null;
   /** Copias de simetría (sin la identidad). */
   mirrors?: Mat[];
+  /** Alfa de la capa bloqueado: el trazo sólo cubre lo que ya hay. */
+  atop?: boolean;
 }
 
 export interface FinishedStroke extends PaintStroke { seed: number; bounds: AABB }
@@ -187,7 +189,7 @@ export class BrushStrokeSession {
     const w = r.x1 - r.x0, h = r.y1 - r.y0;
     const fixedGrain = p.grain.enabled && p.grain.mode === 'fixed';
     const clip = this.surf.clip;
-    if (!clip && !this.painter.usesBuffer(p, this.tool)) {
+    if (!clip && !this.painter.usesBuffer(p, this.tool, !!this.surf.atop)) {
       t.save(); t.setTransform(1, 0, 0, 1, 0, 0);
       t.drawImage(b.buf, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
       t.restore();
@@ -203,7 +205,7 @@ export class BrushStrokeSession {
       if (clip) this.painter.applyClip(b.tmpCtx, clip, r);
       src = b.tmp;
     }
-    this.painter.composite(t, src, r, p, this.tool);
+    this.painter.composite(t, src, r, p, this.tool, !!this.surf.atop);
   }
 
   /** Termina el trazo y lo pinta en su forma final. */
@@ -234,7 +236,7 @@ export class BrushStrokeSession {
     const fr = this.painter.strokeRect(stroke, M, dpr, target.canvas.width, target.canvas.height);
     const rc = this.clampToTarget(unionRect({ ...this.rect }, fr));
     if (!rectEmpty(rc)) this.restore(rc);
-    this.painter.paint(target, stroke, M, dpr, buffers.bufCtx, this.surf.clip);
+    this.painter.paint(target, stroke, M, dpr, buffers.bufCtx, this.surf.clip, !!this.surf.atop);
     return stroke;
   }
 

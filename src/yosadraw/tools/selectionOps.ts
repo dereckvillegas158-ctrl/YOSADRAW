@@ -27,6 +27,7 @@ export const selectionActions = {
     if (!sel) { ctx.notify('Selecciona primero el área que quieres borrar'); return; }
     const layer = engine.editableLayer();
     if (!layer) return;
+    if (layer.alphaLock) { ctx.notify('La capa tiene el alfa bloqueado: borrar cambiaría su transparencia'); return; }
     engine.exec(d.cmdAddItems(layer.id, [d.item({ kind: 'clear' }, { clip: sel })], 'Borrar selección'));
   },
   /** Rellena la selección con el color principal en la capa activa. */
@@ -36,7 +37,7 @@ export const selectionActions = {
     const layer = engine.editableLayer();
     const b = selectionBounds(sel);
     if (!layer || !b) return;
-    const shape = d.item({ kind: 'shape', shape: { type: 'rect', x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY, sides: 4, inner: 0.5, radius: 0, fill: ctx.primary, stroke: null, width: 0, opacity: 1 } }, { clip: sel });
+    const shape = d.paintItem(layer.id, { kind: 'shape', shape: { type: 'rect', x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY, sides: 4, inner: 0.5, radius: 0, fill: ctx.primary, stroke: null, width: 0, opacity: 1 } }, { clip: sel });
     engine.exec(d.cmdAddItems(layer.id, [shape], 'Rellenar selección'));
   },
 };

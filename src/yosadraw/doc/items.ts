@@ -20,6 +20,8 @@ interface Base {
   m: Mat | null;
   /** Selección que recortaba al crear el elemento. */
   clip: Selection | null;
+  /** Pintado con el alfa de la capa bloqueado: sólo cubre lo que ya había (source-atop). */
+  lock?: boolean;
   /** Caja sin transformar y caja final en el documento. */
   local: AABB;
   bounds: AABB;

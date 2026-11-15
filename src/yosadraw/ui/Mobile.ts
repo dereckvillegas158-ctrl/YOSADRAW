@@ -207,10 +207,11 @@ export interface MoreDeps {
   setPrefs: (p: TouchPrefs) => void;
   openCustomize: () => void;
   openShortcuts: () => void;
+  openEffects?: () => void;
 }
 
 /** Vista, entrada táctil y ajustes que en el teléfono no caben en la barra superior. */
-export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts }: MoreDeps) {
+export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts, openEffects }: MoreDeps) {
   openSheet('Más opciones', close => {
     const p = prefs();
     const seg = <T extends string>(label: string, value: T, options: [T, string][], set: (v: T) => void) =>
@@ -251,6 +252,7 @@ export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts
           h('li', null, h('b', null, 'Botón del lápiz'), ' cuentagotas · ', h('b', null, 'extremo borrador'), ' borra'))),
       h('section', { class: 'sheet-sec' }, h('h3', null, 'Interfaz'),
         h('div', { class: 'sheet-row' },
+          openEffects ? viewBtn('Efectos…', () => { close(); openEffects(); }) : null,
           viewBtn('Personalizar barra', () => { close(); openCustomize(); }),
           viewBtn('Atajos de teclado', () => { close(); openShortcuts(); }))),
     ];
@@ -264,7 +266,7 @@ export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts
  * no había nada que cerrar (entonces Android sale de la app).
  */
 export function closeTopOverlay(): boolean {
-  const open = [...document.querySelectorAll<HTMLElement>('.studio-backdrop, .dialog-backdrop, .popover, .menu')]
+  const open = [...document.querySelectorAll<HTMLElement>('.fx-panel, .studio-backdrop, .dialog-backdrop, .popover, .menu')]
     .filter(el => !el.hidden && el.getClientRects().length > 0);
   const top = open[open.length - 1];
   if (top) {

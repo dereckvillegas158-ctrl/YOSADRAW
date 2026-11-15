@@ -129,7 +129,7 @@ function writeStroke(w: Writer, st: FinishedStroke): J {
 }
 
 function writeItem(w: Writer, it: Item): J {
-  const base: J = { id: it.id, kind: it.kind, m: it.m, clip: writeSelection(w, it.clip), local: it.local, bounds: it.bounds };
+  const base: J = { id: it.id, kind: it.kind, m: it.m, clip: writeSelection(w, it.clip), local: it.local, bounds: it.bounds, ...(it.lock ? { lock: true } : {}) };
   switch (it.kind) {
     case 'stroke': return { ...base, stroke: writeStroke(w, it.stroke) };
     case 'shape': return { ...base, shape: it.shape };
@@ -156,7 +156,7 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
       out.push(writeItem(w, it));
       if (performance.now() - slice > 12) { await new Promise(r => setTimeout(r, 0)); slice = performance.now(); }
     }
-    layers.push({ id: l.id, name: l.name, visible: l.visible, locked: l.locked, opacity: l.opacity, blend: l.blend, items: out });
+    layers.push({ id: l.id, name: l.name, visible: l.visible, locked: l.locked, alphaLock: l.alphaLock, opacity: l.opacity, blend: l.blend, items: out });
   }
   await w.done();
   const project = {
@@ -253,7 +253,7 @@ function readStroke(r: Reader, s: J): FinishedStroke {
 }
 
 function readItem(r: Reader, o: J): Item {
-  const base = { id: Math.max(1, Math.floor(num(o.id, 1))), m: mat(o.m), clip: readSelection(r, o.clip), local: aabb(o.local), bounds: aabb(o.bounds) };
+  const base = { id: Math.max(1, Math.floor(num(o.id, 1))), m: mat(o.m), clip: readSelection(r, o.clip), local: aabb(o.local), bounds: aabb(o.bounds), ...(o.lock === true ? { lock: true } : {}) };
   switch (o.kind) {
     case 'stroke': return { ...base, kind: 'stroke', stroke: readStroke(r, o.stroke as J) };
     case 'shape': return { ...base, kind: 'shape', shape: o.shape as never };
@@ -318,7 +318,7 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
   const settings: DocSettings = { background: meta.background, dpi: meta.dpi, profile: meta.profile };
   const doc = new Document(meta.width, meta.height, settings);
   const layers: Layer[] = (Array.isArray(d.layers) ? d.layers as J[] : []).map((l, i) => ({
-    id: str(l.id, `L${i + 1}_r`), name: str(l.name, `Capa ${i + 1}`), visible: l.visible !== false, locked: l.locked === true,
+    id: str(l.id, `L${i + 1}_r`), name: str(l.name, `Capa ${i + 1}`), visible: l.visible !== false, locked: l.locked === true, alphaLock: l.alphaLock === true,
     opacity: Math.min(1, Math.max(0, num(l.opacity, 1))), blend: blend(l.blend),
     items: (Array.isArray(l.items) ? l.items as J[] : []).map(it => readItem(r, it)),
   }));

@@ -73,8 +73,8 @@ export class StrokePainter {
     if (p.render.mode === 'smooth') return p.opacity.flow * p.opacity.opacity;
     return p.render.accumulation === 'glaze' ? p.opacity.opacity : 1;
   }
-  usesBuffer(p: BrushPreset, tool: StrokeTool): boolean {
-    return tool === 'eraser' || p.render.blend !== 'normal' || (p.grain.enabled && p.grain.mode === 'fixed') || this.compositeAlpha(p) < 1;
+  usesBuffer(p: BrushPreset, tool: StrokeTool, atop = false): boolean {
+    return atop || tool === 'eraser' || p.render.blend !== 'normal' || (p.grain.enabled && p.grain.mode === 'fixed') || this.compositeAlpha(p) < 1;
   }
 
   /** Rectángulo de dispositivo que cubre un rango de sellos. */
@@ -289,15 +289,37 @@ export class StrokePainter {
     ctx.restore();
   }
 
-  /** Compone el contenido de `src` (rectángulo r) sobre el destino. */
-  composite(target: CanvasRenderingContext2D, src: HTMLCanvasElement, r: Rect, p: BrushPreset, tool: StrokeTool) {
+  private atopTmp: CanvasRenderingContext2D | null = null;
+
+  /**
+   * Compone el contenido de `src` (rectángulo r) sobre el destino.
+   * `atop` (alfa bloqueado): el trazo sólo cubre lo que ya hay; con fusión normal es
+   * `source-atop` exacto; con otras fusiones se recorta antes por el alfa del destino.
+   */
+  composite(target: CanvasRenderingContext2D, src: HTMLCanvasElement, r: Rect, p: BrushPreset, tool: StrokeTool, atop = false) {
     if (rectEmpty(r)) return;
+    const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    let source: CanvasImageSource = src;
+    let op: GlobalCompositeOperation = tool === 'eraser' ? 'destination-out' : BLEND[p.render.blend];
+    if (atop && tool !== 'eraser') {
+      if (op === 'source-over') op = 'source-atop';
+      else {
+        const t = this.atopTmp ??= document.createElement('canvas').getContext('2d')!;
+        if (t.canvas.width < src.width || t.canvas.height < src.height) { t.canvas.width = src.width; t.canvas.height = src.height; }
+        t.setTransform(1, 0, 0, 1, 0, 0);
+        t.globalCompositeOperation = 'copy';
+        t.drawImage(src, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
+        t.globalCompositeOperation = 'destination-in';
+        t.drawImage(target.canvas, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
+        t.globalCompositeOperation = 'source-over';
+        source = t.canvas;
+      }
+    }
     target.save();
     target.setTransform(1, 0, 0, 1, 0, 0);
     target.globalAlpha = this.compositeAlpha(p);
-    target.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : BLEND[p.render.blend];
-    const w = r.x1 - r.x0, h = r.y1 - r.y0;
-    target.drawImage(src, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
+    target.globalCompositeOperation = op;
+    target.drawImage(source, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
     target.restore();
   }
 
@@ -311,12 +333,12 @@ export class StrokePainter {
    * Dibuja un trazo terminado. `scratch` debe medir al menos lo que el
    * destino. `clip` (opcional) es una máscara de selección del tamaño del destino.
    */
-  paint(target: CanvasRenderingContext2D, s: PaintStroke, M: Mat, dpr: number, scratch: CanvasRenderingContext2D, clip?: HTMLCanvasElement | null): Rect {
+  paint(target: CanvasRenderingContext2D, s: PaintStroke, M: Mat, dpr: number, scratch: CanvasRenderingContext2D, clip?: HTMLCanvasElement | null, atop = false): Rect {
     const W = target.canvas.width, H = target.canvas.height;
     const r = this.strokeRect(s, M, dpr, W, H);
     if (rectEmpty(r)) return r;
     const p = s.preset;
-    if (!clip && !this.usesBuffer(p, s.tool)) { this.drawContent(target, s, M, dpr, this.contentAlpha(p)); return r; }
+    if (!clip && !this.usesBuffer(p, s.tool, atop)) { this.drawContent(target, s, M, dpr, this.contentAlpha(p)); return r; }
     scratch.save();
     scratch.setTransform(1, 0, 0, 1, 0, 0);
     scratch.globalCompositeOperation = 'source-over';
@@ -326,7 +348,7 @@ export class StrokePainter {
     this.drawContent(scratch, s, M, dpr, this.contentAlpha(p));
     if (p.grain.enabled && p.grain.mode === 'fixed') this.applyFixedGrain(scratch, p, M, dpr, r);
     if (clip) this.applyClip(scratch, clip, r);
-    this.composite(target, scratch.canvas, r, p, s.tool);
+    this.composite(target, scratch.canvas, r, p, s.tool, atop);
     return r;
   }
 }

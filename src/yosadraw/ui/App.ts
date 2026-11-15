@@ -6,6 +6,7 @@ import { ToolManager } from '../tools/ToolManager';
 import { BrushStudio } from './BrushStudio';
 import { ColorPanel } from './ColorPanel';
 import { ExportDialog } from './ExportDialog';
+import { EFFECTS_ICON, EffectsPanel } from './EffectsPanel';
 import { openCustomize, openShortcuts } from './dialogs';
 import { h, toast } from './dom';
 import { ICONS } from './icons';
@@ -34,8 +35,11 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   const studio = new BrushStudio(lib, painter, thumbs);
   let exportOpts: unknown = saved?.export;
   const exportDialog = new ExportDialog(engine, exportOpts, o => { exportOpts = o; save(); });
+  let fxPrefs: unknown = saved?.effects;
+  const effects = new EffectsPanel(engine, fxPrefs, p => { fxPrefs = p; save(); });
   const mgr = new ToolManager(engine, lib, {
     openBrushStudio: p => studio.show(p, mgr.colors.primary), notify: (m, k) => toast(m, k), openExport: () => void exportDialog.show(),
+    openEffects: () => { if (effects.open) effects.close(); else effects.show(); },
     project: a => void projectAction(a),
   });
   mgr.load((saved?.tools as Record<string, unknown>) ?? null);
@@ -46,7 +50,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   applyTouch();
 
   // ---------- Guardado de preferencias ----------
-  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
+  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
@@ -137,7 +141,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   const quick = new QuickSliders(mgr, () => touch);
   $('canvas-host').append(quick.el);
   const setTouch = (p: TouchPrefs) => { touch = p; applyTouch(); quick.render(); save(); };
-  $('more-btn').addEventListener('click', () => openMore({ engine, prefs: () => touch, setPrefs: setTouch, openCustomize: customize, openShortcuts: () => openShortcuts(mgr, save) }));
+  $('more-btn').addEventListener('click', () => openMore({ engine, prefs: () => touch, setPrefs: setTouch, openCustomize: customize, openShortcuts: () => openShortcuts(mgr, save), openEffects: () => effects.show() }));
   // Al pasar a teléfono el panel empieza cerrado (es una hoja sobre el lienzo).
   watchDevice(() => { if (isPhone()) setPanel(false); });
   // Extremo borrador del lápiz: borrador mientras se usa; al levantarlo vuelve la herramienta anterior.
@@ -229,6 +233,8 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   }
   $('gallery-btn').innerHTML = GI.grid;
   $('save-btn').innerHTML = GI.save;
+  $('fx-btn').innerHTML = EFFECTS_ICON;
+  $('fx-btn').addEventListener('click', () => { if (effects.open) effects.close(); else effects.show(); });
   $('gallery-btn').addEventListener('click', () => void toGallery());
   $('save-btn').addEventListener('click', () => void projectAction('save'));
   let lastName = '';
@@ -273,7 +279,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     const t = e.target as HTMLElement;
     // Esc con el foco fuera de un diálogo (p. ej. tras pulsar un botón que desaparece): cierra lo de encima.
     if (e.key === 'Escape' && !studio.open && !t.closest('.dialog-backdrop, .studio-backdrop, .menu, .popover') && closeTopOverlay()) { e.preventDefault(); return; }
-    if (studio.open || exportDialog.open || t.closest('.dialog-backdrop, .menu, .popover')) return;
+    if (studio.open || exportDialog.open || t.closest('.dialog-backdrop, .menu, .popover, .fx-panel')) return;
     if (gallery.visible) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault(); return; }
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'radio', 'color'].includes(t.type))) return;
     if (t instanceof HTMLSelectElement && e.key.startsWith('Arrow')) return;
@@ -293,5 +299,5 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog, closeTopOverlay, quick, session, gallery, projects, toGallery };
+  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
 }

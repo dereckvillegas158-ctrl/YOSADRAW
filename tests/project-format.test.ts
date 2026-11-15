@@ -31,13 +31,13 @@ function sampleDoc() {
   l1.items.push(doc.item({ kind: 'stroke', stroke: stroke() }, { clip }));
   l1.items.push(doc.item({ kind: 'stroke', stroke: { ...stroke(BUILTIN_PRESETS[0], '#ff0000'), sets: [{ dabs: new Float32Array(6), count: 1 }] } }, { m: [2, 0, 0, 2, 10, 10] }));
   const l2 = doc.newLayer('Tinta');
-  Object.assign(l2, { opacity: 0.7, blend: 'multiply', locked: true, visible: false });
-  l2.items.push(doc.item({ kind: 'shape', shape: { type: 'star', x0: 0, y0: 0, x1: 90, y1: 90, sides: 5, inner: 0.5, radius: 0, fill: '#00ff00', stroke: null, width: 2, opacity: 1 } }));
+  Object.assign(l2, { opacity: 0.7, blend: 'multiply', locked: true, visible: false, alphaLock: true });
+  doc.layers.push(l2);
+  l2.items.push(doc.paintItem(l2.id, { kind: 'shape', shape: { type: 'star', x0: 0, y0: 0, x1: 90, y1: 90, sides: 5, inner: 0.5, radius: 0, fill: '#00ff00', stroke: null, width: 2, opacity: 1 } }));
   l2.items.push(doc.item({ kind: 'gradient', grad: { type: 'radial', x0: 1, y0: 2, x1: 3, y1: 4, c0: '#000000', c1: '#ffffff', a0: 1, a1: 0, opacity: 0.5 } }));
   l2.items.push(doc.item({ kind: 'bitmap', image: new FakeImage(64, 32, 'relleno') as unknown as CanvasImageSource, x: 3, y: 4, w: 64, h: 32 }));
   l2.items.push(doc.item({ kind: 'clear' }, { clip: { ops: [{ mode: 'add', shape: { type: 'ellipse', cx: 5, cy: 5, rx: 3, ry: 2 } }] } }));
   l2.items.push(doc.item({ kind: 'group', opacity: 0.5, blend: 'screen', items: [doc.item({ kind: 'stroke', stroke: stroke() })] }));
-  doc.layers.push(l2);
   doc.activeId = l2.id;
   doc.selection = { ops: [{ mode: 'add', shape: { type: 'poly', pts: [0, 0, 10, 0, 10, 10] } }, { mode: 'intersect', shape: { type: 'sel', sel: { ops: [{ mode: 'add', shape: { type: 'rect', x: 1, y: 1, w: 5, h: 5, m: [1, 0, 0, 1, 2, 2] } }] } } }] };
   return doc;
@@ -56,7 +56,11 @@ describe('formato .yosa', () => {
     const d = r.doc;
     expect(d.settings).toEqual({ background: null, dpi: 600, profile: 'p3' });
     expect(d.activeId).toBe(doc.activeId);
-    expect(d.layers.map(l => [l.id, l.name, l.visible, l.locked, l.opacity, l.blend])).toEqual(doc.layers.map(l => [l.id, l.name, l.visible, l.locked, l.opacity, l.blend]));
+    expect(d.layers.map(l => [l.id, l.name, l.visible, l.locked, l.alphaLock, l.opacity, l.blend])).toEqual(doc.layers.map(l => [l.id, l.name, l.visible, l.locked, l.alphaLock, l.opacity, l.blend]));
+    // Alfa bloqueado: la capa y el elemento pintado con él.
+    expect(d.layers[1].alphaLock).toBe(true);
+    expect(d.layers[1].items[0].lock).toBe(true);
+    expect(d.layers[1].items[1].lock).toBeUndefined();
     // Trazo: pincel congelado, puntos, sellos y colores exactos.
     const [a, b] = d.layers[0].items;
     const sa = (a as { stroke: FinishedStroke }).stroke, oa = (doc.layers[0].items[0] as { stroke: FinishedStroke }).stroke;
