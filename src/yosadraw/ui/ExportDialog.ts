@@ -30,6 +30,15 @@ export class ExportDialog {
 
   get open() { return !!this.root; }
 
+  /**
+   * Al abrir o crear un proyecto, la exportación parte de sus datos: nombre,
+   * DPI, perfil de color y fondo (transparente o el color del papel).
+   */
+  adoptProject(p: { name: string; dpi: number; profile: 'srgb' | 'p3' | 'gray'; background: string | null }) {
+    this.o = normalizeOptions({ ...this.o, name: p.name, dpi: p.dpi, profile: p.profile, transparent: p.background === null, background: p.background ?? this.o.background });
+    this.persist(this.o);
+  }
+
   async show() {
     if (this.root) return;
     if (this.o.scope === 'selection' && !this.engine.doc.selection) this.o.scope = 'canvas';

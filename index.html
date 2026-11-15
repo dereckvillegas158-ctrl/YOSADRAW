@@ -11,7 +11,9 @@
 <body>
 <div class="app" id="app">
   <header class="topbar">
+    <button type="button" class="icon gallery-btn" id="gallery-btn" title="Galería (Ctrl+Mayús+G)" aria-label="Volver a la galería"></button>
     <div class="brand"><img class="brand-mark" src="/src/yosadraw/assets/mark.png" alt="" width="48" height="36"><span class="wordmark" aria-label="YOSADRAW">YOSA<b>DRAW</b></span></div>
+    <button type="button" class="project-chip" id="project-chip" aria-haspopup="menu" title="Proyecto"><span class="project-name" id="project-name">Sin título</span><span class="dirty-dot" id="dirty-dot" title="Cambios sin guardar"></span><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
     <div class="bar-scroll">
       <div class="seg" aria-label="Historial">
         <button type="button" class="icon" id="undo" aria-label="Deshacer"></button>
@@ -30,6 +32,7 @@
       </div>
     </div>
     <div class="top-actions">
+      <button type="button" class="icon save-btn" id="save-btn" title="Guardar (Ctrl+S)" aria-label="Guardar"></button>
       <button type="button" class="btn sm export-btn" id="export-btn" title="Exportar (Ctrl+Mayús+E)"><span>Exportar</span></button>
       <button type="button" class="icon color-btn" id="color-btn" title="Color" aria-label="Color"><span class="color-dot"></span></button>
       <button type="button" class="icon" id="keys-btn" title="Atajos de teclado" aria-label="Atajos de teclado"></button>

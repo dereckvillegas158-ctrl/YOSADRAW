@@ -11,6 +11,10 @@ import { h, toast } from './dom';
 import { ICONS } from './icons';
 import { LayersPanel } from './LayersPanel';
 import { LibraryPanel } from './LibraryPanel';
+import type { ProjectLibrary } from '../project/library';
+import { DEFAULT_SESSION_PREFS, ProjectSession, type SessionPrefs } from '../project/session';
+import { Document } from '../doc/Document';
+import { Gallery, GI, normalizeGalleryPrefs } from './Gallery';
 import { closeTopOverlay, dragToClose, isPhone, normalizeTouch, openMore, QuickSliders, type TouchPrefs, watchDevice } from './Mobile';
 import { PropertiesBar } from './PropertiesBar';
 import { Thumbnails } from './thumbnails';
@@ -18,19 +22,22 @@ import { normalizeLayout, Toolbar } from './Toolbar';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-export interface AppDeps { engine: CanvasEngine; lib: BrushLibrary; painter: StrokePainter; settings: SettingsStorage; saved: Record<string, unknown> | null }
+export interface AppDeps { engine: CanvasEngine; lib: BrushLibrary; painter: StrokePainter; settings: SettingsStorage; saved: Record<string, unknown> | null; projects: ProjectLibrary }
 
 /**
  * Capa de interfaz de YOSADRAW: conecta barra de herramientas, propiedades,
  * paneles y teclado con el gestor de herramientas y el motor. No dibuja nada
  * por su cuenta.
  */
-export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
+export function mountApp({ engine, lib, painter, settings, saved, projects }: AppDeps) {
   const thumbs = new Thumbnails(painter);
   const studio = new BrushStudio(lib, painter, thumbs);
   let exportOpts: unknown = saved?.export;
   const exportDialog = new ExportDialog(engine, exportOpts, o => { exportOpts = o; save(); });
-  const mgr = new ToolManager(engine, lib, { openBrushStudio: p => studio.show(p, mgr.colors.primary), notify: (m, k) => toast(m, k), openExport: () => void exportDialog.show() });
+  const mgr = new ToolManager(engine, lib, {
+    openBrushStudio: p => studio.show(p, mgr.colors.primary), notify: (m, k) => toast(m, k), openExport: () => void exportDialog.show(),
+    project: a => void projectAction(a),
+  });
   mgr.load((saved?.tools as Record<string, unknown>) ?? null);
   let layout = normalizeLayout(saved?.toolbar);
   let tab = typeof saved?.tab === 'string' ? saved.tab : 'layers';
@@ -39,10 +46,11 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   applyTouch();
 
   // ---------- Guardado de preferencias ----------
+  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch }), 500);
+    saveTimer = window.setTimeout(() => void settings.save(snapshot()), 500);
   };
   mgr.onChange = save;
 
@@ -187,10 +195,82 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
     if (!r.ok) toast(r.error ?? 'No se pudo guardar la biblioteca', 'error');
   });
 
+  // ---------- Proyectos y galería ----------
+  const session = new ProjectSession(engine, projects, undefined, (m, k) => toast(m, k));
+  const sp = (saved?.session ?? {}) as Partial<SessionPrefs>;
+  session.prefs = { autoSave: sp.autoSave !== false, autoSaveMinutes: typeof sp.autoSaveMinutes === 'number' && sp.autoSaveMinutes >= 1 ? Math.min(30, sp.autoSaveMinutes) : DEFAULT_SESSION_PREFS.autoSaveMinutes };
+  const gallery = new Gallery(projects, session, {
+    showEditor: () => { gallery.hide(); requestAnimationFrame(() => engine.element.focus?.()); },
+    openExport: () => void exportDialog.show(),
+    persist: save,
+  }, normalizeGalleryPrefs(saved?.gallery));
+  document.body.append(gallery.el);
+  // Al cambiar de documento, la herramienta en curso aplica lo pendiente sobre el documento que se va.
+  session.beforeLoad = () => mgr.resetForDocument();
+  engine.on('document', d => {
+    $('st-doc').textContent = `${d.width} × ${d.height} px`;
+    exportDialog.adoptProject({ name: session.entry?.name ?? 'Dibujo', dpi: d.settings.dpi, profile: d.settings.profile, background: d.settings.background });
+  });
+  /** Lienzo vacío mientras no hay proyecto abierto (libera la memoria del anterior). */
+  const blank = () => engine.loadDocument(new Document(1024, 768));
+  async function toGallery() {
+    if (!(await gallery.confirmLeave())) return;
+    session.close();
+    mgr.resetForDocument();
+    blank();
+    gallery.show();
+  }
+  async function projectAction(a: 'save' | 'saveAs' | 'new' | 'gallery') {
+    if (gallery.visible) { if (a === 'new') void gallery.newProject(); return; }
+    if (a === 'save') { mgr.resetForDocument(); await gallery.save(); }
+    else if (a === 'saveAs') { mgr.resetForDocument(); await gallery.saveAs(); }
+    else if (a === 'new') await gallery.newProject();
+    else await toGallery();
+  }
+  $('gallery-btn').innerHTML = GI.grid;
+  $('save-btn').innerHTML = GI.save;
+  $('gallery-btn').addEventListener('click', () => void toGallery());
+  $('save-btn').addEventListener('click', () => void projectAction('save'));
+  const showSession = () => {
+    const st = session.state;
+    const name = st.entry?.name ?? 'Sin título';
+    $('project-name').textContent = name;
+    $('dirty-dot').hidden = !st.dirty;
+    $('project-chip').title = `${name}${st.dirty ? ' · cambios sin guardar' : ' · guardado'}`;
+    const sb = $<HTMLButtonElement>('save-btn');
+    sb.classList.toggle('saving', st.saving);
+    sb.classList.toggle('dirty', st.dirty);
+    sb.title = st.saving ? 'Guardando…' : st.dirty ? 'Guardar (Ctrl+S) · hay cambios sin guardar' : 'Guardado (Ctrl+S)';
+    document.title = st.entry ? `${st.dirty ? '• ' : ''}${name} — YOSADRAW` : 'YOSADRAW';
+    $('st-save').textContent = st.saving ? 'Guardando…' : st.dirty ? (st.recoveredAt ? `Sin guardar · recuperación ${new Date(st.recoveredAt).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}` : 'Sin guardar') : st.entry ? `Guardado ${new Date(st.lastSaved).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}` : '';
+  };
+  session.on('state', showSession);
+  showSession();
+  $('project-chip').addEventListener('click', () => {
+    const e = session.entry;
+    if (!e) return;
+    const anchor = $('project-chip');
+    const items: [string, () => void][] = [
+      ['Guardar', () => void projectAction('save')], ['Guardar como…', () => void projectAction('saveAs')],
+      ['Renombrar…', () => void gallery.renameOpen()], ['Historial de versiones…', () => void gallery.versions(projects.get(e.id)!)],
+      ['Información', () => void gallery.info(projects.get(e.id)!)], ['Exportar imagen…', () => void exportDialog.show()],
+      ['Exportar archivo .yosa', () => void (session.dirty ? gallery.save() : Promise.resolve(true)).then(ok => { if (ok) void gallery.exportNative(projects.get(e.id)!); })],
+      [session.prefs.autoSave ? 'Desactivar guardado automático' : 'Activar guardado automático', () => { session.prefs.autoSave = !session.prefs.autoSave; save(); toast(session.prefs.autoSave ? `Guardado automático cada ${session.prefs.autoSaveMinutes} min` : 'Guardado automático desactivado (se siguen haciendo copias de recuperación)', 'ok'); }],
+      ['Volver a la galería', () => void toGallery()],
+    ];
+    gallery.popupMenu(anchor, e.name, items.map(([label, run]) => ({ label, run })));
+  });
+  // Al pasar a segundo plano (otra pestaña, minimizar): copia de recuperación inmediata.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) void session.flushRecovery(); });
+  // Sin proyecto abierto se empieza en la galería.
+  blank();
+  gallery.show();
+
   // ---------- Teclado ----------
   window.addEventListener('keydown', e => {
     const t = e.target as HTMLElement;
     if (studio.open || exportDialog.open || t.closest('.dialog-backdrop, .menu, .popover')) return;
+    if (gallery.visible) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault(); return; }
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'radio', 'color'].includes(t.type))) return;
     if (t instanceof HTMLSelectElement && e.key.startsWith('Arrow')) return;
     if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(true); return; }
@@ -199,10 +279,15 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   });
   window.addEventListener('keyup', e => { if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(false); } });
   window.addEventListener('blur', () => engine.setSpacePan(false));
-  window.addEventListener('yosadraw:persist', () => { clearTimeout(saveTimer); void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch }); });
-  window.addEventListener('beforeunload', () => { void lib.saveNow(); void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch }); });
+  window.addEventListener('yosadraw:persist', () => { clearTimeout(saveTimer); void settings.save(snapshot()); });
+  window.addEventListener('beforeunload', e => {
+    void lib.saveNow();
+    void settings.save(snapshot());
+    // Cambios sin guardar: copia de recuperación y aviso (el escritorio muestra su propio diálogo).
+    if (session.dirty) { void session.flushRecovery(); e.preventDefault(); e.returnValue = ''; }
+  });
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog, closeTopOverlay, quick };
+  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog, closeTopOverlay, quick, session, gallery, projects, toGallery };
 }

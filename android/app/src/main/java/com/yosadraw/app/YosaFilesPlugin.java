@@ -205,6 +205,98 @@ public class YosaFilesPlugin extends Plugin {
         });
     }
 
+    // ---------------- Almacén de proyectos (galería) ----------------
+    // Claves «carpeta/nombre» con caracteres seguros, dentro de files/projects.
+
+    private static final java.util.regex.Pattern STORE_KEY = java.util.regex.Pattern.compile("^(p|t|v|r|meta)/[A-Za-z0-9._~-]{1,140}$");
+
+    private File storeFile(String key) throws IOException {
+        if (key == null || !STORE_KEY.matcher(key).matches() || key.contains("..")) throw new IOException("Clave no válida");
+        return new File(new File(getContext().getFilesDir(), "projects"), key);
+    }
+
+    @PluginMethod
+    public void storeSize(PluginCall call) {
+        io.execute(() -> {
+            try {
+                File f = storeFile(call.getString("key"));
+                JSObject r = new JSObject();
+                r.put("size", f.exists() ? f.length() : -1);
+                call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage()); }
+        });
+    }
+
+    /** Lee un trozo (base64) para no pasar archivos enteros de golpe por el puente. */
+    @PluginMethod
+    public void storeRead(PluginCall call) {
+        io.execute(() -> {
+            try {
+                File f = storeFile(call.getString("key"));
+                long offset = call.getLong("offset", 0L);
+                int length = call.getInt("length", 1 << 20);
+                byte[] buf = new byte[(int) Math.max(0, Math.min(length, f.length() - offset))];
+                try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r")) {
+                    raf.seek(offset);
+                    raf.readFully(buf);
+                }
+                JSObject r = new JSObject();
+                r.put("data", Base64.encodeToString(buf, Base64.NO_WRAP));
+                call.resolve(r);
+            } catch (Exception e) { call.reject("No se pudo leer: " + e.getMessage()); }
+        });
+    }
+
+    /** Publica en el almacén un temporal subido con beginExport/appendExport: fsync y renombrado atómico. */
+    @PluginMethod
+    public void storeCommit(PluginCall call) {
+        io.execute(() -> {
+            try {
+                File part = partFile(call.getString("id"));
+                File dest = storeFile(call.getString("key"));
+                File dir = dest.getParentFile();
+                if (dir != null && !dir.exists() && !dir.mkdirs()) throw new IOException("No se pudo crear la carpeta");
+                File tmp = new File(dest.getPath() + ".tmp");
+                try (InputStream in = new FileInputStream(part); FileOutputStream out = new FileOutputStream(tmp)) {
+                    copy(in, out);
+                    out.getFD().sync();
+                }
+                part.delete();
+                if (!tmp.renameTo(dest)) throw new IOException("No se pudo guardar");
+                call.resolve();
+            } catch (Exception e) { call.reject("No se pudo guardar: " + e.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void storeDelete(PluginCall call) {
+        io.execute(() -> {
+            try { File f = storeFile(call.getString("key")); if (f.exists() && !f.delete()) throw new IOException("No se pudo borrar"); call.resolve(); }
+            catch (Exception e) { call.reject(e.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void storeList(PluginCall call) {
+        io.execute(() -> {
+            try {
+                String prefix = call.getString("prefix", "");
+                String dirName = prefix.split("/")[0];
+                if (!dirName.matches("p|t|v|r|meta")) throw new IOException("Prefijo no válido");
+                File dir = new File(new File(getContext().getFilesDir(), "projects"), dirName);
+                com.getcapacitor.JSArray keys = new com.getcapacitor.JSArray();
+                String[] names = dir.list();
+                if (names != null) for (String n : names) {
+                    String k = dirName + "/" + n;
+                    if (!n.endsWith(".tmp") && k.startsWith(prefix)) keys.put(k);
+                }
+                JSObject r = new JSObject();
+                r.put("keys", keys);
+                call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage()); }
+        });
+    }
+
     // ---------------- Abrir y compartir ----------------
 
     @PluginMethod

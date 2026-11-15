@@ -47,6 +47,8 @@ export type EngineEvents = {
   notice: string;
   /** El extremo borrador del lápiz se apoyó (true) o se levantó (false). */
   stylusEraser: boolean;
+  /** Se cargó otro documento (abrir o crear un proyecto). */
+  document: Document;
 };
 
 /** Qué hace un dedo sobre el lienzo. */
@@ -59,6 +61,8 @@ export interface CanvasEngineOptions {
   brush: BrushPreset;
   color: string;
   theme?: Partial<CanvasTheme>;
+  /** Documento inicial (por defecto, uno vacío de width × height). */
+  doc?: Document;
 }
 
 interface LayerView { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; crisp: ViewTransform | null; dirty: boolean; clipped: boolean; ms: number }
@@ -80,12 +84,13 @@ const SLICE_MS = 9;
  * - Todo cambio del documento es un comando del historial.
  */
 export class CanvasEngine extends Emitter<EngineEvents> {
-  readonly doc: Document;
-  readonly history = new History();
+  /** Documento actual; se sustituye con `loadDocument`. */
+  doc: Document;
+  history = new History();
   readonly view = new ViewTransform();
   readonly stabilizer: StrokeEngine = createEngine();
   readonly painter: StrokePainter;
-  readonly items: ItemRenderer;
+  items: ItemRenderer;
   readonly element: HTMLElement;
   theme: CanvasTheme = { workspace: '#08070d', paper: '#ffffff', frame: 'rgba(255,255,255,0.14)' };
   color: string;
@@ -145,7 +150,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
 
   constructor(container: HTMLElement, opts: CanvasEngineOptions) {
     super();
-    this.doc = new Document(opts.width, opts.height);
+    this.doc = opts.doc ?? new Document(opts.width, opts.height);
     this.painter = opts.painter;
     this.items = new ItemRenderer(opts.painter, opts.width, opts.height);
     this.preset = opts.brush;
@@ -241,6 +246,40 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   requestOverlay() { this.requestFrame(); }
 
   get isDrawing() { return this.session !== null || this.toolPointer !== null; }
+  /** Sube con cada cambio del documento (hacer, deshacer, rehacer): sirve para saber si hay cambios sin guardar. */
+  get revision() { return this._revision; }
+  private _revision = 0;
+
+  /**
+   * Abre otro documento: descarta el trazo en curso, vacía el historial y las
+   * vistas de capa, y encaja (o restaura) la vista. Las herramientas siguen igual.
+   */
+  loadDocument(doc: Document, view?: ViewState | null) {
+    this.cancelStroke();
+    this.disarmHold();
+    this.picking = null;
+    this.abandonJob();
+    this.doc = doc;
+    this.history = new History();
+    this.items = new ItemRenderer(this.painter, doc.width, doc.height);
+    this.symmetry = { ...this.symmetry, enabled: false, cx: doc.width / 2, cy: doc.height / 2 };
+    this.ruler = { enabled: false, x0: doc.width * 0.25, y0: doc.height / 2, x1: doc.width * 0.75, y1: doc.height / 2 };
+    for (const v of this.layerViews.values()) v.canvas.remove();
+    this.layerViews.clear();
+    this.selShadeKey = '';
+    this.syncLayers();
+    if (view && view.scale > 0) this.view.set(view); else this.view.fit(this.vw, this.vh, doc.width, doc.height);
+    this._revision++;
+    this.viewChanged();
+    this.invalidateAll(false);
+    this.emit('document', doc);
+    this.emit('history', this.historyState);
+    this.emit('doc', { structure: true, selection: true });
+    this.emitStats(0, false);
+  }
+
+  /** Color del papel (blanco si el fondo es transparente, para mezclas y previsualizaciones). */
+  get paperColor() { return this.doc.settings.background ?? '#ffffff'; }
   get historyState(): HistoryState {
     const h = this.history;
     return { canUndo: h.canUndo, canRedo: h.canRedo, undoDepth: h.undoDepth, redoDepth: h.redoDepth, undoLabel: h.nextUndo, redoLabel: h.nextRedo };
@@ -269,6 +308,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private afterChange(cmd: Command, rendered: boolean) {
+    this._revision++;
     if (cmd.structure) this.syncLayers();
     if (!rendered) for (const id of cmd.layers) { const v = this.layerViews.get(id); if (v) v.dirty = true; }
     if (!rendered && cmd.layers.length) this.rerender(true);
@@ -368,7 +408,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.live.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const sel = this.doc.selection;
     this.session = new BrushStrokeSession(this.painter, {
-      target: view.ctx, overlay: this.live, M: this.V, dpr: this.dpr, buffers: this.buffers, paperColor: this.theme.paper,
+      target: view.ctx, overlay: this.live, M: this.V, dpr: this.dpr, buffers: this.buffers, paperColor: this.paperColor,
       clip: sel ? this.items.selectionMask(sel, this.V, this.dpr, view.canvas.width, view.canvas.height) : null,
       mirrors: symmetryMatrices(this.symmetry),
     }, preset, this.color, tool, (Math.random() * 2 ** 32) >>> 0);
@@ -585,7 +625,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const g = c.getContext('2d', { willReadFrequently: true })!;
     const X = Math.round(sx * this.dpr - half), Y = Math.round(sy * this.dpr - half);
     const layers = mode === 'all' ? this.doc.layers.filter(l => l.visible) : [this.doc.active];
-    if (mode === 'all') { g.fillStyle = this.theme.paper; g.fillRect(0, 0, n, n); }
+    if (mode === 'all' && this.doc.settings.background) { g.fillStyle = this.doc.settings.background; g.fillRect(0, 0, n, n); }
     for (const l of layers) {
       const v = this.layerViews.get(l.id);
       if (!v) continue;
@@ -810,6 +850,19 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.drawLive();
   }
 
+  private checkerPattern: CanvasPattern | null = null;
+  private checker(ctx: CanvasRenderingContext2D) {
+    if (!this.checkerPattern) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 16;
+      const g = c.getContext('2d')!;
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, 16, 16);
+      g.fillStyle = '#e4e1ec'; g.fillRect(0, 0, 8, 8); g.fillRect(8, 8, 8, 8);
+      this.checkerPattern = ctx.createPattern(c, 'repeat')!;
+    }
+    return this.checkerPattern;
+  }
+
   private drawPaper() {
     const ctx = this.paper, d = this.dpr, m = this.V;
     ctx.setTransform(d, 0, 0, d, 0, 0);
@@ -820,9 +873,19 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
     ctx.shadowBlur = 24 * d;
     ctx.shadowOffsetY = 6 * d;
-    ctx.fillStyle = this.theme.paper;
+    const bg = this.doc.settings.background;
+    ctx.fillStyle = bg ?? '#ffffff';
     ctx.fillRect(0, 0, this.doc.width, this.doc.height);
     ctx.restore();
+    if (!bg) {
+      // Fondo transparente: damero de tamaño fijo en pantalla, recortado al documento.
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, this.doc.width, this.doc.height); ctx.clip();
+      ctx.setTransform(d, 0, 0, d, 0, 0);
+      ctx.fillStyle = this.checker(ctx);
+      ctx.fillRect(0, 0, this.vw, this.vh);
+      ctx.restore();
+    }
     ctx.strokeStyle = this.theme.frame;
     ctx.lineWidth = 1 / this.view.scale;
     ctx.strokeRect(0, 0, this.doc.width, this.doc.height);

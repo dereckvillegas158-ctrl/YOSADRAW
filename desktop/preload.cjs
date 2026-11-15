@@ -20,4 +20,10 @@ contextBridge.exposeInMainWorld('yosadraw', {
   revealFile: file => ipcRenderer.invoke('export:reveal', String(file)),
   exportFile: (name, content) => ipcRenderer.invoke('file:export', String(name), String(content)),
   importFiles: () => ipcRenderer.invoke('file:import'),
+  // Almacén de proyectos (userData/projects).
+  storeGet: key => ipcRenderer.invoke('store:get', String(key)),
+  storePut: (key, data) => ipcRenderer.invoke('store:put', String(key), data),
+  storeDelete: key => ipcRenderer.invoke('store:delete', String(key)),
+  storeList: prefix => ipcRenderer.invoke('store:list', String(prefix)),
+  storeLocation: () => ipcRenderer.invoke('store:location'),
 });

@@ -27,8 +27,8 @@ npm run desktop:dev    # la app en Electron, con recarga en caliente
 
 | Comando | Resultado en `release/` | Dónde se puede generar |
 |---|---|---|
-| `npm run dist:win` | `YOSADRAW-Setup-1.0.0-x64.exe` (instalador) y `YOSADRAW-1.0.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
-| `npm run dist:win:zip` | `YOSADRAW-1.0.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
+| `npm run dist:win` | `YOSADRAW-Setup-1.1.0-x64.exe` (instalador) y `YOSADRAW-1.1.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
+| `npm run dist:win:zip` | `YOSADRAW-1.1.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
 | `npm run dist:win:dir` | `release/win-unpacked/YOSADRAW.exe` | Cualquier sistema |
 
 El workflow `.github/workflows/build-windows.yml` compila el instalador y la versión portable
@@ -228,6 +228,53 @@ del bote y una selección levantada para transformarla, porque son operaciones d
    `tools/handlers/` (`down`/`move`/`up`, `overlay` para sus guías, `key` para Intro/Esc).
 3. Para modificar el documento, crea elementos con `doc.item(...)` y ejecuta un comando
    (`engine.exec(doc.cmdAddItems(...))`). Deshacer y rehacer funcionan solos.
+
+## Proyectos y galería
+Al abrir YOSADRAW aparece la **galería**: miniaturas grandes, nombre, fecha de modificación,
+resolución, formato, capas e indicador **Sin guardar** (hay una copia de recuperación más nueva que
+lo guardado).
+
+- **Secciones**: Todos, Recientes (14 días), Favoritos, Carpetas y Papelera (30 días).
+- **Búsqueda** por nombre, filtros por orientación y «Sin guardar», orden por modificado, nombre,
+  creado o tamaño.
+- **Acciones de cada proyecto** (menú ⋯, clic derecho o mantener pulsado): abrir, renombrar, duplicar,
+  favorito, mover a carpeta, exportar imagen, exportar `.yosa`, historial de versiones, información
+  y eliminar. En la papelera: restaurar o eliminar definitivamente; también se puede vaciar.
+- **Importar**: archivos `.yosa` (siempre como proyecto nuevo) e imágenes PNG, JPEG o WebP (quedan
+  como capa editable, con su transparencia).
+- **Nuevo proyecto**: nombre, ancho, alto, DPI, fondo blanco o transparente, perfil de color (sRGB,
+  Display P3, gris) y plantillas (móvil, cuadrado, A4, A5, carta, cómic B5, 4:5, 4K, 4:3, icono).
+  Límite: 8192 px por lado y 50 MP. El fondo, el DPI y el perfil se usan al exportar.
+
+### Guardar sin perder nada
+| Mecanismo | Qué hace |
+|---|---|
+| **Guardar** (Ctrl+S) | Escribe el proyecto. Lo que había antes pasa al **historial de versiones** (15 por proyecto). |
+| **Guardar como** (Ctrl+Mayús+S) | Crea una copia con otro nombre y sigue en la copia; el original no cambia. Los nombres nunca se repiten («Retrato (2)»). |
+| **Guardado automático** | Cada 2 min con cambios y sin estar dibujando (se puede desactivar en el menú del proyecto). |
+| **Copia de recuperación** | 12 s después de dejar de dibujar, al cambiar de pestaña, al pasar la app a segundo plano (Android) y al cerrar. Si la app se cierra de golpe, la galería ofrece **Recuperar cambios** o **Abrir lo guardado**. |
+| **Escritura segura** | Archivo temporal + fsync + renombrado (escritorio y Android) o transacción de IndexedDB (web): nunca queda un proyecto a medias. |
+| **Sin sobrescribir por accidente** | Cada guardado lleva una revisión. Si otra ventana o pestaña guardó antes, se pregunta: *Guardar como copia*, *Sobrescribir* (lo otro pasa al historial) o *Cancelar*. Salir con cambios pregunta *Guardar / No guardar / Cancelar*; cerrar la ventana del escritorio también. |
+| **Papelera** | Eliminar no borra: 30 días para restaurar. |
+| **Índice reconstruible** | Si el índice de la galería se pierde o se daña, se rehace leyendo los proyectos. |
+
+### Formato nativo `.yosa`
+Un ZIP con `mimetype` (`application/x-yosadraw`), `project.json` (metadatos, capas con nombre,
+visibilidad, bloqueo, opacidad y fusión, elementos editables, selección, pinceles congelados
+deduplicados), `bin/*.bin` (sellos, colores y puntos de cada trazo), `img/*.png` (mapas de bits del
+bote y de la selección levantada, máscaras de la varita y de los recortes) y `thumb.png`. Al reabrir
+todo sigue editable y se ve igual píxel a píxel (comprobado). Los archivos de versiones futuras se
+rechazan con un aviso en vez de abrirse mal.
+
+### Dónde se guardan
+| Versión | Ubicación |
+|---|---|
+| Escritorio (Windows) | `%APPDATA%/YOSADRAW/projects/` |
+| Android | almacenamiento interno de la app (`files/projects`); `.yosa` exportado a *Descargas/YOSADRAW* |
+| Web | IndexedDB del navegador (con almacenamiento persistente solicitado) |
+
+Código: `src/yosadraw/project/` (`format.ts`, `store.ts`, `library.ts`, `session.ts`) y
+`src/yosadraw/ui/` (`Gallery.ts`, `NewProjectDialog.ts`, `modal.ts`, `gallery.css`).
 
 ## Exportación
 Botón **Exportar** (barra superior) o **Ctrl+Mayús+E**. La exportación trabaja sobre una copia

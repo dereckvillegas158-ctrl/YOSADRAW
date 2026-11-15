@@ -70,7 +70,42 @@ async function writeAtomic(file, content) {
   await fs.rename(tmp, file);
 }
 
+// ---------- Almacén de proyectos (galería) ----------
+// Claves «carpeta/nombre» con caracteres seguros: nunca salen de userData/projects.
+const STORE_KEY = /^(p|t|v|r|meta)\/[A-Za-z0-9._~-]{1,140}$/;
+const storeRoot = () => path.join(app.getPath('userData'), 'projects');
+function storePath(key) {
+  if (typeof key !== 'string' || !STORE_KEY.test(key) || key.includes('..')) throw new Error('Clave de almacén no válida');
+  return path.join(storeRoot(), ...key.split('/'));
+}
+/** Escritura segura: archivo temporal, fsync y renombrado (un corte no deja un proyecto a medias). */
+async function writeBinaryAtomic(file, data) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  const h = await fs.open(tmp, 'w');
+  try { await h.writeFile(data); await h.sync(); } finally { await h.close(); }
+  await fs.rename(tmp, file);
+}
+
 function registerIpc() {
+  ipcMain.handle('store:get', async (_e, key) => {
+    try { return new Uint8Array(await fs.readFile(storePath(key))); }
+    catch (err) { if (err.code === 'ENOENT') return null; throw err; }
+  });
+  ipcMain.handle('store:put', async (_e, key, data) => {
+    if (!(data instanceof Uint8Array)) throw new Error('Datos no válidos');
+    await writeBinaryAtomic(storePath(key), data);
+  });
+  ipcMain.handle('store:delete', async (_e, key) => { await fs.rm(storePath(key), { force: true }); });
+  ipcMain.handle('store:list', async (_e, prefix) => {
+    const dir = String(prefix).split('/')[0];
+    if (!/^(p|t|v|r|meta)$/.test(dir)) throw new Error('Prefijo no válido');
+    try {
+      const names = await fs.readdir(path.join(storeRoot(), dir));
+      return names.filter(n => !n.endsWith('.tmp')).map(n => `${dir}/${n}`).filter(k => k.startsWith(String(prefix)));
+    } catch (err) { if (err.code === 'ENOENT') return []; throw err; }
+  });
+  ipcMain.handle('store:location', async () => storeRoot());
   ipcMain.handle('library:load', async () => {
     for (const f of [libraryFile(), `${libraryFile()}.bak`]) {
       try {
@@ -204,6 +239,16 @@ function createWindow() {
     },
   });
   mainWindow.once('ready-to-show', () => { mainWindow.maximize(); mainWindow.show(); });
+
+  // Cerrar con cambios sin guardar: la interfaz cancela el cierre y aquí se pregunta.
+  mainWindow.webContents.on('will-prevent-unload', e => {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning', title: 'YOSADRAW', buttons: ['Volver y guardar', 'Cerrar sin guardar'], defaultId: 0, cancelId: 0, noLink: true,
+      message: 'Hay cambios sin guardar en el proyecto abierto.',
+      detail: 'Si cierras ahora, podrás recuperarlos desde la galería la próxima vez (copia de recuperación), pero no se guardarán en el proyecto.',
+    });
+    if (choice === 1) e.preventDefault();
+  });
 
   // Nada de navegación ni ventanas nuevas dentro de la app; los enlaces https se abren fuera.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

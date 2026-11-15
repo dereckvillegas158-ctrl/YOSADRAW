@@ -25,6 +25,18 @@ export interface Command {
 
 export const MAX_LAYERS = 32;
 
+export type DocProfile = 'srgb' | 'p3' | 'gray';
+
+/** Propiedades del documento que se guardan con el proyecto. */
+export interface DocSettings {
+  /** Color del papel, o null para fondo transparente. */
+  background: string | null;
+  /** Resolución de impresión (píxeles por pulgada). */
+  dpi: number;
+  /** Perfil de color de trabajo (se propone al exportar). */
+  profile: DocProfile;
+}
+
 /**
  * Documento: capas ordenadas (de abajo arriba) con sus elementos, la capa
  * activa y la selección. Toda modificación se hace a través de comandos
@@ -34,13 +46,29 @@ export class Document {
   layers: Layer[] = [];
   activeId = '';
   selection: Selection | null = null;
+  settings: DocSettings = { background: '#ffffff', dpi: 300, profile: 'srgb' };
   private nextItem = 1;
   private nextLayer = 1;
 
-  constructor(readonly width: number, readonly height: number) {
+  constructor(readonly width: number, readonly height: number, settings?: Partial<DocSettings>) {
     const l = this.newLayer('Capa 1');
     this.layers.push(l);
     this.activeId = l.id;
+    if (settings) this.settings = { ...this.settings, ...settings };
+  }
+
+  /** Contadores internos (para guardar y restaurar sin repetir identificadores). */
+  get counters() { return { nextItem: this.nextItem, nextLayer: this.nextLayer }; }
+
+  /** Sustituye el contenido completo (al abrir un proyecto). */
+  restore(layers: Layer[], activeId: string, selection: Selection | null, counters: { nextItem: number; nextLayer: number }) {
+    if (!layers.length) throw new Error('El proyecto no tiene capas');
+    this.layers = layers;
+    this.activeId = layers.some(l => l.id === activeId) ? activeId : layers[layers.length - 1].id;
+    this.selection = selection;
+    const maxItem = (items: Item[]): number => items.reduce((m, i) => Math.max(m, i.id, i.kind === 'group' ? maxItem(i.items) : 0), 0);
+    this.nextItem = Math.max(counters.nextItem, 1 + Math.max(0, ...layers.map(l => maxItem(l.items))));
+    this.nextLayer = Math.max(counters.nextLayer, layers.length + 1);
   }
 
   /* ---------- Consultas ---------- */

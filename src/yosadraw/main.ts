@@ -7,6 +7,7 @@ import '@fontsource/jetbrains-mono/latin-400.css';
 import '@fontsource/jetbrains-mono/latin-500.css';
 import './ui/yosadraw.css';
 import './ui/mobile.css';
+import './ui/gallery.css';
 import { BrushLibrary } from './brush/BrushLibrary';
 import { GrainCache } from './brush/GrainCache';
 import { ImageStore } from './brush/ImageStore';
@@ -15,6 +16,8 @@ import { StrokePainter } from './brush/StrokePainter';
 import { TipCache } from './brush/TipCache';
 import { CanvasEngine } from './engine';
 import { mountApp } from './ui/App';
+import { ProjectLibrary } from './project/library';
+import { defaultBlobStore } from './project/store';
 import { App } from '@capacitor/app';
 import { installAndroidBridge, isAndroidApp } from './platform/android';
 
@@ -24,18 +27,25 @@ async function main() {
   const images = new ImageStore();
   const painter = new StrokePainter(new TipCache(images), new GrainCache(images));
   const settings = defaultSettingsStorage();
-  const [lib, saved] = await Promise.all([BrushLibrary.open(defaultStorage()), settings.load().catch(() => null)]);
-  /** Documento de alta resolución: 4096 × 3072 px. */
+  const [lib, saved, projects] = await Promise.all([
+    BrushLibrary.open(defaultStorage()), settings.load().catch(() => null),
+    defaultBlobStore().then(store => ProjectLibrary.open(store)),
+  ]);
+  /** El documento real llega al abrir o crear un proyecto desde la galería. */
   const engine = new CanvasEngine(document.getElementById('canvas-host')!, {
-    width: 4096, height: 3072, painter, brush: lib.activeFor('pen', ['Plumas']), color: lib.color,
+    width: 1024, height: 768, painter, brush: lib.activeFor('pen', ['Plumas']), color: lib.color,
   });
-  const app = mountApp({ engine, lib, painter, settings, saved });
+  const app = mountApp({ engine, lib, painter, settings, saved, projects });
   document.body.classList.add('ready');
   if (isAndroidApp()) {
     // Atrás: cierra diálogos, menús y paneles; sin nada abierto, envía la app al fondo (no pierde el dibujo).
-    void App.addListener('backButton', () => { if (!app.closeTopOverlay()) void App.minimizeApp(); });
-    // Al irse al fondo se guardan biblioteca y preferencias (Android puede cerrar la app después).
-    void App.addListener('pause', () => { void lib.saveNow(); window.dispatchEvent(new Event('yosadraw:persist')); });
+    // En el editor, Atrás vuelve a la galería (preguntando si hay cambios); en la galería, la app pasa al fondo.
+    void App.addListener('backButton', () => {
+      if (app.closeTopOverlay()) return;
+      if (!app.gallery.visible) void app.toGallery(); else void App.minimizeApp();
+    });
+    // Al irse al fondo: biblioteca, preferencias y copia de recuperación (Android puede cerrar la app después).
+    void App.addListener('pause', () => { void lib.saveNow(); window.dispatchEvent(new Event('yosadraw:persist')); void app.session.flushRecovery(); });
   }
   // Sólo en desarrollo: acceso desde la consola y para las pruebas e2e.
   if (import.meta.env.DEV) Object.assign(window, { __yosadraw: { engine, lib, painter, ...app } });
