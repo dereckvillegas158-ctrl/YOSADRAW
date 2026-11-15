@@ -4,7 +4,6 @@ import { copyText, fileSafe, h, IS_ARTIFACT, openTextFiles, saveTextFile, toast 
 import { ICONS } from './icons';
 import type { Thumbnails } from './thumbnails';
 
-type Target = 'brush' | 'eraser';
 
 /**
  * Biblioteca de pinceles: elegir, crear, duplicar, editar, renombrar,
@@ -16,9 +15,12 @@ export class LibraryPanel {
   private list: HTMLElement;
   private chips: HTMLElement;
   private targetLabel: HTMLElement;
-  private filter = 'Todos';
+  private filter = 'Herramienta';
   private menu: HTMLElement | null = null;
-  target: Target = 'brush';
+  /** Herramienta cuyo pincel se elige y sus categorías. */
+  target = 'pen';
+  private targetLabelText = 'Pluma';
+  private targetCats: string[] = ['Plumas'];
   color = '#ece6ff';
   onEdit: ((p: BrushPreset) => void) | null = null;
 
@@ -40,18 +42,22 @@ export class LibraryPanel {
     this.render();
   }
 
-  setTarget(t: Target) { this.target = t; this.render(); }
+  setTarget(slot: string, label: string, cats: string[]) {
+    if (slot !== this.target) this.filter = 'Herramienta';
+    this.target = slot; this.targetLabelText = label; this.targetCats = cats;
+    this.render();
+  }
   setColor(c: string) { this.color = c; this.render(); }
 
   render() {
     const cats = this.lib.categories();
-    if (this.filter !== 'Todos' && !cats.includes(this.filter)) this.filter = 'Todos';
-    this.targetLabel.textContent = this.target === 'brush' ? 'para Pincel' : 'para Borrador';
-    this.chips.replaceChildren(...['Todos', ...cats].map(c => h('button', {
+    if (!['Todos', 'Herramienta'].includes(this.filter) && !cats.includes(this.filter)) this.filter = 'Todos';
+    this.targetLabel.textContent = `para ${this.targetLabelText}`;
+    this.chips.replaceChildren(...['Herramienta', 'Todos', ...cats].map(c => h('button', {
       type: 'button', role: 'tab', 'aria-selected': String(c === this.filter), on: { click: () => { this.filter = c; this.render(); } },
     }, c)));
     const activeId = this.lib.activeId(this.target);
-    const items = this.lib.presets.filter(p => this.filter === 'Todos' || p.category === this.filter);
+    const items = this.lib.presets.filter(p => this.filter === 'Todos' || (this.filter === 'Herramienta' ? this.targetCats.includes(p.category) : p.category === this.filter));
     this.list.replaceChildren(...items.map(p => this.item(p, p.id === activeId)));
   }
 
@@ -122,7 +128,7 @@ export class LibraryPanel {
   }
 
   private createNew() {
-    const p = this.lib.create(this.filter !== 'Todos' ? this.filter : 'Mis pinceles');
+    const p = this.lib.create(this.filter === 'Herramienta' ? this.targetCats[0] : this.filter !== 'Todos' ? this.filter : 'Mis pinceles');
     this.lib.setActive(this.target, p.id);
     this.onEdit?.(p);
   }

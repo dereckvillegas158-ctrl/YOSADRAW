@@ -97,7 +97,8 @@ export class TipCache {
     g.globalCompositeOperation = 'destination-in';
     g.drawImage(m, 0, 0);
     this.colored.set(k, c);
-    if (this.colored.size > 96) this.colored.delete(this.colored.keys().next().value!);
+    // Los pinceles con mezcla generan muchos colores cercanos: caché amplia (puntas pequeñas).
+    if (this.colored.size > 1024) this.colored.delete(this.colored.keys().next().value!);
     return c;
   }
 

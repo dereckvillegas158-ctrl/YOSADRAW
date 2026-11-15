@@ -26,11 +26,13 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs | 
 
 let toastHost: HTMLElement | null = null;
 /** Aviso breve no bloqueante. */
-export function toast(message: string, kind: 'info' | 'ok' | 'error' = 'info') {
+export function toast(message: string, kind: 'info' | 'ok' | 'error' = 'info', action?: { label: string; run: () => void }) {
   if (!toastHost) { toastHost = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' }); document.body.append(toastHost); }
-  const t = h('div', { class: `toast ${kind}` }, message);
+  const close = () => { t.classList.add('out'); setTimeout(() => t.remove(), 300); };
+  const t = h('div', { class: `toast ${kind}${action ? ' with-action' : ''}` }, h('span', null, message),
+    action ? h('button', { type: 'button', class: 'btn sm', on: { click: () => { action.run(); close(); } } }, action.label) : null);
   toastHost.append(t);
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, kind === 'error' ? 6000 : 2600);
+  setTimeout(close, action ? 9000 : kind === 'error' ? 6000 : 2600);
 }
 
 export async function copyText(text: string): Promise<boolean> {

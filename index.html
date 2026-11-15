@@ -12,15 +12,9 @@
   <header class="topbar">
     <div class="brand"><img class="brand-mark" src="/src/yosadraw/assets/mark.png" alt="" width="48" height="36"><span class="wordmark" aria-label="YOSADRAW">YOSA<b>DRAW</b></span></div>
     <div class="bar-scroll">
-      <div class="seg" role="toolbar" aria-label="Herramientas">
-        <button type="button" class="icon" data-tool="brush" title="Pincel (B)" aria-label="Pincel"></button>
-        <button type="button" class="icon" data-tool="eraser" title="Borrador (E)" aria-label="Borrador"></button>
-        <button type="button" class="icon" data-tool="hand" title="Mano (H · mantener Espacio)" aria-label="Mano"></button>
-        <button type="button" class="icon" data-tool="rotate" title="Rotar lienzo (R · Mayús: pasos de 15°)" aria-label="Rotar lienzo"></button>
-      </div>
       <div class="seg" aria-label="Historial">
-        <button type="button" class="icon" id="undo" title="Deshacer (Ctrl+Z · toque con dos dedos)" aria-label="Deshacer"></button>
-        <button type="button" class="icon" id="redo" title="Rehacer (Ctrl+Mayús+Z · toque con tres dedos)" aria-label="Rehacer"></button>
+        <button type="button" class="icon" id="undo" aria-label="Deshacer"></button>
+        <button type="button" class="icon" id="redo" aria-label="Rehacer"></button>
       </div>
       <div class="seg" aria-label="Zoom">
         <button type="button" class="icon" id="zoom-out" title="Alejar (−)" aria-label="Alejar"></button>
@@ -28,21 +22,27 @@
         <button type="button" class="icon" id="zoom-in" title="Acercar (+)" aria-label="Acercar"></button>
         <button type="button" class="icon" id="fit" title="Encajar lienzo (Ctrl+0)" aria-label="Encajar lienzo"></button>
       </div>
-      <div class="seg" aria-label="Rotación">
+      <div class="seg" aria-label="Rotación de la vista">
         <button type="button" class="icon" id="rot-left" title="Girar −15°" aria-label="Girar 15 grados a la izquierda"></button>
         <button type="button" class="readout" id="rot-value" title="Enderezar a 0° (Mayús+R)">0°</button>
         <button type="button" class="icon" id="rot-right" title="Girar +15°" aria-label="Girar 15 grados a la derecha"></button>
       </div>
-      <button type="button" class="icon danger" id="clear" title="Vaciar lienzo (se puede deshacer)" aria-label="Vaciar lienzo"></button>
     </div>
-    <button type="button" class="icon panel-toggle" id="panel-toggle" aria-expanded="false" aria-controls="panel" title="Pinceles y color" aria-label="Pinceles y color"></button>
+    <div class="top-actions">
+      <button type="button" class="btn sm export-btn" id="export-btn" title="Exportar (Ctrl+Mayús+E)"><span>Exportar</span></button>
+      <button type="button" class="icon" id="keys-btn" title="Atajos de teclado" aria-label="Atajos de teclado"></button>
+      <button type="button" class="icon" id="customize-btn" title="Personalizar barra de herramientas" aria-label="Personalizar barra de herramientas"></button>
+      <button type="button" class="icon panel-toggle" id="panel-toggle" aria-expanded="false" aria-controls="panel" title="Capas, color y pinceles" aria-label="Capas, color y pinceles"></button>
+    </div>
   </header>
+  <div id="props-host"></div>
 
   <main class="workspace">
+    <div id="toolbar-host"></div>
     <div class="canvas-host" id="canvas-host">
-      <p class="empty-hint" id="empty-hint">Dibuja con el ratón o el lápiz · Ctrl + rueda o pellizco: zoom · Alt + rueda: girar · Espacio + arrastrar: mover · Doble clic en un pincel: editarlo</p>
+      <p class="empty-hint" id="empty-hint">Elige una herramienta en la barra · Ctrl + rueda o pellizco: zoom · Alt + rueda: girar · Espacio + arrastrar: mover · Alt + clic: tomar color</p>
     </div>
-    <aside class="panel" id="panel" aria-label="Pinceles y color"></aside>
+    <aside class="panel" id="panel" aria-label="Capas, color y pinceles"></aside>
   </main>
 
   <footer class="status" aria-live="off">
@@ -50,7 +50,7 @@
     <span><b>Cursor</b> <span id="st-pos">–</span></span>
     <span><b>Presión</b> <span id="st-pressure">–</span></span>
     <span><b>Inclinación</b> <span id="st-tilt">–</span></span>
-    <span><b>Trazos</b> <span id="st-strokes">0</span></span>
+    <span><b>Documento</b> <span id="st-items">1 capa</span></span>
     <span><b>Render</b> <span id="st-render">–</span></span>
     <span><b>Historial</b> <span id="st-hist">0 / 0</span></span>
     <span class="save-state" id="st-save"></span>

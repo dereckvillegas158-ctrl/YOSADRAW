@@ -1,11 +1,14 @@
 import { Emitter } from '../engine/Emitter';
 import { clonePreset, DEFAULT_PRESET, newId, normalizePreset, type BrushPreset } from './BrushPreset';
-import { BUILTIN_PRESETS, CATEGORY_ORDER, DEFAULT_BRUSH_ID, DEFAULT_ERASER_ID } from './builtin';
+import { BUILTIN_PRESETS, CATEGORY_ORDER, DEFAULT_BRUSH_ID, DEFAULT_ERASER_ID, FACTORY_VERSION, LEGACY_CATEGORY } from './builtin';
 import type { LibraryData, LibraryStorage } from './storage';
+
+/** Cada herramienta de pincel (lápiz, pluma, óleo, borrador…) recuerda su propio pincel. */
+export type Slot = string;
 
 export type LibraryEvents = {
   change: void;
-  active: { tool: 'brush' | 'eraser'; preset: BrushPreset };
+  active: { tool: Slot; preset: BrushPreset };
   saved: { ok: boolean; error?: string };
 };
 
@@ -19,8 +22,7 @@ export interface ImportResult { added: BrushPreset[]; errors: string[] }
  */
 export class BrushLibrary extends Emitter<LibraryEvents> {
   private list: BrushPreset[] = [];
-  private brushId = DEFAULT_BRUSH_ID;
-  private eraserId = DEFAULT_ERASER_ID;
+  private slots: Record<Slot, string> = { brush: DEFAULT_BRUSH_ID, eraser: DEFAULT_ERASER_ID };
   color = '#1b1530';
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -38,33 +40,59 @@ export class BrushLibrary extends Emitter<LibraryEvents> {
         seen.add(p.id);
         lib.list.push(Object.freeze(p));
       }
-      lib.brushId = data.activeBrushId;
-      lib.eraserId = data.activeEraserId;
+      lib.slots = { ...(data.slots ?? {}), brush: data.activeBrushId, eraser: data.activeEraserId };
       if (typeof data.color === 'string' && /^#[0-9a-f]{6}$/i.test(data.color)) lib.color = data.color;
+      if ((data.factory ?? 1) < FACTORY_VERSION) lib.migrate();
     } else {
       lib.list = BUILTIN_PRESETS.map(p => Object.freeze(clonePreset(p)));
     }
-    if (!lib.get(lib.brushId)) lib.brushId = lib.list[0].id;
-    if (!lib.get(lib.eraserId)) lib.eraserId = lib.list.find(p => p.category === 'Borradores')?.id ?? lib.list[0].id;
+    for (const [slot, id] of Object.entries(lib.slots)) if (!lib.get(id)) delete lib.slots[slot];
+    if (!lib.slots.brush) lib.slots.brush = lib.list[0].id;
+    if (!lib.slots.eraser) lib.slots.eraser = lib.list.find(p => p.category === 'Borradores')?.id ?? lib.list[0].id;
     return lib;
+  }
+
+  /**
+   * Actualiza una biblioteca guardada con una versión anterior del juego de
+   * fábrica: los pinceles de fábrica que conservan su categoría original pasan
+   * a la nueva, y se añaden los pinceles nuevos. No toca los cambios del usuario.
+   */
+  private migrate() {
+    const factory = new Map(BUILTIN_PRESETS.map(b => [b.builtinId!, b]));
+    this.list = this.list.map(p => {
+      const f = p.builtinId ? factory.get(p.builtinId) : undefined;
+      if (f && LEGACY_CATEGORY[p.builtinId!] === p.category && f.category !== p.category) return Object.freeze({ ...clonePreset(p), category: f.category });
+      return p;
+    });
+    this.restoreFactory(false);
   }
 
   get storageKind() { return this.storage.kind; }
   get presets(): readonly BrushPreset[] { return this.list; }
   get(id: string): BrushPreset | undefined { return this.list.find(p => p.id === id); }
-  activeFor(tool: 'brush' | 'eraser'): BrushPreset { return this.get(tool === 'brush' ? this.brushId : this.eraserId)!; }
-  activeId(tool: 'brush' | 'eraser') { return tool === 'brush' ? this.brushId : this.eraserId; }
+  /**
+   * Pincel activo de una herramienta. Si la herramienta aún no tiene uno, se
+   * usa el primero de sus categorías.
+   */
+  activeFor(slot: Slot, categories?: string[]): BrushPreset {
+    const p = this.get(this.slots[slot]);
+    if (p) return p;
+    const first = (categories?.length && this.list.find(x => categories.includes(x.category))) || this.list[0];
+    this.slots[slot] = first.id;
+    return first;
+  }
+  activeId(slot: Slot) { return this.slots[slot] ?? this.activeFor(slot).id; }
 
   categories(): string[] {
     const set = new Set(this.list.map(p => p.category));
     return [...CATEGORY_ORDER.filter(c => set.has(c)), ...[...set].filter(c => !CATEGORY_ORDER.includes(c)).sort()];
   }
 
-  setActive(tool: 'brush' | 'eraser', id: string) {
+  setActive(slot: Slot, id: string) {
     const p = this.get(id);
     if (!p) return;
-    if (tool === 'brush') this.brushId = id; else this.eraserId = id;
-    this.emit('active', { tool, preset: p });
+    this.slots[slot] = id;
+    this.emit('active', { tool: slot, preset: p });
     this.changed();
   }
 
@@ -104,11 +132,10 @@ export class BrushLibrary extends Emitter<LibraryEvents> {
     const i = this.list.findIndex(p => p.id === id);
     if (i < 0) return false;
     this.list.splice(i, 1);
-    for (const tool of ['brush', 'eraser'] as const) {
-      if (this.activeId(tool) === id) {
-        const fallback = (tool === 'eraser' && this.list.find(p => p.category === 'Borradores')) || this.list[Math.min(i, this.list.length - 1)];
-        this.setActive(tool, fallback.id);
-      }
+    for (const [slot, sid] of Object.entries(this.slots)) {
+      if (sid !== id) continue;
+      const fallback = (slot === 'eraser' && this.list.find(p => p.category === 'Borradores')) || this.list[Math.min(i, this.list.length - 1)];
+      this.setActive(slot, fallback.id);
     }
     this.changed();
     return true;
@@ -130,14 +157,14 @@ export class BrushLibrary extends Emitter<LibraryEvents> {
   }
 
   /** Vuelve a añadir los pinceles de fábrica que falten. Devuelve cuántos. */
-  restoreFactory(): number {
+  restoreFactory(notify = true): number {
     const have = new Set(this.list.map(p => p.builtinId).filter(Boolean));
     let n = 0;
     for (const b of BUILTIN_PRESETS) if (!have.has(b.builtinId)) {
       this.list.push(Object.freeze({ ...clonePreset(b), id: this.get(b.id) ? newId() : b.id }));
       n++;
     }
-    if (n) this.changed();
+    if (n && notify) this.changed();
     return n;
   }
 
@@ -177,8 +204,7 @@ export class BrushLibrary extends Emitter<LibraryEvents> {
   /* ---------- Guardado ---------- */
 
   private emitActiveIfUsed(p: BrushPreset) {
-    if (p.id === this.brushId) this.emit('active', { tool: 'brush', preset: p });
-    if (p.id === this.eraserId) this.emit('active', { tool: 'eraser', preset: p });
+    for (const [slot, id] of Object.entries(this.slots)) if (id === p.id) this.emit('active', { tool: slot, preset: p });
   }
 
   private changed() { this.emit('change', undefined); this.scheduleSave(); }
@@ -199,6 +225,9 @@ export class BrushLibrary extends Emitter<LibraryEvents> {
   }
 
   toData(): LibraryData {
-    return { format: 'yosadraw-library', version: 1, presets: this.list.map(p => clonePreset(p)), activeBrushId: this.brushId, activeEraserId: this.eraserId, color: this.color };
+    return {
+      format: 'yosadraw-library', version: 1, factory: FACTORY_VERSION, presets: this.list.map(p => clonePreset(p)),
+      activeBrushId: this.slots.brush, activeEraserId: this.slots.eraser, slots: { ...this.slots }, color: this.color,
+    };
   }
 }

@@ -1,0 +1,192 @@
+import { combineBounds } from './util';
+import { localBounds, transformItem, type Item, type ItemData, type LayerBlend } from './items';
+import { selectionBounds, type Selection } from './Selection';
+import { transformAABB, type Mat } from '../engine/ViewTransform';
+
+export interface Layer {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  opacity: number;
+  blend: LayerBlend;
+  items: Item[];
+}
+
+/** Cambio deshacible. `layers` = capas cuyo contenido cambia ('structure' = orden/altas/bajas). */
+export interface Command {
+  label: string;
+  layers: string[];
+  structure?: boolean;
+  selection?: boolean;
+  redo(): void;
+  undo(): void;
+}
+
+export const MAX_LAYERS = 32;
+
+/**
+ * Documento: capas ordenadas (de abajo arriba) con sus elementos, la capa
+ * activa y la selección. Toda modificación se hace a través de comandos
+ * (`cmd*`), que el historial ejecuta, deshace y rehace.
+ */
+export class Document {
+  layers: Layer[] = [];
+  activeId = '';
+  selection: Selection | null = null;
+  private nextItem = 1;
+  private nextLayer = 1;
+
+  constructor(readonly width: number, readonly height: number) {
+    const l = this.newLayer('Capa 1');
+    this.layers.push(l);
+    this.activeId = l.id;
+  }
+
+  /* ---------- Consultas ---------- */
+  layer(id: string): Layer | undefined { return this.layers.find(l => l.id === id); }
+  get active(): Layer { return this.layer(this.activeId) ?? this.layers[this.layers.length - 1]; }
+  index(id: string) { return this.layers.findIndex(l => l.id === id); }
+
+  newLayer(name?: string): Layer {
+    const n = this.nextLayer++;
+    return { id: `L${n}_${Math.random().toString(36).slice(2, 7)}`, name: name ?? `Capa ${n}`, visible: true, locked: false, opacity: 1, blend: 'normal', items: [] };
+  }
+
+  /** Crea un elemento con identificador y cajas calculadas. */
+  item(data: ItemData, extra: { m?: Mat | null; clip?: Selection | null } = {}): Item {
+    let local = localBounds(data, this.width, this.height);
+    // Un elemento recortado por una selección no puede salir de ella.
+    const sb = extra.clip ? selectionBounds(extra.clip) : null;
+    if (sb) local = { minX: Math.max(local.minX, sb.minX), minY: Math.max(local.minY, sb.minY), maxX: Math.min(local.maxX, sb.maxX), maxY: Math.min(local.maxY, sb.maxY) };
+    const m = extra.m ?? null;
+    return { ...data, id: this.nextItem++, m, clip: extra.clip ?? null, local, bounds: m ? transformAABB(m, local) : local } as Item;
+  }
+
+  /* ---------- Comandos ---------- */
+
+  cmdAddItems(layerId: string, items: Item[], label: string): Command {
+    const l = () => this.layer(layerId)!;
+    return {
+      label, layers: [layerId],
+      redo: () => { l().items.push(...items); },
+      undo: () => { const ids = new Set(items.map(i => i.id)); l().items = l().items.filter(i => !ids.has(i.id)); },
+    };
+  }
+
+  /** Sustituye todo el contenido de una capa (transformar, vaciar). */
+  cmdSetItems(layerId: string, next: Item[], label: string): Command {
+    const before = this.layer(layerId)!.items.slice();
+    return {
+      label, layers: [layerId],
+      redo: () => { this.layer(layerId)!.items = next.slice(); },
+      undo: () => { this.layer(layerId)!.items = before.slice(); },
+    };
+  }
+
+  cmdTransformLayer(layerId: string, t: Mat): Command {
+    return this.cmdSetItems(layerId, this.layer(layerId)!.items.map(i => transformItem(i, t)), 'Transformar capa');
+  }
+
+  cmdAddLayer(above?: string, layer = this.newLayer()): Command {
+    const prevActive = this.activeId;
+    return {
+      label: 'Nueva capa', layers: [layer.id], structure: true,
+      redo: () => { const i = above ? this.index(above) : this.layers.length - 1; this.layers.splice(i + 1, 0, layer); this.activeId = layer.id; },
+      undo: () => { this.layers = this.layers.filter(l => l !== layer); this.activeId = prevActive; },
+    };
+  }
+
+  cmdDuplicateLayer(id: string): Command {
+    const src = this.layer(id)!;
+    const copy: Layer = { ...src, id: this.newLayer().id, name: `${src.name} copia`, items: src.items.slice() };
+    return { ...this.cmdAddLayer(id, copy), label: 'Duplicar capa' };
+  }
+
+  cmdDeleteLayer(id: string): Command | null {
+    if (this.layers.length <= 1) return null;
+    const i = this.index(id), layer = this.layers[i], prevActive = this.activeId;
+    return {
+      label: 'Eliminar capa', layers: [id], structure: true,
+      redo: () => { this.layers.splice(this.index(id), 1); if (this.activeId === id) this.activeId = this.layers[Math.max(0, i - 1)].id; },
+      undo: () => { this.layers.splice(i, 0, layer); this.activeId = prevActive; },
+    };
+  }
+
+  cmdMoveLayer(id: string, to: number): Command | null {
+    const from = this.index(id);
+    to = Math.max(0, Math.min(this.layers.length - 1, to));
+    if (from < 0 || from === to) return null;
+    const move = (a: number, b: number) => { const [l] = this.layers.splice(a, 1); this.layers.splice(b, 0, l); };
+    return { label: 'Mover capa', layers: [id], structure: true, redo: () => move(from, to), undo: () => move(to, from) };
+  }
+
+  cmdLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'opacity' | 'blend'>>, label = 'Propiedades de capa'): Command {
+    const l = this.layer(id)!;
+    const before = Object.fromEntries(Object.keys(patch).map(k => [k, (l as unknown as Record<string, unknown>)[k]])) as typeof patch;
+    return {
+      label, layers: [id], structure: true,
+      redo: () => Object.assign(this.layer(id)!, patch),
+      undo: () => Object.assign(this.layer(id)!, before),
+    };
+  }
+
+  /** Fusiona la capa con la de debajo conservando su opacidad y fusión (sin rasterizar). */
+  cmdMergeDown(id: string): Command | null {
+    const i = this.index(id);
+    if (i <= 0) return null;
+    const upper = this.layers[i], lower = this.layers[i - 1];
+    const lowerItems = lower.items.slice(), prevActive = this.activeId;
+    const content: Item[] = upper.opacity === 1 && upper.blend === 'normal'
+      ? upper.items.slice()
+      : [this.item({ kind: 'group', items: upper.items.slice(), opacity: upper.opacity, blend: upper.blend })];
+    return {
+      label: 'Combinar hacia abajo', layers: [upper.id, lower.id], structure: true,
+      redo: () => { lower.items = [...lowerItems, ...content]; this.layers.splice(this.index(upper.id), 1); this.activeId = lower.id; },
+      undo: () => { lower.items = lowerItems.slice(); this.layers.splice(this.index(lower.id) + 1, 0, upper); this.activeId = prevActive; },
+    };
+  }
+
+  cmdSelection(next: Selection | null, label = 'Selección'): Command {
+    const before = this.selection;
+    return { label, layers: [], selection: true, redo: () => { this.selection = next; }, undo: () => { this.selection = before; } };
+  }
+
+  /** Varios comandos como uno solo. */
+  static group(label: string, cmds: (Command | null)[]): Command {
+    const list = cmds.filter((c): c is Command => !!c);
+    return {
+      label,
+      layers: [...new Set(list.flatMap(c => c.layers))],
+      structure: list.some(c => c.structure), selection: list.some(c => c.selection),
+      redo: () => list.forEach(c => c.redo()),
+      undo: () => [...list].reverse().forEach(c => c.undo()),
+    };
+  }
+
+  /** Caja de todo el contenido de una capa. */
+  contentBounds(id: string) { return combineBounds(this.layer(id)!.items.filter(i => i.kind !== 'clear').map(i => i.bounds)); }
+}
+
+/** Historial de comandos. */
+export class History {
+  private undoStack: Command[] = [];
+  private redoStack: Command[] = [];
+  constructor(public limit = 300) {}
+
+  exec(cmd: Command): Command {
+    cmd.redo();
+    this.undoStack.push(cmd);
+    if (this.undoStack.length > this.limit) this.undoStack.shift();
+    this.redoStack = [];
+    return cmd;
+  }
+  undo(): Command | undefined { const c = this.undoStack.pop(); if (c) { c.undo(); this.redoStack.push(c); } return c; }
+  redo(): Command | undefined { const c = this.redoStack.pop(); if (c) { c.redo(); this.undoStack.push(c); } return c; }
+  get canUndo() { return this.undoStack.length > 0; }
+  get canRedo() { return this.redoStack.length > 0; }
+  get undoDepth() { return this.undoStack.length; }
+  get redoDepth() { return this.redoStack.length; }
+  get nextUndo() { return this.undoStack[this.undoStack.length - 1]?.label; }
+  get nextRedo() { return this.redoStack[this.redoStack.length - 1]?.label; }
+}

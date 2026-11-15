@@ -54,7 +54,7 @@ export class BrushStudio {
       this.pad.el,
       h('p', { class: 'preview-note' }, 'Dibuja en la hoja para probar el pincel; cada ajuste la repinta al momento. ', pressureReadout));
 
-    this.el = h('div', { class: 'studio-backdrop', hidden: true, on: { keydown: (e: Event) => this.onKey(e as KeyboardEvent) } },
+    this.el = h('div', { class: 'studio-backdrop', hidden: true },
       h('div', { class: 'studio', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'studio-title' },
         h('header', { class: 'studio-head' },
           h('div', { class: 'studio-heading' }, h('span', { class: 'eyebrow' }, 'Brush Studio'), this.title),
@@ -66,6 +66,8 @@ export class BrushStudio {
         this.confirmBar,
         h('div', { class: 'studio-body' }, this.nav, this.params, preview)));
     document.body.append(this.el);
+    // Mientras está abierto, el editor recibe el teclado aunque el foco se haya perdido.
+    window.addEventListener('keydown', e => { if (this.open) this.onKey(e); }, true);
   }
 
   get open() { return !this.el.hidden; }
@@ -95,7 +97,7 @@ export class BrushStudio {
   private renderNav() {
     this.nav.replaceChildren(...SECTIONS.map(s => h('button', {
       type: 'button', 'aria-current': String(s === this.section), dataset: { id: s.id },
-      on: { click: () => { this.section = s; this.renderNav(); this.renderSection(); } },
+      on: { click: () => { this.section = s; this.renderNav(); this.renderSection(); (this.nav.querySelector(`[data-id="${s.id}"]`) as HTMLElement | null)?.focus(); } },
     }, h('span', { class: 'nav-title' }, s.title), h('span', { class: 'nav-sub' }, s.subtitle))));
   }
 
@@ -171,6 +173,7 @@ export class BrushStudio {
   }
 
   private onKey(e: KeyboardEvent) {
+    if ((e.target as HTMLElement).closest?.('.dialog-backdrop')) return;
     e.stopPropagation(); // los atajos del lienzo no actúan dentro del editor
     if (e.key === 'Escape') { e.preventDefault(); this.close(false); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); this.save(false); }

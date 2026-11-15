@@ -3,7 +3,8 @@ import { createEngine } from '../../filters';
 import { PointerInput } from '../../input/PointerInput';
 import type { BrushPreset } from '../brush/BrushPreset';
 import { BrushStrokeSession, SessionBuffers } from '../brush/BrushStrokeSession';
-import { buildStroke, sampleStroke } from '../brush/buildStroke';
+import { buildStroke, colorizeStroke, sampleStroke } from '../brush/buildStroke';
+import { imageSampler } from '../brush/ColorMixer';
 import type { StrokePainter } from '../brush/StrokePainter';
 import { ViewTransform } from '../engine/ViewTransform';
 import { h } from './dom';
@@ -78,7 +79,16 @@ export class PreviewPad {
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     if (!p) return;
     const all = [this.sample(), ...this.strokes].filter((s): s is PadStroke => !!s);
-    for (const s of all) this.painter.paint(ctx, buildStroke(p, s.points, s.seed, this.color), this.view, this.dpr, this.buffers.tmpCtx);
+    const mixing = p.mix.mode !== 'none' && p.render.mode === 'stamp';
+    for (const s of all) {
+      let stroke = buildStroke(p, s.points, s.seed, this.color);
+      if (mixing) {
+        // Cada trazo recoge el color de lo pintado antes, como en el lienzo.
+        const img = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height), d = this.dpr;
+        stroke = colorizeStroke(stroke, imageSampler(img, (x, y) => [x * d, y * d], d));
+      }
+      this.painter.paint(ctx, stroke, this.view.matrix(), this.dpr, this.buffers.tmpCtx);
+    }
   }
 
   private begin(p: StrokePoint) {
@@ -86,7 +96,7 @@ export class PreviewPad {
     if (this.req) { cancelAnimationFrame(this.req); this.req = 0; this.render(); }
     this.stab.apply(this.preset.stabilizer);
     this.live.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.session = new BrushStrokeSession(this.painter, { target: this.ink, overlay: this.live, view: this.view, dpr: this.dpr, buffers: this.buffers, paperColor: '#ffffff' },
+    this.session = new BrushStrokeSession(this.painter, { target: this.ink, overlay: this.live, M: this.view.matrix(), dpr: this.dpr, buffers: this.buffers, paperColor: '#ffffff' },
       this.preset, this.color, 'brush', (Math.random() * 2 ** 32) >>> 0);
     const first = this.stab.pipeline.beginStroke(p);
     this.session.begin(first[0]);

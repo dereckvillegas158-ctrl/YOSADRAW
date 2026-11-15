@@ -15,6 +15,7 @@ export type RenderMode = 'stamp' | 'smooth';
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-burn' | 'soft-light';
 export type Accumulation = 'glaze' | 'buildup';
 export type CurvePoint = [number, number];
+export type MixMode = 'none' | 'wet' | 'smudge';
 
 export interface BrushPreset {
   format: 'yosadraw-brush';
@@ -126,6 +127,21 @@ export interface BrushPreset {
     blend: BlendMode;
     accumulation: Accumulation;
   };
+  /**
+   * Mezcla de color con lo que ya hay en la capa (óleo, acuarela húmeda,
+   * difuminador). El color de cada sello se calcula al dibujar y se guarda
+   * con el trazo, así el resultado no cambia al repintar.
+   */
+  mix: {
+    /** none = color puro · wet = mezcla con la pintura húmeda · smudge = arrastra el color sin añadir. */
+    mode: MixMode;
+    /** Cuánto color del lienzo recoge cada sello (0..1). */
+    pickup: number;
+    /** Cuánto dura el color recogido a lo largo del trazo (0..1). */
+    persistence: number;
+    /** Cuánta pintura nueva aporta el pincel en modo húmedo (0..1). */
+    paint: number;
+  };
   /** Ajustes del estabilizador para este pincel (0..100). */
   stabilizer: {
     streamLine: number;
@@ -149,6 +165,7 @@ export const DEFAULT_PRESET: BrushPreset = {
   pressure: { size: 0.8, opacity: 0, curve: LINEAR_CURVE.map(p => [...p] as CurvePoint), simulateMouse: false },
   tilt: { size: 0, opacity: 0, roundness: 0, threshold: 20 },
   render: { mode: 'stamp', blend: 'normal', accumulation: 'glaze' },
+  mix: { mode: 'none', pickup: 0.5, persistence: 0.6, paint: 0.7 },
   stabilizer: { streamLine: 25, stabilization: 20, motionFiltering: 10, pressureSmoothing: 30 },
 };
 
@@ -194,7 +211,7 @@ export function normalizeCurve(v: unknown): CurvePoint[] {
 export function normalizePreset(input: unknown): BrushPreset {
   const i = obj(input), d = DEFAULT_PRESET;
   const tip = obj(i.tip), grain = obj(i.grain), spacing = obj(i.spacing), scatter = obj(i.scatter), rotation = obj(i.rotation);
-  const size = obj(i.size), opacity = obj(i.opacity), pressure = obj(i.pressure), tilt = obj(i.tilt), render = obj(i.render), stab = obj(i.stabilizer);
+  const size = obj(i.size), opacity = obj(i.opacity), pressure = obj(i.pressure), tilt = obj(i.tilt), render = obj(i.render), stab = obj(i.stabilizer), mix = obj(i.mix);
   const tipImage = img(tip.image), grainImage = img(grain.image);
   return {
     format: 'yosadraw-brush', version: 1,
@@ -242,6 +259,10 @@ export function normalizePreset(input: unknown): BrushPreset {
       mode: pick(render.mode, ['stamp', 'smooth'] as const, d.render.mode),
       blend: pick(render.blend, BLENDS, d.render.blend),
       accumulation: pick(render.accumulation, ['glaze', 'buildup'] as const, d.render.accumulation),
+    },
+    mix: {
+      mode: pick(mix.mode, ['none', 'wet', 'smudge'] as const, d.mix.mode),
+      pickup: num(mix.pickup, d.mix.pickup, 0, 1), persistence: num(mix.persistence, d.mix.persistence, 0, 1), paint: num(mix.paint, d.mix.paint, 0, 1),
     },
     stabilizer: {
       streamLine: num(stab.streamLine, d.stabilizer.streamLine, 0, 100), stabilization: num(stab.stabilization, d.stabilizer.stabilization, 0, 100),

@@ -52,6 +52,8 @@ export class Navigation {
 
   get active() { return this.gesture !== null; }
   get panning() { return this.gesture?.kind === 'pan'; }
+  /** Se ha usado un lápiz: a partir de ahí el dedo sólo navega. */
+  get penUsed() { return this.penSeen; }
 
   private local(e: PointerEvent | WheelEvent) {
     const r = this.host.element.getBoundingClientRect();

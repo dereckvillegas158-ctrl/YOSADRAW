@@ -16,8 +16,8 @@ const DIST = path.join(__dirname, '..', 'dist');
 const MAX_FILE = 20 * 1024 * 1024;
 
 const CSP = [
-  "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:", "font-src 'self' data:", "connect-src 'self'",
+  "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:", "font-src 'self' data:", "connect-src 'self'", "worker-src 'self' blob:",
   "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ');
 
@@ -29,6 +29,38 @@ const MIME = {
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 const libraryFile = () => path.join(app.getPath('userData'), 'brushes.json');
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+const exportStateFile = () => path.join(app.getPath('userData'), 'export.json');
+const MAX_EXPORT = 2 * 1024 * 1024 * 1024;
+
+/**
+ * Carpetas donde la interfaz puede escribir exportaciones: las estándar del
+ * usuario y las que él mismo elige en el diálogo nativo (se recuerda la última).
+ */
+const approvedFolders = new Set();
+let lastExportFolder = null;
+function standardFolders() {
+  return ['pictures', 'documents', 'desktop', 'downloads'].map(k => { try { return app.getPath(k); } catch { return null; } }).filter(Boolean);
+}
+function isApproved(folder) {
+  const f = path.resolve(folder);
+  return [...approvedFolders].some(a => f === a);
+}
+async function loadExportState() {
+  for (const f of standardFolders()) approvedFolders.add(path.resolve(f));
+  try {
+    const st = JSON.parse(await fs.readFile(exportStateFile(), 'utf8'));
+    if (typeof st.lastFolder === 'string') {
+      const stat = await fs.stat(st.lastFolder).catch(() => null);
+      if (stat?.isDirectory()) { lastExportFolder = path.resolve(st.lastFolder); approvedFolders.add(lastExportFolder); }
+    }
+  } catch { /* primera vez */ }
+}
+async function rememberFolder(folder) {
+  lastExportFolder = path.resolve(folder);
+  approvedFolders.add(lastExportFolder);
+  await writeAtomic(exportStateFile(), JSON.stringify({ lastFolder: lastExportFolder }));
+}
 const sanitize = name => String(name || 'pinceles.yosabrush').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120);
 
 async function writeAtomic(file, content) {
@@ -57,6 +89,55 @@ function registerIpc() {
     JSON.parse(json); // nunca escribir algo que no se pueda volver a leer
     try { await fs.copyFile(libraryFile(), `${libraryFile()}.bak`); } catch { /* primera vez */ }
     await writeAtomic(libraryFile(), json);
+  });
+
+  ipcMain.handle('settings:load', async () => {
+    try { const text = await fs.readFile(settingsFile(), 'utf8'); JSON.parse(text); return text; }
+    catch (e) { if (e.code !== 'ENOENT') console.error('No se pudo leer settings.json', e.message); return null; }
+  });
+
+  ipcMain.handle('settings:save', async (_e, json) => {
+    if (typeof json !== 'string' || json.length > 5 * 1024 * 1024) throw new Error('Preferencias no válidas');
+    JSON.parse(json);
+    await writeAtomic(settingsFile(), json);
+  });
+
+  ipcMain.handle('export:folder', async () => lastExportFolder ?? path.resolve(app.getPath('pictures')));
+
+  ipcMain.handle('export:chooseFolder', async (e, current) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Carpeta de exportación', properties: ['openDirectory', 'createDirectory'],
+      defaultPath: typeof current === 'string' && current ? current : app.getPath('pictures'),
+    });
+    if (r.canceled || !r.filePaths[0]) return null;
+    await rememberFolder(r.filePaths[0]);
+    return lastExportFolder;
+  });
+
+  ipcMain.handle('export:write', async (_e, folder, name, data, overwrite) => {
+    if (typeof folder !== 'string' || !isApproved(folder)) throw new Error('Elige la carpeta de destino con el botón «Cambiar…»');
+    if (!(data instanceof Uint8Array) || data.length > MAX_EXPORT) throw new Error('Datos de exportación no válidos');
+    const base = path.basename(String(name)).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').slice(0, 160);
+    if (!base || base === '.' || base === '..') throw new Error('Nombre de archivo no válido');
+    const dir = path.resolve(folder);
+    await fs.mkdir(dir, { recursive: true });
+    let target = path.join(dir, base);
+    if (!overwrite) {
+      const ext = path.extname(base), stem = base.slice(0, base.length - ext.length);
+      for (let i = 2; await fs.stat(target).then(() => true, () => false); i++) target = path.join(dir, `${stem} (${i})${ext}`);
+    }
+    const tmp = `${target}.part`;
+    await fs.writeFile(tmp, data);
+    await fs.rename(tmp, target);
+    if (path.resolve(dir) !== lastExportFolder) await rememberFolder(dir);
+    return target;
+  });
+
+  ipcMain.handle('export:reveal', async (_e, file) => {
+    if (typeof file !== 'string' || !isApproved(path.dirname(file))) return;
+    if (await fs.stat(file).then(() => true, () => false)) shell.showItemInFolder(file);
+    else if (await fs.stat(path.dirname(file)).then(() => true, () => false)) await shell.openPath(path.dirname(file));
   });
 
   ipcMain.handle('file:export', async (e, name, content) => {
@@ -156,6 +237,7 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(DEV_URL ? Menu.buildFromTemplate([{ role: 'viewMenu' }]) : null);
     serveApp();
     registerIpc();
+    void loadExportState();
     createWindow();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
