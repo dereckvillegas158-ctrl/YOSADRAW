@@ -34,6 +34,11 @@ export interface DesktopBridge {
   saveLibrary(json: string): Promise<void>;
   loadSettings?(): Promise<string | null>;
   saveSettings?(json: string): Promise<void>;
+  /** Exportación: carpeta por defecto/última, elegir carpeta, escribir y mostrar en el explorador. */
+  exportFolder?(): Promise<string>;
+  chooseFolder?(current: string): Promise<string | null>;
+  writeExport?(folder: string, name: string, data: Uint8Array, overwrite: boolean): Promise<string>;
+  revealFile?(path: string): Promise<void>;
   exportFile(defaultName: string, content: string): Promise<boolean>;
   importFiles(): Promise<{ name: string; content: string }[]>;
 }

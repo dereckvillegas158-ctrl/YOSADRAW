@@ -21,6 +21,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'new-layer', label: 'Nueva capa', group: 'Capas', shortcut: ['Ctrl+Shift+N'], run: m => m.engine.addLayer() },
   { id: 'duplicate-layer', label: 'Duplicar capa', group: 'Capas', shortcut: ['Ctrl+J'], run: m => m.engine.exec(m.engine.doc.cmdDuplicateLayer(m.engine.doc.activeId)) },
   { id: 'merge-down', label: 'Combinar hacia abajo', group: 'Capas', shortcut: ['Ctrl+E'], run: m => m.engine.exec(m.engine.doc.cmdMergeDown(m.engine.doc.activeId)) },
+  { id: 'export', label: 'Exportar…', group: 'Archivo', shortcut: ['Ctrl+Shift+E'], run: m => m.hooks.openExport?.() },
   { id: 'swap-colors', label: 'Intercambiar colores', group: 'Color', shortcut: ['X'], run: m => m.swapColors() },
   { id: 'default-colors', label: 'Colores por defecto', group: 'Color', shortcut: ['D'], run: m => m.setColors('#1b1530', '#ffffff') },
   { id: 'brush-bigger', label: 'Pincel más grande', group: 'Pincel', shortcut: [']'], run: m => m.resizeBrush(1.2) },
@@ -55,7 +56,7 @@ export class ToolManager extends Emitter<ToolManagerEvents> {
   colors: ColorState = { primary: '#1b1530', secondary: '#ffffff', recent: [] };
   private recentTimer = 0;
 
-  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void }) {
+  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, readonly hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void; openExport?(): void }) {
     super();
     const defaults: Record<string, string[]> = {};
     for (const t of TOOLS) defaults[`tool:${t.id}`] = t.shortcut;

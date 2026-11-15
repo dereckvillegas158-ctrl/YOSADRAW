@@ -74,6 +74,8 @@ class Pool {
  */
 export class ItemRenderer {
   private pool = new Pool();
+  /** false = escalar los mapas de bits sin suavizar (exportación con bordes duros). */
+  smoothBitmaps = true;
   private masks = new WeakMap<Selection, { key: string; canvas: HTMLCanvasElement }>();
 
   constructor(readonly painter: StrokePainter, readonly docW: number, readonly docH: number) {}
@@ -140,7 +142,7 @@ export class ItemRenderer {
       drawGradient(iso, it.grad, D, this.docW, this.docH);
       alpha = it.grad.opacity;
     } else if (it.kind === 'bitmap') {
-      iso.imageSmoothingEnabled = true;
+      iso.imageSmoothingEnabled = this.smoothBitmaps;
       iso.imageSmoothingQuality = 'high';
       iso.setTransform(D[0], D[1], D[2], D[3], D[4], D[5]);
       iso.drawImage(it.image, it.x, it.y, it.w, it.h);

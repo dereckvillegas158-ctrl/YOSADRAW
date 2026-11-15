@@ -5,6 +5,7 @@ import type { CanvasEngine } from '../engine';
 import { ToolManager } from '../tools/ToolManager';
 import { BrushStudio } from './BrushStudio';
 import { ColorPanel } from './ColorPanel';
+import { ExportDialog } from './ExportDialog';
 import { openCustomize, openShortcuts } from './dialogs';
 import { h, toast } from './dom';
 import { ICONS } from './icons';
@@ -26,7 +27,9 @@ export interface AppDeps { engine: CanvasEngine; lib: BrushLibrary; painter: Str
 export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   const thumbs = new Thumbnails(painter);
   const studio = new BrushStudio(lib, painter, thumbs);
-  const mgr = new ToolManager(engine, lib, { openBrushStudio: p => studio.show(p, mgr.colors.primary), notify: (m, k) => toast(m, k) });
+  let exportOpts: unknown = saved?.export;
+  const exportDialog = new ExportDialog(engine, exportOpts, o => { exportOpts = o; save(); });
+  const mgr = new ToolManager(engine, lib, { openBrushStudio: p => studio.show(p, mgr.colors.primary), notify: (m, k) => toast(m, k), openExport: () => void exportDialog.show() });
   mgr.load((saved?.tools as Record<string, unknown>) ?? null);
   let layout = normalizeLayout(saved?.toolbar);
   let tab = typeof saved?.tab === 'string' ? saved.tab : 'layers';
@@ -35,7 +38,7 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab }), 500);
+    saveTimer = window.setTimeout(() => void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts }), 500);
   };
   mgr.onChange = save;
 
@@ -83,6 +86,8 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   const icon = (id: string, key: keyof typeof ICONS) => { $(id).innerHTML = ICONS[key]; };
   icon('undo', 'undo'); icon('redo', 'redo'); icon('zoom-in', 'zoomIn'); icon('zoom-out', 'zoomOut'); icon('fit', 'fit');
   icon('rot-left', 'rotL'); icon('rot-right', 'rotR'); icon('panel-toggle', 'sliders'); icon('keys-btn', 'keyboard'); icon('customize-btn', 'layout');
+  $('export-btn').insertAdjacentHTML('afterbegin', ICONS.export);
+  $('export-btn').addEventListener('click', () => void exportDialog.show());
   $('undo').addEventListener('click', () => engine.undo());
   $('redo').addEventListener('click', () => engine.redo());
   $('zoom-in').addEventListener('click', () => engine.zoomBy(1.5));
@@ -149,7 +154,7 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   // ---------- Teclado ----------
   window.addEventListener('keydown', e => {
     const t = e.target as HTMLElement;
-    if (studio.open || t.closest('.dialog-backdrop, .menu, .popover')) return;
+    if (studio.open || exportDialog.open || t.closest('.dialog-backdrop, .menu, .popover')) return;
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'radio', 'color'].includes(t.type))) return;
     if (t instanceof HTMLSelectElement && e.key.startsWith('Arrow')) return;
     if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(true); return; }
@@ -158,9 +163,9 @@ export function mountApp({ engine, lib, painter, settings, saved }: AppDeps) {
   });
   window.addEventListener('keyup', e => { if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(false); } });
   window.addEventListener('blur', () => engine.setSpacePan(false));
-  window.addEventListener('beforeunload', () => { void lib.saveNow(); void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab }); });
+  window.addEventListener('beforeunload', () => { void lib.saveNow(); void settings.save({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts }); });
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { mgr, studio, toolbar, props, layers, color, library, thumbs };
+  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog };
 }

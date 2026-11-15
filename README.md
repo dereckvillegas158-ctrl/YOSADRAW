@@ -183,6 +183,36 @@ del bote y una selección levantada para transformarla, porque son operaciones d
 3. Para modificar el documento, crea elementos con `doc.item(...)` y ejecuta un comando
    (`engine.exec(doc.cmdAddItems(...))`). Deshacer y rehacer funcionan solos.
 
+## Exportación
+Botón **Exportar** (barra superior) o **Ctrl+Mayús+E**. La exportación trabaja sobre una copia
+renderizada: el documento no se modifica.
+
+| Formato | Transparencia | Calidad | DPI | Perfil ICC | Implementación |
+|---|---|---|---|---|---|
+| PNG | sí | sin pérdida (nivel zlib 0–9) | pHYs | iCCP | codificador propio (filtros adaptativos + fflate) |
+| JPG | no (fondo elegible) | 1–100 % | JFIF | APP2 ICC_PROFILE | codificador del navegador + metadatos |
+| WEBP | sí | con o sin pérdida (VP8L real) | — | ICCP (VP8X) | libwebp (@jsquash/webp, wasm) |
+| BMP | sí (32 bits V5) o 24 bits | sin pérdida | sí | perfil incrustado V5 | codificador propio |
+| TIFF | sí | sin compresión, LZW o Deflate (+ predictor) | sí | etiqueta 34675 | codificador propio |
+| PSD | sí | sin pérdida (RLE opcional) | sí | sí | ag-psd, **conserva capas**, opacidad, modo de fusión y visibilidad |
+| PDF | sí (SMask) | JPEG o sin pérdida | tamaño de página = px·72/dpi | ICCBased | escritor PDF 1.4 propio |
+
+Opciones de la ventana: nombre, carpeta, lienzo completo o selección, ancho/alto/escala
+(máx. 16384 px por lado y 100 MP), DPI (72–600 o personalizado, 300 por defecto),
+compresión, transparencia o color de fondo, perfil de color (sRGB, Display P3 o escala de grises,
+con conversión real de color), incrustar perfil ICC, antialiasing, combinar capas visibles o un
+archivo por capa. Muestra vista previa, tamaño estimado, barra de progreso, notificación al
+terminar y botón **Abrir carpeta** (app de escritorio).
+
+- El trabajo pesado corre en un Web Worker; la interfaz no se bloquea.
+- En la web se descarga el archivo (varios archivos se agrupan en un .zip).
+- En escritorio solo se escribe en carpetas estándar (Imágenes, Documentos, Escritorio,
+  Descargas) o en la que el usuario elija con «Cambiar…»; nunca se sobrescribe: se añade « (2)».
+- Validado con decodificadores independientes (Pillow + LittleCMS, psd-tools, pypdf, poppler):
+  los formatos sin pérdida son idénticos píxel a píxel.
+- Limitaciones: no hay conversión a CMYK; WebP no guarda DPI; el PSD en escala de grises
+  se guarda en modo RGB.
+
 ## Lienzo
 - **Sin pérdida de calidad al ampliar.** Los trazos se guardan como datos (puntos ya
   estabilizados, sellos calculados y una copia congelada del preset). En cada vista se transforman a coordenadas de pantalla
