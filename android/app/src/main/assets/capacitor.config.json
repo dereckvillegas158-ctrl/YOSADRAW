@@ -1,0 +1,17 @@
+{
+	"appId": "com.yosadraw.app",
+	"appName": "YOSADRAW",
+	"webDir": "dist",
+	"backgroundColor": "#0d0b14",
+	"android": {
+		"allowMixedContent": false,
+		"captureInput": false,
+		"webContentsDebuggingEnabled": false
+	},
+	"plugins": {
+		"SystemBars": {
+			"style": "DARK",
+			"insetsHandling": "css"
+		}
+	}
+}
