@@ -1,11 +1,16 @@
 # Compila YOSADRAW para Windows x64 (instalador NSIS + versión portable)
-# en una máquina Windows de GitHub. Los .exe quedan como artefactos del run.
+# en una máquina Windows de GitHub. Al subir una etiqueta v*, publica además
+# la release con los .exe y el APK de Android firmado (de la rama `binarios`,
+# porque la clave de firma no se sube a GitHub).
 name: Build Windows x64
 
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
+
+permissions:
+  contents: write
 
 jobs:
   windows:
@@ -28,3 +33,19 @@ jobs:
             release/*.exe
             release/*.blockmap
           if-no-files-found: error
+      - name: APK firmado (rama binarios)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          git fetch --depth=1 origin binarios
+          git show "FETCH_HEAD:YOSADRAW-$v.apk" > "release/YOSADRAW-$v.apk"
+      - name: Publicar release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" release/YOSADRAW-Setup-$v-x64.exe release/YOSADRAW-$v-x64-portable.exe "release/YOSADRAW-$v.apk" \
+            --title "YOSADRAW $v" --notes-file RELEASE_NOTES.md
