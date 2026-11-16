@@ -239,8 +239,12 @@ public class YosaFilesPlugin extends Plugin {
         io.execute(() -> {
             try {
                 File f = storeFile(call.getString("key"));
-                long offset = call.getLong("offset", 0L);
-                int length = call.getInt("length", 1 << 20);
+                // Ojo: PluginCall.getLong() sólo acepta Long y los números del puente llegan como Integer:
+                // devolvía siempre 0 y cada trozo se leía desde el principio (proyectos de más de 1,5 MB dañados
+                // al abrirlos). optLong/optInt de JSONObject aceptan cualquier número.
+                long offset = Math.max(0L, call.getData().optLong("offset", 0L));
+                int length = Math.max(0, call.getData().optInt("length", 1 << 20));
+                if (offset > f.length()) throw new IOException("Posición fuera del archivo");
                 byte[] buf = new byte[(int) Math.max(0, Math.min(length, f.length() - offset))];
                 try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r")) {
                     raf.seek(offset);

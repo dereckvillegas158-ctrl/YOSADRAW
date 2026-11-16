@@ -8,7 +8,7 @@ import { browserImageCodec, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SIDE, normaliz
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.4.1';
 
 export interface NewProjectSpec {
   name: string;
