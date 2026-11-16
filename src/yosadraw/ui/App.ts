@@ -18,6 +18,8 @@ import { Document } from '../doc/Document';
 import { Gallery, GI, normalizeGalleryPrefs } from './Gallery';
 import { closeTopOverlay, dragToClose, isPhone, normalizeTouch, openMore, QuickSliders, type TouchPrefs, watchDevice } from './Mobile';
 import { PropertiesBar } from './PropertiesBar';
+import { PhoneDock } from './PhoneDock';
+import { IMAGE_TYPES, importImageLayer, pickAndImport, References } from './Images';
 import { Thumbnails } from './thumbnails';
 import { normalizeLayout, Toolbar } from './Toolbar';
 
@@ -41,12 +43,17 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     openBrushStudio: p => studio.show(p, mgr.colors.primary), notify: (m, k) => toast(m, k), openExport: () => void exportDialog.show(),
     openEffects: () => { if (effects.open) effects.close(); else effects.show(); },
     project: a => void projectAction(a),
+    importImage: () => void pickAndImport(engine, mgr),
+    addReference: () => void refs.add(),
   });
   mgr.load((saved?.tools as Record<string, unknown>) ?? null);
   let layout = normalizeLayout(saved?.toolbar);
   let tab = typeof saved?.tab === 'string' ? saved.tab : 'layers';
   let touch: TouchPrefs = normalizeTouch(saved?.touch);
-  const applyTouch = () => { engine.fingerMode = touch.finger; engine.holdToPick = touch.hold; };
+  const applyTouch = () => {
+    engine.fingerMode = touch.finger; engine.holdToPick = touch.hold;
+    Object.assign(engine.inputTuning, { touchBoost: touch.touchBoost, penBoost: touch.penBoost, fingerPressure: touch.fingerPressure, cleanup: touch.cleanup });
+  };
   applyTouch();
 
   // ---------- Guardado de preferencias ----------
@@ -141,7 +148,48 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   const quick = new QuickSliders(mgr, () => touch);
   $('canvas-host').append(quick.el);
   const setTouch = (p: TouchPrefs) => { touch = p; applyTouch(); quick.render(); save(); };
-  $('more-btn').addEventListener('click', () => openMore({ engine, prefs: () => touch, setPrefs: setTouch, openCustomize: customize, openShortcuts: () => openShortcuts(mgr, save), openEffects: () => effects.show() }));
+  const more = () => openMore({
+    engine, prefs: () => touch, setPrefs: setTouch, openCustomize: customize, openShortcuts: () => openShortcuts(mgr, save), openEffects: () => effects.show(),
+    actions: [
+      { label: 'Guardar', run: () => void projectAction('save') },
+      { label: 'Exportar…', run: () => void exportDialog.show() },
+      { label: 'Efectos…', run: () => effects.show() },
+      { label: 'Importar imagen…', run: () => void pickAndImport(engine, mgr) },
+      { label: 'Imagen de referencia…', run: () => void refs.add() },
+      ...(engine.doc.references.length ? [{ label: document.body.classList.contains('refs-hidden') ? 'Mostrar referencias' : 'Ocultar referencias', run: () => refs.toggleAll() }] : []),
+    ],
+  });
+  $('more-btn').addEventListener('click', more);
+  // Teléfono: dock simplificado (herramientas · pincel · borrador · ajustes · capas · color · más).
+  const dock = new PhoneDock({
+    mgr, props, propsHome: $('props-host'), openMore: more,
+    openPanel: t => { const open = document.body.classList.contains('panel-open') && tab === t; if (!open) showTab(t); setPanel(!open); },
+  });
+  $('workspace').append(dock.el);
+
+  // ---------- Imágenes: referencias e importación ----------
+  const refs = new References(engine, hex => { mgr.setColors(hex, mgr.colors.secondary); toast(`Color tomado de la referencia: ${hex}`, 'ok'); });
+  const isImage = (f: File) => IMAGE_TYPES.split(',').includes(f.type) || /\.(png|jpe?g|webp|gif|bmp)$/i.test(f.name);
+  // Arrastrar imágenes al lienzo: se importan como capa (con Alt, como referencia).
+  const host = $('canvas-host');
+  host.addEventListener('dragover', e => { if (gallery.visible || ![...(e.dataTransfer?.items ?? [])].some(i => i.kind === 'file')) return; e.preventDefault(); host.classList.add('drop-target'); });
+  host.addEventListener('dragleave', () => host.classList.remove('drop-target'));
+  host.addEventListener('drop', e => {
+    host.classList.remove('drop-target');
+    const files = [...(e.dataTransfer?.files ?? [])].filter(isImage);
+    if (gallery.visible || !files.length) return;
+    e.preventDefault();
+    void (async () => { for (const f of files) { try { if (e.altKey) await refs.add(f); else await importImageLayer(engine, mgr, f); } catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); } } })();
+  });
+  // Pegar una imagen (Ctrl+V) la importa como capa.
+  window.addEventListener('paste', e => {
+    const t = e.target as HTMLElement;
+    if (gallery.visible || t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t.closest?.('.dialog-backdrop')) return;
+    const f = [...(e.clipboardData?.files ?? [])].find(isImage);
+    if (!f) return;
+    e.preventDefault();
+    importImageLayer(engine, mgr, f).catch(err => toast(err instanceof Error ? err.message : String(err), 'error'));
+  });
   // Al pasar a teléfono el panel empieza cerrado (es una hoja sobre el lienzo).
   watchDevice(() => { if (isPhone()) setPanel(false); });
   // Extremo borrador del lápiz: borrador mientras se usa; al levantarlo vuelve la herramienta anterior.
@@ -262,6 +310,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
       ['Guardar', () => void projectAction('save')], ['Guardar como…', () => void projectAction('saveAs')],
       ['Renombrar…', () => void gallery.renameOpen()], ['Historial de versiones…', () => void gallery.versions(projects.get(e.id)!)],
       ['Información', () => void gallery.info(projects.get(e.id)!)], ['Exportar imagen…', () => void exportDialog.show()],
+      ['Importar imagen como capa…', () => void pickAndImport(engine, mgr)], ['Añadir imagen de referencia…', () => void refs.add()],
       ['Exportar archivo .yosa', () => void (session.dirty ? gallery.save() : Promise.resolve(true)).then(ok => { if (ok) void gallery.exportNative(projects.get(e.id)!); })],
       [session.prefs.autoSave ? 'Desactivar guardado automático' : 'Activar guardado automático', () => { session.prefs.autoSave = !session.prefs.autoSave; save(); toast(session.prefs.autoSave ? `Guardado automático cada ${session.prefs.autoSaveMinutes} min` : 'Guardado automático desactivado (se siguen haciendo copias de recuperación)', 'ok'); }],
       ['Volver a la galería', () => void toGallery()],
@@ -299,5 +348,5 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { mgr, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
+  return { mgr, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
 }

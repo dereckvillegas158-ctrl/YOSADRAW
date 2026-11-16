@@ -221,3 +221,93 @@ html.phone .menu { max-width: calc(100vw - 16px); }
 @media (max-width: 760px) {
   html.touch:not(.phone) .panel { width: min(370px, 92%); }
 }
+
+/* =================== Teléfono simplificado (1.3) =================== */
+.phone-dock { display: none; }
+html.phone #toolbar-host, html.phone #props-host { display: none; }
+/* Barra superior mínima: galería · proyecto · deshacer/rehacer · guardar. Lo demás vive en el dock y en «Más». */
+html.phone .seg-zoom, html.phone .fx-btn, html.phone .export-btn, html.phone .color-btn, html.phone .more-btn, html.phone .panel-toggle, html.phone .brand { display: none !important; }
+html.phone .topbar { min-height: 0; }
+html.phone .project-chip { max-width: 46vw; }
+html.phone .bar-scroll { margin-left: auto; overflow: visible; }
+
+html.phone .phone-dock {
+  display: flex; align-items: center; justify-content: space-around; gap: 2px; background: var(--surface); border-top: 1px solid var(--line);
+  padding: 6px calc(6px + var(--sa-r)) calc(6px + var(--sa-b)) calc(6px + var(--sa-l)); touch-action: none; user-select: none;
+}
+.dock-btn {
+  position: relative; display: grid; place-items: center; width: 48px; height: 48px; flex: none; border: 0; border-radius: 14px;
+  background: none; color: var(--fg); cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.dock-btn:active { background: var(--surface-3); }
+.dock-btn[aria-pressed="true"] { background: var(--brand-grad); color: var(--accent-ink); box-shadow: 0 4px 14px rgba(124, 77, 255, 0.35); }
+.dock-btn:disabled { opacity: 0.35; }
+.dock-btn svg { width: 25px; height: 25px; }
+.dock-btn .color-dot { width: 28px; height: 28px; border-radius: 50%; border: 2.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
+.dock-sep { width: 1px; height: 30px; background: var(--line); flex: none; }
+html.phone body.panel-open .dk-layers, html.phone body.panel-open .dk-color { color: var(--accent); }
+
+@media (orientation: portrait) {
+  html.phone .workspace, html.phone body.toolbar-right .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  html.phone .canvas-host { grid-row: 1; grid-column: 1; }
+  html.phone .phone-dock { grid-row: 2; grid-column: 1; }
+  html.phone .toasts { bottom: calc(80px + var(--sa-b)); }
+  /* El panel no tapa el dock: así se pasa de capas a color sin cerrarlo. */
+  html.phone .panel { bottom: calc(61px + var(--sa-b)); height: min(64vh, 600px); }
+}
+@media (orientation: landscape) {
+  html.phone .workspace, html.phone body.toolbar-right .workspace { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  html.phone .phone-dock {
+    grid-column: 1; grid-row: 1; flex-direction: column; justify-content: center; border-top: 0; border-right: 1px solid var(--line);
+    padding: 6px 6px calc(6px + var(--sa-b)) calc(6px + var(--sa-l)); overflow-y: auto;
+  }
+  html.phone .canvas-host { grid-column: 2; grid-row: 1; }
+  html.phone body.toolbar-right .workspace { grid-template-columns: minmax(0, 1fr) auto; }
+  html.phone body.toolbar-right .phone-dock { grid-column: 2; border-right: 0; border-left: 1px solid var(--line); padding-left: 6px; padding-right: calc(6px + var(--sa-r)); }
+  html.phone body.toolbar-right .canvas-host { grid-column: 1; }
+  html.phone .dock-sep { width: 30px; height: 1px; }
+  html.phone .dock-btn { width: 46px; height: 44px; }
+}
+
+/* Cuadrícula de herramientas */
+.tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
+.tool-cell {
+  display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 4px 8px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--fg); cursor: pointer; font-size: 11.5px; line-height: 1.15; text-align: center;
+}
+.tool-cell[aria-pressed="true"] { background: var(--brand-grad); color: var(--accent-ink); border-color: transparent; }
+.tool-cell .tc-icon svg { width: 24px; height: 24px; }
+
+/* Propiedades de la herramienta en una hoja: en columna, sin desplazamiento horizontal */
+.props-sheet .propsbar { flex-direction: column; align-items: stretch; flex-wrap: nowrap; overflow: visible; min-height: 0; padding: 0; gap: 12px; background: none; border: 0; }
+.props-sheet .props-title { display: none; }
+.props-sheet .props-body { display: flex; flex-direction: column; align-items: stretch; gap: 12px; overflow: visible; }
+.props-sheet .prop { flex-wrap: wrap; }
+.props-sheet .prop.slider { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
+.props-sheet .prop.slider input[type=range] { grid-column: 1 / -1; grid-row: 2; width: 100%; }
+.props-sheet .prop-sep { display: none; }
+.props-sheet .preset-btn { max-width: none; width: 100%; }
+.props-sheet .segmented { flex-wrap: wrap; }
+
+/* Imágenes de referencia */
+.ref-win {
+  position: fixed; z-index: 30; display: flex; flex-direction: column; min-width: 140px; min-height: 110px; border-radius: 12px; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--line); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); transition: opacity 0.15s;
+}
+body.refs-hidden .ref-win { display: none; }
+.ref-head { display: flex; align-items: center; gap: 2px; padding: 3px 4px 3px 10px; background: var(--surface-3); cursor: move; touch-action: none; user-select: none; }
+.ref-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.ref-head .icon.sm { width: 30px; height: 30px; min-height: 0; font-size: 16px; line-height: 1; }
+.ref-view { flex: 1; min-height: 0; width: 100%; display: block; touch-action: none; cursor: grab; background: repeating-conic-gradient(#2a2536 0 25%, #221e2d 0 50%) 0 0 / 16px 16px; }
+.ref-grip { position: absolute; right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 55%, rgba(255, 255, 255, 0.45) 56% 62%, transparent 63% 72%, rgba(255, 255, 255, 0.45) 73% 79%, transparent 80%); }
+html.touch .ref-grip { width: 34px; height: 34px; }
+.canvas-host.drop-target { outline: 3px dashed var(--accent); outline-offset: -8px; }
+html.phone .app { grid-template-rows: auto minmax(0, 1fr); }
+html.phone .workspace { grid-row: 2; }
+@media (orientation: portrait) {
+  html.phone .panel { transform: translateY(calc(100% + 90px)); }
+  html.phone body.panel-open .panel { transform: none; }
+}
+html.touch .props-sheet .prop.slider input[type=range] { width: 100%; }
+.ref-head .icon.sm, html.touch .ref-head .icon.sm { width: 28px; height: 30px; min-width: 0; min-height: 0; padding: 0; flex: none; }
+.ref-head .ref-close { color: #ff8fa8; }

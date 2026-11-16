@@ -3,3 +3,9 @@ dist/
 dist-single/
 release/
 *.log
+descargas/
+
+# Cachés y salidas de Gradle
+android/.gradle/
+android/app/build/
+android/build/

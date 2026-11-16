@@ -208,14 +208,23 @@ export class BrushStrokeSession {
     this.painter.composite(t, src, r, p, this.tool, !!this.surf.atop);
   }
 
+  /** Puntos del trazo (en documento) recibidos hasta ahora. */
+  get points(): readonly StrokePoint[] { return this.docPts; }
+  private replaced = false;
+  /** Sustituye los puntos antes de terminar (limpieza de extremos): el trazo final se rehace con ellos. */
+  replacePoints(pts: StrokePoint[]) { this.docPts = pts; this.replaced = true; }
+
   /** Termina el trazo y lo pinta en su forma final. */
   end(): FinishedStroke {
     const sets: DabSet[] = [];
     let total = 0;
     this.gens.forEach((g, i) => {
       g.finish();
-      if (i === 0) total = g.length;
-      const final = new DabGenerator(this.preset, this.seed + i * 7919, { totalLength: g.length });
+      // Con puntos sustituidos, la longitud (para el afilado final) se mide de nuevo.
+      let length = g.length;
+      if (this.replaced) { const m = new DabGenerator(this.preset, this.seed + i * 7919); for (const p of this.docPts) m.push(this.mirrorPoint(p, i)); m.finish(); length = m.length; }
+      if (i === 0) total = length;
+      const final = new DabGenerator(this.preset, this.seed + i * 7919, { totalLength: length });
       for (const p of this.docPts) final.push(this.mirrorPoint(p, i));
       final.finish();
       const set: DabSet = { dabs: final.dabs.trimmed(), count: final.dabs.count };

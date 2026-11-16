@@ -26,6 +26,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'save-as', label: 'Guardar como…', group: 'Archivo', shortcut: ['Ctrl+Shift+S'], run: m => m.hooks.project?.('saveAs') },
   { id: 'new-project', label: 'Nuevo proyecto…', group: 'Archivo', shortcut: ['Ctrl+Alt+N'], run: m => m.hooks.project?.('new') },
   { id: 'gallery', label: 'Volver a la galería', group: 'Archivo', shortcut: ['Ctrl+Shift+G'], run: m => m.hooks.project?.('gallery') },
+  { id: 'import-image', label: 'Importar imagen como capa…', group: 'Archivo', shortcut: ['Ctrl+Shift+O'], run: m => m.hooks.importImage?.() },
+  { id: 'add-reference', label: 'Añadir imagen de referencia…', group: 'Archivo', shortcut: ['Ctrl+Alt+R'], run: m => m.hooks.addReference?.() },
   { id: 'effects', label: 'Efectos…', group: 'Imagen', shortcut: ['Ctrl+Shift+F'], run: m => m.hooks.openEffects?.() },
   { id: 'export', label: 'Exportar…', group: 'Archivo', shortcut: ['Ctrl+Shift+E'], run: m => m.hooks.openExport?.() },
   { id: 'swap-colors', label: 'Intercambiar colores', group: 'Color', shortcut: ['X'], run: m => m.swapColors() },
@@ -62,7 +64,7 @@ export class ToolManager extends Emitter<ToolManagerEvents> {
   colors: ColorState = { primary: '#1b1530', secondary: '#ffffff', recent: [] };
   private recentTimer = 0;
 
-  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, readonly hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void; openExport?(): void; openEffects?(): void; project?(a: 'save' | 'saveAs' | 'new' | 'gallery'): void }) {
+  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, readonly hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void; openExport?(): void; openEffects?(): void; importImage?(): void; addReference?(): void; project?(a: 'save' | 'saveAs' | 'new' | 'gallery'): void }) {
     super();
     const defaults: Record<string, string[]> = {};
     for (const t of TOOLS) defaults[`tool:${t.id}`] = t.shortcut;

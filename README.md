@@ -27,8 +27,8 @@ npm run desktop:dev    # la app en Electron, con recarga en caliente
 
 | Comando | Resultado en `release/` | Dónde se puede generar |
 |---|---|---|
-| `npm run dist:win` | `YOSADRAW-Setup-1.2.0-x64.exe` (instalador) y `YOSADRAW-1.2.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
-| `npm run dist:win:zip` | `YOSADRAW-1.2.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
+| `npm run dist:win` | `YOSADRAW-Setup-1.3.0-x64.exe` (instalador) y `YOSADRAW-1.3.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
+| `npm run dist:win:zip` | `YOSADRAW-1.3.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
 | `npm run dist:win:dir` | `release/win-unpacked/YOSADRAW.exe` | Cualquier sistema |
 
 El workflow `.github/workflows/build-windows.yml` compila el instalador y la versión portable
@@ -73,15 +73,22 @@ Sin ese archivo, la release se firma con la clave de depuración. Guarda la clav
 actualizaciones solo se instalan encima si van firmadas con la misma.
 
 ### Qué cambia en el teléfono
-- **Interfaz**: barra superior compacta (deshacer, rehacer, zoom, exportar, color, «Más» y paneles);
-  herramientas abajo en vertical y a la izquierda en horizontal; capas, color y pinceles en una
-  hoja inferior que se cierra deslizando; diálogos y editor de pinceles a pantalla completa;
-  respeta muescas y barra de gestos. En tableta se mantiene el diseño de escritorio con controles
-  táctiles más grandes.
+- **Interfaz simplificada** (1.3): arriba sólo galería, proyecto, deshacer y rehacer. Abajo (a la
+  izquierda en horizontal) un dock de siete botones: **herramientas** (cuadrícula con todas, por
+  categorías), **último pincel**, **borrador**, **ajustes** de la herramienta en una hoja (tocar otra
+  vez el pincel o el borrador activo también la abre), **capas**, **color** y **Más** (guardar,
+  exportar, efectos, importar imagen, referencias, vista y ajustes táctiles). Capas y color se abren
+  en una hoja que no tapa el dock; diálogos y editor de pinceles a pantalla completa; respeta muescas
+  y barra de gestos. En tableta se mantiene el diseño de escritorio con controles táctiles más grandes.
 - **Deslizadores rápidos** de tamaño y opacidad junto al borde del lienzo (lado configurable).
 - **Dedo**: *Automático* (dibuja hasta que se usa un lápiz; luego sólo navega y la palma no pinta),
   *Dibuja* o *Sólo navega*. Dos dedos: mover, ampliar y girar a la vez. Toque con dos dedos:
   deshacer; con tres: rehacer. Un segundo dedo que llega tarde a un trazo largo se ignora.
+- **Estabilizador táctil** (en «Más»): suavizado extra para el dedo (35 % por defecto) y para el
+  lápiz (10 %) que se suma al del pincel; presión simulada por la velocidad con el dedo; y limpieza
+  de extremos al soltar, que quita el garabato al apoyar y el gancho al levantar (sin añadir
+  retardo mientras se dibuja). En una línea con temblor simulado la desviación media bajó de 2,96 a
+  0,8 px y el gancho final de 12 a 2,4 px (`src/filters/StrokeCleanup.ts`).
 - **Mantener pulsado** con el dedo: cuentagotas con lupa; se arrastra para afinar.
 - **Lápiz** (S Pen, lápices activos USI): presión, inclinación y vista previa del pincel al pasar por
   encima. Botón lateral: cuentagotas. Extremo borrador: borra y al levantarlo vuelve la herramienta.
@@ -245,6 +252,19 @@ de la interfaz.
 | Abrir proyecto | 1,3 s | 0,8 s | descompresión en el worker |
 | Arranque (JS principal) | 1,39 MB | 0,34 MB | el codificador de exportación (PSD, WebP) se carga al exportar por primera vez |
 | Memoria | 144 MB | 97 MB | |
+
+## Imágenes: importar y referencias
+- **Importar imagen como capa** (Ctrl+Mayús+O, menú del proyecto, «Más» en el teléfono, arrastrar
+  al lienzo o pegar con Ctrl+V): crea una capa nueva encima de la activa con la imagen centrada (se
+  encaja si es mayor que el lienzo; se guarda hasta 2× el lienzo para poder ampliarla sin perder
+  calidad) y selecciona **Transformar** para colocarla. Se deshace en un paso.
+- **Imagen de referencia** (Ctrl+Alt+R, menú del proyecto, «Más», o arrastrar con Alt): ventana
+  flotante que no forma parte del dibujo. Se mueve por la barra, cambia de tamaño desde la esquina,
+  la imagen se amplía con dos dedos, la rueda o los botones − / + / ⤢ y se desplaza arrastrando.
+  ◐ cambia la transparencia de la ventana; mantener pulsado (o Alt + clic) toma el color. Hasta 6
+  por proyecto; se guardan en el `.yosa` con su posición, zoom y opacidad.
+
+Código: `src/yosadraw/ui/Images.ts`, `src/yosadraw/ui/PhoneDock.ts`.
 
 ## Efectos
 Botón ✦ **Efectos** en la barra superior (en el teléfono, en «Más»), o **Ctrl+Mayús+F**. Se elige un
