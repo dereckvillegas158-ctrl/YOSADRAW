@@ -67,7 +67,7 @@ export function installAndroidBridge() {
 
   const bridge: DesktopBridge = {
     platform: 'android',
-    version: '1.4.0',
+    version: '1.4.1',
     loadLibrary: async () => (await files.readText({ name: 'library.json' })).data,
     saveLibrary: json => files.writeText({ name: 'library.json', data: json }),
     loadSettings: async () => (await files.readText({ name: 'settings.json' })).data,
@@ -78,8 +78,11 @@ export function installAndroidBridge() {
       if (size < 0) return null;
       const out = new Uint8Array(size);
       for (let off = 0; off < size; off += CHUNK) {
-        const { data } = await files.storeRead({ key, offset: off, length: CHUNK });
+        const want = Math.min(CHUNK, size - off);
+        const { data } = await files.storeRead({ key, offset: off, length: want });
         const bin = atob(data);
+        // Cada trozo ha de medir lo pedido: si no, el archivo se reconstruiría mal (no se devuelve nada a medias).
+        if (bin.length !== want) throw new Error(`Lectura incompleta de ${key} (${off}: ${bin.length} de ${want} bytes)`);
         for (let i = 0; i < bin.length; i++) out[off + i] = bin.charCodeAt(i);
       }
       return out;

@@ -160,10 +160,12 @@ export class ProjectLibrary extends Emitter<{ change: void }> {
     // La revisión de verdad es la del archivo (otra pestaña o ventana pudo guardar sin que este índice lo sepa).
     const prev = await this.store.get(pKey(id));
     let stored = { rev: cur.rev, modified: cur.modified };
-    if (prev) { try { const m = readProjectInfo(prev).meta; stored = { rev: m.rev, modified: m.modified }; } catch { /* archivo dañado: se sustituye */ } }
+    let prevValid = false;
+    if (prev) { try { const m = readProjectInfo(prev).meta; stored = { rev: m.rev, modified: m.modified }; prevValid = true; } catch { /* archivo dañado: se sustituye */ } }
     if ((stored.rev !== baseRev || cur.rev !== baseRev) && !force) throw new ConflictError({ ...cur, ...stored });
     // `keepVersion` = false en los guardados automáticos seguidos: no llenan el historial.
-    if (prev && keepVersion) {
+    // Al historial sólo pasa una copia legible (nunca se guarda como versión algo dañado).
+    if (prev && prevValid && keepVersion) {
       await this.store.put(`${vPrefix(id)}${stored.modified}.yosa`, prev);
       await this.pruneVersions(id);
     }
