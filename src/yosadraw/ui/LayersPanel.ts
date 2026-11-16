@@ -18,6 +18,7 @@ const I = {
   eyeOff: svg('<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7c1.7 0 3.2-.5 4.5-1.2"/>'),
   lock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
   /** Alfa bloqueado: damero (transparencia) con candado. */
+  clip: svg('<path d="M7 4v9a4 4 0 0 0 4 4h9"/><path d="m16.5 13.5 3.5 3.5-3.5 3.5"/>'),
   alpha: svg('<path d="M4 4h6v6H4zM10 10h6v6h-6z" fill="currentColor" stroke="none" opacity=".55"/><rect x="4" y="4" width="12" height="12" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1.2"/><path d="M15.5 15v-1.5a2 2 0 0 1 4 0V15"/>'),
   unlock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
@@ -187,14 +188,21 @@ export class LayersPanel {
       'aria-label': l.alphaLock ? `Desbloquear alfa de ${l.name}` : `Bloquear alfa de ${l.name}`, html: I.alpha,
       on: { click: (ev: Event) => { ev.stopPropagation(); e.setLayerProps(l.id, { alphaLock: !l.alphaLock }); } },
     });
+    // Máscara de recorte: la capa sólo se ve sobre los píxeles de la capa de debajo.
+    const clipBtn = h('button', {
+      type: 'button', class: 'icon sm clip-btn', 'aria-pressed': String(!!l.clip), disabled: d.layers.indexOf(l) === 0 && !l.clip,
+      title: l.clip ? 'Quitar máscara de recorte (Ctrl+Alt+G)' : 'Máscara de recorte: ver esta capa sólo sobre la de debajo (Ctrl+Alt+G)',
+      'aria-label': l.clip ? `Quitar recorte de ${l.name}` : `Recortar ${l.name} a la capa de debajo`, html: I.clip,
+      on: { click: (ev: Event) => { ev.stopPropagation(); e.setLayerProps(l.id, { clip: !l.clip }); } },
+    });
     const lock = h('button', { type: 'button', class: 'icon sm', 'aria-pressed': String(l.locked), title: l.locked ? 'Desbloquear capa' : 'Bloquear capa', 'aria-label': l.locked ? `Desbloquear ${l.name}` : `Bloquear ${l.name}`, html: l.locked ? I.lock : I.unlock, on: { click: (ev: Event) => { ev.stopPropagation(); e.setLayerProps(l.id, { locked: !l.locked }); } } });
     return h('li', {
-      class: `layer-row${l.visible ? '' : ' hidden-layer'}`, role: 'option', tabindex: '0', 'aria-selected': String(active),
+      class: `layer-row${l.visible ? '' : ' hidden-layer'}${l.clip ? ' clipped' : ''}`, role: 'option', tabindex: '0', 'aria-selected': String(active),
       on: {
         click: () => e.setActiveLayer(l.id),
         keydown: (ev: Event) => { const k = (ev as KeyboardEvent).key; if (k === 'Enter' || k === ' ') { ev.preventDefault(); e.setActiveLayer(l.id); } },
       },
-    }, vis, h('span', { class: 'layer-thumb' }, this.thumb(l.id)), h('span', { class: 'layer-meta' }, name, h('span', { class: 'layer-sub' }, `${Math.round(l.opacity * 100)}% · ${BLENDS.find(b => b.value === l.blend)?.label}${l.alphaLock ? ' · alfa bloqueado' : ''}${l.items.length ? '' : ' · vacía'}`)), alpha, lock);
+    }, vis, h('span', { class: 'layer-thumb' }, this.thumb(l.id)), h('span', { class: 'layer-meta' }, name, h('span', { class: 'layer-sub' }, `${Math.round(l.opacity * 100)}% · ${BLENDS.find(b => b.value === l.blend)?.label}${l.clip ? ' · recorte' : ''}${l.alphaLock ? ' · alfa bloqueado' : ''}${l.items.length ? '' : ' · vacía'}`)), clipBtn, alpha, lock);
     void d;
   }
 

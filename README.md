@@ -27,8 +27,8 @@ npm run desktop:dev    # la app en Electron, con recarga en caliente
 
 | Comando | Resultado en `release/` | Dónde se puede generar |
 |---|---|---|
-| `npm run dist:win` | `YOSADRAW-Setup-1.4.1-x64.exe` (instalador) y `YOSADRAW-1.4.1-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
-| `npm run dist:win:zip` | `YOSADRAW-1.4.1-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
+| `npm run dist:win` | `YOSADRAW-Setup-1.5.0-x64.exe` (instalador) y `YOSADRAW-1.5.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
+| `npm run dist:win:zip` | `YOSADRAW-1.5.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
 | `npm run dist:win:dir` | `release/win-unpacked/YOSADRAW.exe` | Cualquier sistema |
 
 El workflow `.github/workflows/build-windows.yml` compila el instalador y la versión portable
@@ -369,8 +369,37 @@ el FFmpeg incluido y comprueba códecs, alfa y audio en los archivos).
 
 Código: `src/yosadraw/ui/Images.ts`, `src/yosadraw/ui/PhoneDock.ts`.
 
+## Máscara de recorte
+Cada capa (o pista de animación) puede **recortarse a la de debajo**: sólo se ve donde la capa base —la
+primera sin recorte que tiene debajo— tiene píxeles. Varias capas seguidas con recorte comparten la misma
+base; si la base está oculta, también se ocultan; una capa con recorte sin nada debajo se ve normal.
+Botón ↳ en la fila de la capa o en la cabecera de la pista, o **Ctrl+Alt+G**.
+
+- En el lienzo, la capa recortada se pinta con el mismo encuadre que su base y se recorta con su imagen;
+  al cambiar la base (o el orden de capas) las recortadas se vuelven a recortar. El trazo en vivo usa la
+  base como máscara, así que se ve recortado mientras se pinta.
+- El mismo criterio (`src/yosadraw/doc/clip.ts`) se usa al exportar imágenes (también en PSD), en las
+  miniaturas, el cuentagotas, el bote y la varita («todas las capas»), los efectos de lienzo completo y el
+  render de animación (reproductor y vídeo).
+- «Combinar hacia abajo» una capa recortada con su base la conserva recortada (grupo «sobre lo que ya hay»).
+- Se guarda en el `.yosa`; versiones anteriores la abren como capa normal.
+
+## Color y paletas
+El panel de color conserva el color principal/secundario (X intercambia), el hexadecimal y los recientes, y
+añade cuatro modos: **Cuadro** (saturación/brillo + tono, el de siempre), **Rueda** (12 colores de la rueda
+de pintura RYB de Itten o de luz RGB, con anillos de luz, puro y sombra; marcas P y S para primarios y
+secundarios y filas de primarios, secundarios y terciarios), **Valores** (tono, saturación, brillo, rojo,
+verde y azul con deslizadores y números) y **Armonías** del color actual (cada una se puede guardar como
+paleta).
+
+**Paletas:** las incluidas (YOSADRAW, Pieles, Grises, Pastel) no se modifican: al añadirles un color se
+crea una copia propia. Las propias se crean, renombran, duplican, ordenan por tono, vacían y eliminan
+(menú ⋯), se les añade el color actual o los recientes y se les quitan colores (mantener pulsado o clic
+derecho). Se importan `.gpl` (GIMP, Krita, Inkscape), JSON o listas de `#rrggbb` y se exportan como `.gpl`.
+Se guardan con las preferencias de la app (`src/yosadraw/ui/palettes.ts`, `ColorPanel.ts`).
+
 ## Efectos
-Botón ✦ **Efectos** en la barra superior (en el teléfono, en «Más»), o **Ctrl+Mayús+F**. Se elige un
+Botón ✦ **Efectos** en la barra superior, el apartado **Efectos** de la barra de herramientas (por categorías; en el teléfono, al final de la cuadrícula de herramientas), «Más» en el teléfono, o **Ctrl+Mayús+F**. 49 efectos; en la 1.5 se añadieron Sombras e iluminaciones, Duotono, Solarizar, Intercambiar canales, Suavizado que conserva bordes, Paso alto, Espejo / caleidoscopio y Desplazar en mosaico. Se elige un
 efecto, se ajusta con **vista previa en vivo** sobre el lienzo y se aplica a:
 - **la capa activa**: su contenido se sustituye por el resultado (un solo paso deshacible);
 - **el lienzo completo**: la composición de las capas visibles se procesa en una capa nueva

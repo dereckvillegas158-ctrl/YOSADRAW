@@ -3,6 +3,7 @@ import type { Document, Layer } from '../doc/Document';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
 import type { Item } from '../doc/items';
 import { capture, celAt, effectiveVisible, groupOf } from './model';
+import { clipBaseOf, maskTo } from '../doc/clip';
 
 /** Imagen de un dibujo recortada a su contenido (x, y = posición en el fotograma a esa escala). */
 interface Entry { canvas: HTMLCanvasElement | null; x: number; y: number; items: Item[]; bytes: number; used: number }
@@ -136,16 +137,32 @@ export class FrameRenderer {
     g.clearRect(0, 0, w, h);
     if (o.background && this.doc.settings.background) { g.fillStyle = this.doc.settings.background; g.fillRect(0, 0, w, h); }
     const vis = this.visible(f, o.includeReference);
+    // Máscaras de recorte: cada capa recortada se recorta con la imagen de su base en este fotograma.
+    const bases = new Map<Layer, Entry>();
+    const clipped = (v: { l: Layer }, img: Entry): HTMLCanvasElement | null => {
+      if (!img.canvas) return null;
+      if (!v.l.clip) { bases.set(v.l, img); return img.canvas; }
+      const b = clipBaseOf(this.doc.layers, v.l);
+      if (!b) { bases.set(v.l, img); return img.canvas; }
+      const be = bases.get(b);
+      if (!be?.canvas) return null;
+      const t = this.scratch(1, w, h);
+      t.g.drawImage(img.canvas, img.x, img.y);
+      maskTo(t.g, be.canvas, be.x, be.y);
+      return t.c;
+    };
+    const pos = (img: Entry, c: HTMLCanvasElement) => (c === img.canvas ? [img.x, img.y] : [0, 0]);
     let i = 0;
     while (i < vis.length) {
       const grp = groupOf(this.doc, vis[i].l);
       if (!grp) {
         const v = vis[i++];
         const img = this.layerImage(v.key, v.items, scale);
-        if (!img.canvas) continue;
+        const c = clipped(v, img);
+        if (!c) continue;
         g.globalAlpha = v.l.opacity;
         g.globalCompositeOperation = blendOp(v.l.blend);
-        g.drawImage(img.canvas, img.x, img.y);
+        g.drawImage(c, ...(pos(img, c) as [number, number]));
         continue;
       }
       // Grupo aislado: sus capas se componen aparte y el resultado entra con la opacidad del grupo.
@@ -153,10 +170,11 @@ export class FrameRenderer {
       while (i < vis.length && groupOf(this.doc, vis[i].l) === grp) {
         const v = vis[i++];
         const img = this.layerImage(v.key, v.items, scale);
-        if (!img.canvas) continue;
+        const c = clipped(v, img);
+        if (!c) continue;
         s.g.globalAlpha = v.l.opacity;
         s.g.globalCompositeOperation = blendOp(v.l.blend);
-        s.g.drawImage(img.canvas, img.x, img.y);
+        s.g.drawImage(c, ...(pos(img, c) as [number, number]));
       }
       g.globalAlpha = grp.opacity;
       g.globalCompositeOperation = 'source-over';

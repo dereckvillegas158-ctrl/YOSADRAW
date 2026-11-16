@@ -15,6 +15,7 @@ import { invert, multiply, ViewTransform, type AABB, type Mat, type ViewState } 
 import type { Item } from '../doc/items';
 import type { Rect } from '../brush/StrokePainter';
 import * as anim from '../anim/model';
+import { ClipComposer, clipBaseOf, clipHidden, hasClipped, maskTo } from '../doc/clip';
 
 export type EngineMode = 'paint' | 'erase' | 'pan' | 'rotate' | 'custom';
 
@@ -365,7 +366,16 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     }
     if (cmd.structure || this.doc.anim) this.syncLayers();
     if (!rendered) for (const id of cmd.layers) { const v = this.layerViews.get(id); if (v) v.dirty = true; }
-    if (!rendered && cmd.layers.length) this.rerender(true);
+    // Cambió una base de recorte (aunque el trazo ya esté pintado): sus capas recortadas se recortan de nuevo.
+    let reclip = false;
+    // Orden o propiedades de capas cambiados: la base de cada capa recortada puede ser otra.
+    if (cmd.structure) for (const l of this.doc.layers) if (l.clip) { const cv = this.layerViews.get(l.id); if (cv) { cv.dirty = true; reclip = true; } }
+    for (const id of cmd.layers) {
+      const l = this.doc.layer(id);
+      if (!l || !hasClipped(this.doc.layers, l)) continue;
+      for (let k = this.doc.index(id) + 1; k < this.doc.layers.length && this.doc.layers[k].clip; k++) { const cv = this.layerViews.get(this.doc.layers[k].id); if (cv) { cv.dirty = true; reclip = true; } }
+    }
+    if ((!rendered && cmd.layers.length) || reclip) this.rerender(true);
     this.emit('history', this.historyState);
     this.emit('doc', { structure: !!cmd.structure, selection: !!cmd.selection });
     this.emitStats(this.lastMs(), false);
@@ -391,7 +401,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.applyLayerStyle(l);
   }
   /** Confirma propiedades; `from` son los valores previos si hubo vista previa. */
-  setLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend'>>, from?: Partial<Layer>) {
+  setLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend' | 'clip'>>, from?: Partial<Layer>) {
     const l = this.doc.layer(id);
     if (!l) return;
     if (from) Object.assign(l, from);
@@ -642,10 +652,9 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.rulerLocked = this.ruler.enabled && distanceToRuler(this.ruler, start) * this.view.scale <= this.rulerSnap;
     this.applyClip(view);
     this.live.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    const sel = this.doc.selection;
     this.session = new BrushStrokeSession(this.painter, {
       target: view.ctx, overlay: this.live, M: this.V, dpr: this.dpr, buffers: this.buffers, paperColor: this.paperColor,
-      clip: sel ? this.items.selectionMask(sel, this.V, this.dpr, view.canvas.width, view.canvas.height) : null,
+      clip: this.strokeMask(layer, view),
       mirrors: symmetryMatrices(this.symmetry), atop: layer.alphaLock,
     }, preset, this.color, tool, (Math.random() * 2 ** 32) >>> 0);
     const first = this.stabilizer.pipeline.beginStroke(p).map(q => this.toDoc(q));
@@ -653,6 +662,23 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (first.length > 1) this.session.add(first.slice(1));
     this.hover = { x: p.x, y: p.y, pressure: p.pressure, tilt: Math.hypot(p.tiltX, p.tiltY), type: this.downType };
     this.requestFrame();
+  }
+
+  /**
+   * Máscara del trazo en vivo: la selección y, en una capa con recorte, los píxeles de su base
+   * (así el recorte se ve mientras se pinta, no sólo al soltar).
+   */
+  private strokeMask(layer: Layer, view: LayerView): HTMLCanvasElement | null {
+    const sel = this.doc.selection;
+    const m = sel ? this.items.selectionMask(sel, this.V, this.dpr, view.canvas.width, view.canvas.height) : null;
+    const base = clipBaseOf(this.doc.layers, layer), bv = base && this.layerViews.get(base.id);
+    if (!bv) return m;
+    const c = document.createElement('canvas');
+    c.width = view.canvas.width; c.height = view.canvas.height;
+    const g = c.getContext('2d')!;
+    g.drawImage(bv.canvas, 0, 0);
+    if (m) maskTo(g, m);
+    return c;
   }
 
   private moveStroke(points: StrokePoint[]) {
@@ -900,7 +926,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (mode === 'all' && this.doc.settings.background) { g.fillStyle = this.doc.settings.background; g.fillRect(0, 0, n, n); }
     for (const l of layers) {
       const v = this.layerViews.get(l.id);
-      if (!v) continue;
+      if (!v || (mode === 'all' && clipHidden(this.doc.layers, l))) continue;
       g.globalAlpha = mode === 'all' ? l.opacity : 1;
       g.globalCompositeOperation = mode === 'all' ? blendOp(l.blend) : 'source-over';
       g.drawImage(v.canvas, X, Y, n, n, 0, 0, n, n);
@@ -934,10 +960,15 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const tmp = document.createElement('canvas');
     tmp.width = W; tmp.height = H;
     const t = tmp.getContext('2d')!;
+    // Varias capas (bote o varita «todas las capas»): con sus recortes, como se ven.
+    const clips = layers.length > 1 ? new ClipComposer(this.doc.layers) : null;
+    const bases = clips ? this.doc.layers.filter(l => hasClipped(this.doc.layers, l) && !layers.includes(l) && l.visible) : [];
+    for (const l of bases) { t.setTransform(1, 0, 0, 1, 0, 0); t.clearRect(0, 0, W, H); renderer.renderItems(t, l.items, V, 1); clips!.prepare(l, t); }
     for (const l of layers) {
       t.setTransform(1, 0, 0, 1, 0, 0);
       t.clearRect(0, 0, W, H);
       renderer.renderItems(t, l.items, V, 1);
+      if (clips && !clips.prepare(l, t)) continue;
       ctx.globalAlpha = layers.length > 1 ? l.opacity : 1;
       ctx.globalCompositeOperation = layers.length > 1 ? blendOp(l.blend) : 'source-over';
       ctx.drawImage(tmp, 0, 0);
@@ -956,7 +987,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const m = this.V, d = this.dpr;
     const x0 = m[4] * d, y0 = m[5] * d, sw = this.doc.width * m[0] * d, sh = this.doc.height * m[3] * d;
     if (x0 < -0.5 || y0 < -0.5 || x0 + sw > this.back.width + 0.5 || y0 + sh > this.back.height + 0.5 || sw < W * 0.75) return null;
-    const visible = this.doc.layers.filter(l => l.visible);
+    const visible = this.doc.layers.filter(l => l.visible && !clipHidden(this.doc.layers, l));
     if (visible.some(l => { const v = this.layerViews.get(l.id); return !v || v.dirty || !v.crisp || !v.crisp.equals(this.view); })) return null;
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
@@ -989,7 +1020,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const g = c.getContext('2d')!;
-    const layers = target === 'all' ? this.doc.layers.filter(l => l.visible) : [this.doc.layer(target.layer)].filter((l): l is Layer => !!l);
+    const layers = target === 'all' ? this.doc.layers.filter(l => l.visible && !clipHidden(this.doc.layers, l)) : [this.doc.layer(target.layer)].filter((l): l is Layer => !!l);
     if (!layers.length) return null;
     for (const l of layers) {
       const v = this.layerViews.get(l.id);
@@ -1038,9 +1069,11 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const out = document.createElement('canvas');
     out.width = this.doc.width; out.height = this.doc.height;
     const g = out.getContext('2d')!;
+    const clips = new ClipComposer(this.doc.layers);
     for (const l of this.doc.layers) {
       if (!l.visible || !l.items.length) continue;
       const r = this.rasterize([l], 1);
+      if (!clips.prepare(l, r.getContext('2d')!)) continue;
       g.globalAlpha = l.opacity;
       g.globalCompositeOperation = blendOp(l.blend);
       g.drawImage(r, 0, 0);
@@ -1114,7 +1147,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (!v) return;
     v.canvas.style.opacity = String(l.opacity);
     v.canvas.style.mixBlendMode = l.blend;
-    v.canvas.style.visibility = l.visible ? 'visible' : 'hidden';
+    v.canvas.style.visibility = l.visible && !clipHidden(this.doc.layers, l) ? 'visible' : 'hidden';
     if ('track' in l) {
       const g = l as OnionGhost;
       v.canvas.style.filter = this.doc.anim?.onion.tint ? `url(#${this.onionFilterId}-${g.side})` : '';
@@ -1185,7 +1218,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private stale(): Layer[] {
     if (this.playing) return [];
     // Las capas ocultas no se repintan (al mostrarlas se marcan sucias y entran aquí).
-    return this.renderList().filter(l => { const v = this.layerViews.get(l.id); return l.visible && anim.effectiveVisible(this.doc, 'track' in l ? this.doc.layer((l as OnionGhost).track) ?? l : l) && v && (v.dirty || !v.crisp || !this.nearView(v.crisp, this.view)); });
+    return this.renderList().filter(l => { const v = this.layerViews.get(l.id); return l.visible && !clipHidden(this.doc.layers, l) && anim.effectiveVisible(this.doc, 'track' in l ? this.doc.layer((l as OnionGhost).track) ?? l : l) && v && (v.dirty || !v.crisp || !this.nearView(v.crisp, this.view)); });
   }
 
   // ---------- Coste estimado del repintado ----------
@@ -1280,7 +1313,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private rerender(preferSync: boolean, force = false) {
     this.abandonJob();
     // La capa activa primero: es donde se va a dibujar.
-    const layers = this.stale().sort((a, b) => Number(b.id === this.doc.activeId) - Number(a.id === this.doc.activeId));
+    // Las bases de recorte antes que las capas recortadas (éstas se recortan con la imagen de la base).
+    const layers = this.stale().sort((a, b) => Number(!!a.clip) - Number(!!b.clip) || Number(b.id === this.doc.activeId) - Number(a.id === this.doc.activeId));
     if (!layers.length) return;
     const view = this.view.clone();
     this.job = { it: this.renderSteps(layers, view), view };
@@ -1302,7 +1336,10 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     for (const layer of layers) {
       const v = this.layerViews.get(layer.id);
       if (!v) continue;
-      const pl = this.plan(v, view);
+      // Capa con recorte: se pinta entera con el mismo encuadre que su base y se recorta con ella.
+      const cb = 'track' in layer ? null : clipBaseOf(this.doc.layers, layer);
+      const bv = cb ? this.layerViews.get(cb.id) : null;
+      const pl = bv?.crisp ? { view: bv.crisp.clone(), regions: [{ x0: 0, y0: 0, x1: this.back.width, y1: this.back.height }], shift: null } : this.plan(v, view);
       const m = pl.view.matrix();
       let work = 0, units = 0, slice = performance.now();
       ctx.save();
@@ -1337,6 +1374,9 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       work += performance.now() - slice;
       // Aprende el coste real por sello de este dispositivo (media móvil).
       if (units > 3000 && work > 2) this.msPerUnit = this.msPerUnit * 0.7 + (work / units) * 0.3;
+      if (bv?.crisp) maskTo(ctx, bv.canvas);
+      // Al cambiar una base, sus capas recortadas se vuelven a recortar.
+      if (hasClipped(this.doc.layers, layer)) for (let k = this.doc.index(layer.id) + 1; k < this.doc.layers.length && this.doc.layers[k].clip; k++) { const cv = this.layerViews.get(this.doc.layers[k].id); if (cv && !layers.includes(this.doc.layers[k])) { cv.dirty = true; this.viewDirty = true; this.requestFrame(); } }
       // Intercambio: el lienzo de la capa pasa a mostrar el resultado nuevo.
       if (v.clipped) { v.ctx.restore(); v.clipped = false; }
       v.ctx.setTransform(1, 0, 0, 1, 0, 0);

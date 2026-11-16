@@ -1,3 +1,4 @@
+import { ClipComposer } from '../doc/clip';
 import { newAnimation, newCel } from '../anim/model';
 import { Document, type DocProfile } from '../doc/Document';
 import type { CanvasEngine } from '../engine';
@@ -8,7 +9,7 @@ import { browserImageCodec, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SIDE, normaliz
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.4.1';
+export const APP_VERSION = '1.5.0';
 
 export interface NewProjectSpec {
   name: string;
@@ -296,6 +297,7 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     const t = tmp.getContext('2d')!;
     const V: Mat = [k, 0, 0, k, 0, 0];
     let slice = performance.now();
+    const clips = new ClipComposer(doc.layers);
     for (const l of doc.layers) {
       if (!l.visible || !l.items.length) continue;
       t.setTransform(1, 0, 0, 1, 0, 0);
@@ -304,6 +306,7 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
         renderer.renderItem(t, it, V, 1);
         if (performance.now() - slice > 10) { await new Promise(r => setTimeout(r, 0)); slice = performance.now(); }
       }
+      if (!clips.prepare(l, t)) continue;
       g.globalAlpha = l.opacity;
       g.globalCompositeOperation = blendOp(l.blend);
       g.drawImage(tmp, 0, 0);

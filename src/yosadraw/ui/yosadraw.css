@@ -365,7 +365,7 @@ body.toolbar-right .toolbar { border-right: 0; border-left: 1px solid var(--line
 .layer-props select { min-height: 32px; width: 62%; }
 .layer-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .layer-row {
-  display: grid; grid-template-columns: auto 56px minmax(0, 1fr) auto auto; gap: 6px; align-items: center;
+  display: grid; grid-template-columns: auto 56px minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center;
   padding: 5px; border-radius: 10px; border: 1px solid transparent; cursor: pointer;
 }
 .layer-row:hover { background: var(--surface-2); }
@@ -487,3 +487,37 @@ kbd { font: 500 12px var(--font-mono); padding: 2px 7px; border-radius: 6px; bac
   .ex-form { overflow: visible; }
   .export-btn span { display: none; }
 }
+
+/* Máscara de recorte: la fila se sangra con una flecha hacia la capa base */
+.layer-row.clipped { margin-left: 18px; position: relative; }
+.layer-row.clipped::before { content: "↳"; position: absolute; left: -16px; top: 50%; transform: translateY(-50%); color: var(--accent-2); font-weight: 700; }
+.clip-btn[aria-pressed="true"], .alpha-lock[aria-pressed="true"] { color: var(--accent-2); background: var(--accent-soft); }
+
+/* Selector de color: modos y paletas */
+.cp-modes { width: 100%; }
+.cp-modes button { flex: 1; }
+.cp-modes button[aria-selected="true"] { background: var(--accent-soft); color: var(--fg); box-shadow: inset 0 0 0 1px var(--accent); }
+.cp-view { display: flex; flex-direction: column; gap: 10px; }
+.cp-view[hidden] { display: none; }
+.cp-wheel { width: min(100%, 300px); aspect-ratio: 1; align-self: center; cursor: pointer; touch-action: none; }
+.cp-roles { display: flex; flex-direction: column; gap: 6px; }
+.cp-role .swatch-row { grid-template-columns: repeat(6, 1fr); }
+.cp-values { display: flex; flex-direction: column; gap: 8px; }
+.cp-val { display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.cp-val input[type=range].cp-slider { width: 100%; height: 14px; border-radius: 7px; background: var(--grad) !important; -webkit-appearance: none; appearance: none; }
+.cp-val input[type=range].cp-slider::-webkit-slider-runnable-track { background: transparent; }
+.cp-num { display: inline-flex; align-items: center; gap: 3px; }
+.cp-num input { width: 56px !important; padding: 3px 5px; font: 500 12px var(--font-mono); }
+.cp-harmony { display: flex; flex-direction: column; gap: 10px; }
+.cp-harm-head { display: flex; justify-content: space-between; align-items: center; }
+.cp-harm-row { display: flex; gap: 6px; }
+.cp-harm-row .sw { width: 38px; height: 38px; flex: none; }
+.cp-pal-head { display: flex; align-items: center; gap: 8px; }
+.cp-pal-head .cp-pal-select { flex: 1; min-width: 0; width: auto; }
+.cp-pal-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.cp-pal-help { margin: 0; }
+.menu.cp-menu { width: 240px; }
+/* Las fichas de color principal/secundario están dentro de .chips, cuyo estilo de botones (pinceles)
+   les quitaba el color: aquí se recupera. */
+.color-panel .chips .chip { background: var(--c); border-radius: 9px; padding: 0; border: 2px solid var(--surface); color: transparent; }
+.color-panel .chips .chip[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }

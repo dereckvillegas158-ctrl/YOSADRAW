@@ -215,7 +215,7 @@ export class Timeline {
     }
     for (const lane of a.lanes) { rows.push({ kind: 'lane', y, hgt: LANE_H, lane }); y += LANE_H; }
     this.rows = rows;
-    const sig = JSON.stringify(rows.map(r => r.kind === 'track' ? [r.l.id, r.l.name, r.l.visible, r.l.locked, !!r.l.cels, !!r.l.sync, !!r.l.reference, doc.activeId === r.l.id, r.l.group] : r.kind === 'group' ? [r.g.id, r.g.name, r.g.visible, r.g.locked, r.g.collapsed] : [r.lane.id, r.lane.name, r.lane.muted, r.lane.solo, r.lane.volume]));
+    const sig = JSON.stringify(rows.map(r => r.kind === 'track' ? [r.l.id, r.l.name, r.l.visible, r.l.locked, !!r.l.cels, !!r.l.sync, !!r.l.reference, doc.activeId === r.l.id, r.l.group, !!r.l.clip] : r.kind === 'group' ? [r.g.id, r.g.name, r.g.visible, r.g.locked, r.g.collapsed] : [r.lane.id, r.lane.name, r.lane.muted, r.lane.solo, r.lane.volume]));
     if (sig !== this.headSig) { this.headSig = sig; this.buildHeads(); }
   }
 
@@ -243,6 +243,7 @@ export class Timeline {
         h('span', { class: 'tl-name', title: `${l.name}${l.cels ? '' : ' · estática'}${l.reference ? ' · referencia (no se exporta)' : ''}`, on: { dblclick: () => void this.renameLayer(l) } }, l.name),
         l.cels ? tog(!!l.sync, TI.sync, TI.sync, 'Sincronizar: insertar o quitar tiempo aquí desplaza también las demás pistas sincronizadas', () => s.run(() => M.cmdTrackProps(doc, l.id, { sync: !l.sync })), 'dim-off')
           : h('button', { type: 'button', class: 'btn xs tl-animate', title: 'Dar fotogramas a esta capa', on: { click: (e: Event) => { e.stopPropagation(); s.makeAnimated(l.id); } } }, 'Animar'),
+        tog(!!l.clip, TI.clip, TI.clip, 'Máscara de recorte: ver esta pista sólo sobre la de debajo (Ctrl+Alt+G)', () => s.engine.setLayerProps(l.id, { clip: !l.clip }), 'dim-off'),
         tog(!!l.reference, TI.ref, TI.ref, 'Pista de referencia (se ve al animar, no se exporta)', () => s.run(() => M.cmdTrackProps(doc, l.id, { reference: !l.reference })), 'dim-off'));
         return el;
       }

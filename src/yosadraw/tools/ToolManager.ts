@@ -21,6 +21,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'new-layer', label: 'Nueva capa', group: 'Capas', shortcut: ['Ctrl+Shift+N'], run: m => m.engine.addLayer() },
   { id: 'duplicate-layer', label: 'Duplicar capa', group: 'Capas', shortcut: ['Ctrl+J'], run: m => m.engine.exec(m.engine.doc.cmdDuplicateLayer(m.engine.doc.activeId)) },
   { id: 'alpha-lock', label: 'Bloquear alfa de la capa', group: 'Capas', shortcut: ['/'], run: m => { const l = m.engine.doc.active; m.engine.setLayerProps(l.id, { alphaLock: !l.alphaLock }); m.hooks.notify(l.alphaLock ? `Alfa bloqueado en «${l.name}»` : `Alfa desbloqueado en «${l.name}»`); } },
+  { id: 'clip-layer', label: 'Máscara de recorte de la capa', group: 'Capas', shortcut: ['Ctrl+Alt+G'], run: m => { const l = m.engine.doc.active; if (!l.clip && m.engine.doc.index(l.id) === 0) { m.hooks.notify('No hay ninguna capa debajo a la que recortar'); return; } m.engine.setLayerProps(l.id, { clip: !l.clip }); m.hooks.notify(l.clip ? `«${l.name}» recortada a la capa de debajo` : `Recorte quitado de «${l.name}»`); } },
   { id: 'merge-down', label: 'Combinar hacia abajo', group: 'Capas', shortcut: ['Ctrl+E'], run: m => m.engine.exec(m.engine.doc.cmdMergeDown(m.engine.doc.activeId)) },
   { id: 'save', label: 'Guardar', group: 'Archivo', shortcut: ['Ctrl+S'], run: m => m.hooks.project?.('save') },
   { id: 'save-as', label: 'Guardar como…', group: 'Archivo', shortcut: ['Ctrl+Shift+S'], run: m => m.hooks.project?.('saveAs') },

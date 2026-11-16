@@ -166,3 +166,12 @@ describe('formato .yosa: animación', () => {
     expect((await readProject(await writeProject(new Document(100, 100), meta, { codec }), codec)).doc.anim).toBeNull();
   });
 });
+
+describe('formato .yosa: máscara de recorte', () => {
+  it('se guarda y se lee', async () => {
+    const doc = new Document(120, 120);
+    const l = doc.newLayer('Sombra'); l.clip = true; doc.layers.push(l);
+    const r = await readProject(await writeProject(doc, meta, { codec }), codec);
+    expect(r.doc.layers.map(x => !!x.clip)).toEqual([false, true]);
+  });
+});
