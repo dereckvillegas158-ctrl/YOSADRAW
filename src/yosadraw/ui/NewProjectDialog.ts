@@ -109,10 +109,12 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
       spec.anim = v === 'anim' ? { ...animSpec } : null;
       animBox.hidden = !spec.anim;
       // Una animación nueva propone Full HD si el tamaño era el de un dibujo por defecto.
-      if (spec.anim && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === 'hd')!);
+      if (spec.anim && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === (document.documentElement.classList.contains('phone') ? 'phone' : 'hd'))!);
     });
     syncAnim();
-    if (document.documentElement.classList.contains('phone') || document.documentElement.classList.contains('android')) { kindSeg.hidden = true; spec.anim = null; animBox.hidden = true; }
+    // Teléfono / Android: animación sencilla; se empieza con un fotograma y se añaden con «+».
+    const simple = document.documentElement.classList.contains('phone') || document.documentElement.classList.contains('android');
+    if (simple) { durIn.value = '1'; durIn.closest('label')!.hidden = true; durInfo.hidden = true; syncAnim(); }
     const swap = h('button', { type: 'button', class: 'icon sm np-swap', title: 'Girar orientación', 'aria-label': 'Intercambiar ancho y alto', html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v14M3.5 7.5 7 4l3.5 3.5M17 20V6M20.5 16.5 17 20l-3.5-3.5"/></svg>', on: { click: () => { const w = wIn.value; wIn.value = hIn.value; hIn.value = w; sync(); } } });
 
     createBtn.addEventListener('click', () => { sync(); if (!createBtn.disabled) finish({ ...spec, name: spec.name.trim() || defaultName }); });

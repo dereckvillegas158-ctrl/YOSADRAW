@@ -107,6 +107,8 @@
   "dependencies": {
     "@capacitor/android": "8.4.3",
     "@capacitor/app": "8.1.2",
-    "@capacitor/core": "8.4.3"
+    "@capacitor/core": "8.4.3",
+    "gifenc": "^1.0.3",
+    "mp4-muxer": "^5.2.2"
   }
 }

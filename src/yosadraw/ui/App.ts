@@ -21,6 +21,7 @@ import { PropertiesBar } from './PropertiesBar';
 import { PhoneDock } from './PhoneDock';
 import { IMAGE_TYPES, importImageLayer, pickAndImport, References } from './Images';
 import { AnimStudio } from './anim/AnimStudio';
+import { PhoneAnim } from './anim/PhoneAnim';
 import { AnimPanel, onionPopover, qualityPopover } from './anim/AnimPanel';
 import { Timeline } from './anim/Timeline';
 import { AnimExport, normalizeAnimExport, type AnimExportPrefs } from './anim/AnimExport';
@@ -371,18 +372,21 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   });
   $('timeline-host').append(timeline.el);
   engine.overlays.push(guideOverlay(anim));
-  let phoneAnimNotice = false;
+  // Teléfono y Android: animación simplificada (fotogramas en cuadrados sobre el lienzo).
+  let phoneAnim: PhoneAnim | null = null;
   function setAnimMode() {
     const has = !!engine.doc.anim;
-    // YOSADRAW ANIMATE es de la versión de PC por ahora (en Android se ve y edita el fotograma actual).
     const android = document.documentElement.classList.contains('android');
-    const on = has && !isPhone() && !android;
+    const simple = has && (isPhone() || android);
+    const on = has && !simple;
     document.body.classList.toggle('anim-mode', on);
+    document.body.classList.toggle('anim-phone', simple);
+    if (simple && !phoneAnim) { phoneAnim = new PhoneAnim(anim, () => session.entry?.name ?? 'Animación'); $('canvas-host').append(phoneAnim.el); }
+    if (simple) phoneAnim!.render();
     const btn = document.getElementById('tab-anim');
     if (btn) btn.hidden = !on;
     if (!on && tab === 'anim') showTab('layers');
     if (on) timeline.update();
-    if (has && (isPhone() || android) && !phoneAnimNotice) { phoneAnimNotice = true; toast('Este proyecto es una animación: la línea de tiempo está en la versión de PC. Aquí se ve y edita el fotograma actual.'); }
   }
   engine.on('document', setAnimMode);
   watchDevice(setAnimMode);

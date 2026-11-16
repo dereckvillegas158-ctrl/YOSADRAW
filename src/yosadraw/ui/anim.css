@@ -136,3 +136,39 @@ body.toolbar-right .panel-resizer { left: auto; right: -3px; }
 .tl-grid { position: relative; overflow: hidden; display: block; }
 .tl-grid .tl-canvas { position: absolute; left: 0; top: 0; }
 .tl-grid .tl-hscroll { position: absolute; left: 0; right: 0; bottom: 0; }
+
+/* =================== Animación sencilla (teléfono / Android) =================== */
+.phone-anim { display: none; }
+body.anim-phone .phone-anim {
+  display: flex; flex-direction: column; position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line); padding: 4px 8px 6px; gap: 4px; user-select: none; touch-action: pan-x;
+}
+.pa-bar { display: flex; align-items: center; gap: 4px; }
+.pa-spacer { flex: 1; }
+.pa-btn { width: 40px; height: 36px; border: 0; border-radius: 10px; background: none; color: var(--fg); display: grid; place-items: center; cursor: pointer; flex: none; }
+.pa-btn:active { background: var(--surface-3); }
+.pa-btn.on { color: var(--accent-2); background: var(--accent-soft); }
+.pa-btn svg { width: 22px; height: 22px; }
+.pa-play { background: var(--brand-grad); color: #fff; }
+.pa-play.on { color: #fff; background: var(--brand-grad); }
+.pa-fps { border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); border-radius: 9px; padding: 6px 9px; font: 600 12px var(--font-mono); flex: none; }
+.pa-count { font-size: 12px; color: var(--muted); margin-left: 4px; }
+.pa-list { display: flex; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 2px 2px 2px; scroll-snap-type: x proximity; }
+.pa-list::-webkit-scrollbar { display: none; }
+.pa-sq {
+  position: relative; flex: none; width: 58px; height: 58px; padding: 0; border-radius: 9px; overflow: hidden; scroll-snap-align: center;
+  border: 2px solid var(--line); background: var(--surface-2); cursor: pointer; display: grid; place-items: center; color: var(--muted);
+}
+.pa-sq canvas { max-width: 100%; max-height: 100%; display: block; }
+.pa-sq[aria-selected="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.pa-sq.hold { opacity: 0.6; }
+.pa-sq.blank canvas { opacity: 0.35; }
+.pa-sq.key::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.pa-n { position: absolute; left: 3px; bottom: 2px; font: 600 10px var(--font-mono); color: #1b1530; background: rgba(255, 255, 255, 0.8); border-radius: 4px; padding: 0 3px; }
+.pa-add { border-style: dashed; color: var(--accent-2); }
+.pa-add svg { width: 26px; height: 26px; }
+.pa-export { display: flex; flex-direction: column; gap: 10px; }
+/* Los deslizadores rápidos y el aviso inicial no quedan debajo de la tira. */
+body.anim-phone .quick-sliders { top: calc(50% - 58px); }
+body.anim-phone .empty-hint { display: none; }

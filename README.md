@@ -253,10 +253,27 @@ de la interfaz.
 | Arranque (JS principal) | 1,39 MB | 0,34 MB | el codificador de exportación (PSD, WebP) se carga al exportar por primera vez |
 | Memoria | 144 MB | 97 MB | |
 
-## YOSADRAW ANIMATE (animación, PC)
+## YOSADRAW ANIMATE (animación)
 Animación 2D fotograma a fotograma integrada en YOSADRAW (no es otra app): **Nuevo proyecto → Tipo:
-Animación** (FPS y duración). Por ahora sólo en la versión de PC; en Android un proyecto de animación
-se abre como dibujo del fotograma actual.
+Animación**. En PC, la versión completa (línea de tiempo, audio, hoja de exposición, FFmpeg…). En el
+teléfono y en la app de Android, una versión sencilla con el mismo modelo y el mismo archivo `.yosa`
+(un proyecto se puede empezar en el teléfono y seguir en el PC, y al revés).
+
+### Teléfono y Android (versión sencilla)
+- Encima del dock, una tira de **cuadrados con la miniatura** de cada fotograma y un «+» al final. Tocar
+  un cuadrado va a ese fotograma; mantenerlo pulsado abre: duplicar, insertar vacío, copiar, pegar, mover
+  a la izquierda/derecha y eliminar.
+- Botones: reproducir/pausa, papel cebolla (mantén pulsado: ajustes), velocidad (6–60 fps), contador,
+  duplicar, nuevo fotograma y ⚙ (exportar, bucle, capa nueva, fondo fijo, importar imágenes o audio).
+- Se dibuja con **las mismas herramientas** del teléfono (pinceles, estabilizador táctil, borrador,
+  capas, color, deshacer con dos dedos…). Cada fotograma es una columna común a todas las capas: añadir,
+  duplicar o borrar mantiene las capas alineadas; una capa sin animar hace de fondo fijo.
+- **Exportar** sin FFmpeg (`src/yosadraw/anim/webexport.ts`): GIF (gifenc, paleta por fotograma, bucle y
+  fondo transparente) y **vídeo MP4 H.264** con el codificador del sistema (WebCodecs: en Android, el de
+  hardware del teléfono) y el audio en AAC si el sistema lo codifica (mp4-muxer). Tamaños 1080, 720, 480 y
+  320 (lado corto). En Android se guardan con MediaStore: GIF en *Imágenes/YOSADRAW*, MP4 en
+  *Películas/YOSADRAW*, con botón **Compartir**.
+- Código: `src/yosadraw/ui/anim/PhoneAnim.ts`.
 
 ### Cómo está hecho (sin sistemas duplicados)
 - **Modelo** (`src/yosadraw/anim/model.ts`): una animación es un `Document` con `doc.anim`. Cada capa es
