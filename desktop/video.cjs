@@ -93,7 +93,9 @@ function buildArgs(o, input, audioFile, out) {
       a.push('-c:v', 'apng', '-pix_fmt', o.alpha ? 'rgba' : 'rgb24', '-plays', o.loop ? '0' : '1', '-f', 'apng');
       break;
     case 'webp':
-      a.push('-c:v', 'libwebp_anim', '-pix_fmt', o.alpha ? 'yuva420p' : 'yuv420p', '-quality', String(Math.round(q)), '-loop', o.loop ? '0' : '1', '-f', 'webp');
+      // libwebp (no libwebp_anim, que falta en algunas compilaciones de Windows): el contenedor
+      // webp de FFmpeg escribe la animación (ANIM/ANMF) con cada fotograma codificado.
+      a.push('-c:v', 'libwebp', '-lossless', '0', '-pix_fmt', o.alpha ? 'yuva420p' : 'yuv420p', '-quality', String(Math.round(q)), '-loop', o.loop ? '0' : '1', '-f', 'webp');
       break;
     case 'png-seq':
       a.push('-c:v', 'png', '-pix_fmt', o.alpha ? 'rgba' : 'rgb24', '-f', 'image2');
