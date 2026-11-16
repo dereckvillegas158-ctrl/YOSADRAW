@@ -1,5 +1,6 @@
 import type { StrokePoint } from '../../core/types';
 import { createEngine, type StrokeEngine } from '../../filters';
+import { cleanStroke, CLEANUP_PEN, CLEANUP_TOUCH } from '../../filters/StrokeCleanup';
 import { PointerInput } from '../../input/PointerInput';
 import type { BrushPreset } from '../brush/BrushPreset';
 import { BrushStrokeSession, finishStrokeOffline, SessionBuffers } from '../brush/BrushStrokeSession';
@@ -282,6 +283,12 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.emitStats(0, false);
   }
 
+  /** Cambio que se guarda con el proyecto pero no va al historial (p. ej. imágenes de referencia). */
+  markChanged() {
+    this._revision++;
+    this.emit('history', this.historyState);
+  }
+
   /** Color del papel (blanco si el fondo es transparente, para mezclas y previsualizaciones). */
   get paperColor() { return this.doc.settings.background ?? '#ffffff'; }
   get historyState(): HistoryState {
@@ -422,8 +429,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const preset = this.preset;
     if (!layer || !this.stale().includes(layer) || (preset.mix.mode !== 'none' && preset.render.mode === 'stamp')) return false;
     this.pending = null;
-    this.stabilizer.apply(preset.stabilizer);
-    this.simulate = this.downType === 'mouse' && preset.pressure.simulateMouse;
+    this.stabilizer.apply(this.stabilizerFor(preset));
+    this.simulate = this.simulatesPressure(preset);
     const p0 = pd.points[0];
     this.sim = { x: p0.x, y: p0.y, t: 0, v: 0, p: 0.6 };
     this.rulerLocked = this.ruler.enabled && distanceToRuler(this.ruler, this.view.toDoc(p0.x, p0.y)) * this.view.scale <= this.rulerSnap;
@@ -431,7 +438,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const out: StrokePoint[] = [...pipe.beginStroke(p0)];
     for (const q of pd.points.slice(1)) out.push(...pipe.pushPoint(q));
     out.push(...pipe.endStroke());
-    const docPts = out.map(q => this.toDoc(q));
+    const docPts = this.cleanEnds(out.map(q => this.toDoc(q)));
     this.rulerLocked = false;
     const tool = this._mode === 'erase' ? 'eraser' : 'brush';
     const stroke = finishStrokeOffline(preset, this.color, tool, (Math.random() * 2 ** 32) >>> 0, docPts.length ? docPts : [this.toDoc(p0)], symmetryMatrices(this.symmetry));
@@ -460,8 +467,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const view = this.layerViews.get(layer.id)!;
     const tool = this._mode === 'erase' ? 'eraser' : 'brush';
     const preset = this.preset;
-    this.stabilizer.apply(preset.stabilizer);
-    this.simulate = this.downType === 'mouse' && preset.pressure.simulateMouse;
+    this.stabilizer.apply(this.stabilizerFor(preset));
+    this.simulate = this.simulatesPressure(preset);
     this.sim = { x: p.x, y: p.y, t: 0, v: 0, p: 0.6 };
     const start = this.view.toDoc(p.x, p.y);
     this.rulerLocked = this.ruler.enabled && distanceToRuler(this.ruler, start) * this.view.scale <= this.rulerSnap;
@@ -502,6 +509,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (!s) return;
     const tail = this.stabilizer.pipeline.endStroke();
     if (tail.length) s.add(tail.map(q => this.toDoc(q)));
+    const cleaned = this.cleanEnds(s.points as StrokePoint[]);
+    if (cleaned.length !== s.points.length) s.replacePoints(cleaned);
     const finished = s.end();
     this.session = null;
     this.rulerLocked = false;
@@ -523,6 +532,34 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   // =================== Dedo y lápiz ===================
+
+  /**
+   * Ajustes de entrada para el estabilizador (dedo y lápiz, sobre todo en el teléfono):
+   * - `touchBoost` / `penBoost` (0..100): estabilización extra que se suma a la del pincel
+   *   según con qué se dibuja; el dedo tiembla más que un lápiz y su contacto «baila».
+   * - `fingerPressure`: el dedo no tiene presión; se simula con la velocidad (más fino rápido).
+   * - `cleanup`: quita el garabato al apoyar y el gancho al soltar (sólo al terminar el trazo).
+   */
+  inputTuning = { touchBoost: 35, penBoost: 10, fingerPressure: true, cleanup: true };
+
+  private stabilizerFor(preset: BrushPreset) {
+    const s = preset.stabilizer;
+    const boost = this.downType === 'touch' ? this.inputTuning.touchBoost : this.downType === 'pen' ? this.inputTuning.penBoost : 0;
+    if (!boost) return s;
+    const add = (v: number, k: number) => Math.min(100, v + boost * k * (1 - v / 140));
+    return { streamLine: add(s.streamLine, 0.45), stabilization: add(s.stabilization, 0.7), motionFiltering: add(s.motionFiltering, 0.5), pressureSmoothing: add(s.pressureSmoothing, 0.4) };
+  }
+
+  private simulatesPressure(preset: BrushPreset) {
+    return (this.downType === 'mouse' && preset.pressure.simulateMouse) || (this.downType === 'touch' && this.inputTuning.fingerPressure);
+  }
+
+  /** Limpieza de extremos (umbrales en px de pantalla, pasados a px de documento). */
+  private cleanEnds(pts: StrokePoint[]): StrokePoint[] {
+    if (!this.inputTuning.cleanup || (this.downType !== 'touch' && this.downType !== 'pen')) return pts;
+    const base = this.downType === 'touch' ? CLEANUP_TOUCH : CLEANUP_PEN, k = 1 / this.view.scale;
+    return cleanStroke(pts, { ...base, startPx: base.startPx * k, endPx: base.endPx * k });
+  }
 
   /** El dedo dibuja (según `fingerMode` y si ya se ha usado un lápiz). */
   fingerDraws() { return this.fingerMode === 'draw' || (this.fingerMode === 'auto' && !this.nav.penUsed); }

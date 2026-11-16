@@ -46,6 +46,18 @@ function sampleDoc() {
 const meta = normalizeMeta({ id: 'abc', name: 'Prueba', created: 1000, modified: 2000, rev: 3 });
 
 describe('formato .yosa', () => {
+  it('guarda las imágenes de referencia (imagen, ventana, zoom y opacidad)', async () => {
+    const doc = new Document(300, 200);
+    doc.references.push({ id: 'r1', name: 'Pose', image: new FakeImage(80, 60, 'pose') as unknown as HTMLCanvasElement, rect: [0.1, 0.2, 0.3, 0.4], zoom: 2.5, pan: [40, 30], opacity: 0.5 });
+    const r = await readProject(await writeProject(doc, meta, { codec }), codec);
+    const ref = r.doc.references[0];
+    expect(r.doc.references).toHaveLength(1);
+    expect({ ...ref, image: undefined }).toEqual({ id: 'r1', name: 'Pose', image: undefined, rect: [0.1, 0.2, 0.3, 0.4], zoom: 2.5, pan: [40, 30], opacity: 0.5 });
+    expect((ref.image as unknown as FakeImage).tag).toBe('pose');
+    // Proyectos anteriores a 1.3 no traen referencias.
+    expect((await readProject(await writeProject(new Document(100, 100), meta, { codec }), codec)).doc.references).toEqual([]);
+  });
+
   it('ida y vuelta conserva capas, elementos editables, pinceles, máscaras y selección', async () => {
     const doc = sampleDoc();
     const bytes = await writeProject(doc, meta, { codec, thumb: new Uint8Array([9, 9, 9]), view: { scale: 0.5, rotation: 0.3, x: 10, y: 20 } });

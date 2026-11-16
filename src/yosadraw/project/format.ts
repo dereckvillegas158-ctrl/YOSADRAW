@@ -148,6 +148,7 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
   const snapshot = doc.layers.map(l => ({ l: { ...l }, items: l.items.slice() }));
   const selection = writeSelection(w, doc.selection);
   const activeId = doc.activeId, counters = doc.counters;
+  const refs = doc.references.map(r => ({ id: r.id, name: r.name, image: w.img(r.image), rect: r.rect, zoom: r.zoom, pan: r.pan, opacity: r.opacity }));
   const layers = [];
   let slice = performance.now();
   for (const { l, items } of snapshot) {
@@ -163,6 +164,7 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
     format: FORMAT_ID, version: FORMAT_VERSION,
     meta: { ...meta, width: doc.width, height: doc.height, dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, layers: doc.layers.length },
     document: { activeId, counters, layers, selection },
+    references: refs,
     presets: w.presetTable,
     view: o.view ?? null,
   };
@@ -314,6 +316,8 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
   const r = new Reader(files, codec, (p.presets ?? {}) as Record<string, BrushPreset>);
   collectImages(r, d.layers);
   collectImages(r, d.selection);
+  const refsIn = Array.isArray(p.references) ? (p.references as J[]).filter(x => typeof x.image === 'string') : [];
+  for (const x of refsIn) r.want(x.image);
   await r.loadImages();
   const settings: DocSettings = { background: meta.background, dpi: meta.dpi, profile: meta.profile };
   const doc = new Document(meta.width, meta.height, settings);
@@ -324,6 +328,12 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
   }));
   const counters = (d.counters ?? {}) as J;
   doc.restore(layers, str(d.activeId), readSelection(r, d.selection), { nextItem: num(counters.nextItem, 1), nextLayer: num(counters.nextLayer, 1) });
+  const quad = (v: unknown, def: number[]) => (Array.isArray(v) && v.length === def.length && v.every(n => typeof n === 'number' && Number.isFinite(n)) ? v : def);
+  doc.references = refsIn.map((x, i) => ({
+    id: str(x.id, `r${i}`), name: str(x.name, 'Referencia'), image: r.image(x.image) as HTMLCanvasElement,
+    rect: quad(x.rect, [0.6, 0.12, 0.35, 0.35]) as [number, number, number, number], zoom: Math.max(0.01, num(x.zoom, 1)),
+    pan: quad(x.pan, [0, 0]) as [number, number], opacity: Math.min(1, Math.max(0.1, num(x.opacity, 1))),
+  }));
   const v = p.view as J | null;
   const view = v && num(v.scale) > 0 ? { scale: num(v.scale), rotation: num(v.rotation), x: num(v.x), y: num(v.y) } : null;
   return { meta: { ...meta, layers: layers.length }, doc, view, thumb: files['thumb.png'] ?? null };

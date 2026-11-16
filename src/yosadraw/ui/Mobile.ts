@@ -16,9 +16,16 @@ export interface TouchPrefs {
   /** Deslizadores rápidos de tamaño y opacidad junto al lienzo. */
   sliders: boolean;
   sliderSide: 'left' | 'right';
+  /** Estabilización extra (0..100) al dibujar con el dedo y con el lápiz. */
+  touchBoost: number;
+  penBoost: number;
+  /** Presión simulada por la velocidad al dibujar con el dedo. */
+  fingerPressure: boolean;
+  /** Quitar el garabato al apoyar y el gancho al soltar. */
+  cleanup: boolean;
 }
 
-export const DEFAULT_TOUCH: TouchPrefs = { finger: 'auto', hold: true, sliders: true, sliderSide: 'left' };
+export const DEFAULT_TOUCH: TouchPrefs = { finger: 'auto', hold: true, sliders: true, sliderSide: 'left', touchBoost: 35, penBoost: 10, fingerPressure: true, cleanup: true };
 
 export function normalizeTouch(v: unknown): TouchPrefs {
   const o = (v && typeof v === 'object' ? v : {}) as Partial<TouchPrefs>;
@@ -27,6 +34,10 @@ export function normalizeTouch(v: unknown): TouchPrefs {
     hold: o.hold !== false,
     sliders: o.sliders !== false,
     sliderSide: o.sliderSide === 'right' ? 'right' : 'left',
+    touchBoost: typeof o.touchBoost === 'number' && o.touchBoost >= 0 && o.touchBoost <= 100 ? o.touchBoost : DEFAULT_TOUCH.touchBoost,
+    penBoost: typeof o.penBoost === 'number' && o.penBoost >= 0 && o.penBoost <= 100 ? o.penBoost : DEFAULT_TOUCH.penBoost,
+    fingerPressure: o.fingerPressure !== false,
+    cleanup: o.cleanup !== false,
   };
 }
 
@@ -159,7 +170,7 @@ export class QuickSliders {
 /* =================== Hoja inferior genérica =================== */
 
 /** Hoja que sube desde abajo en el teléfono (diálogo centrado en pantallas grandes). Esc/Atrás la cierra. */
-export function openSheet(title: string, build: (close: () => void) => HTMLElement[]) {
+export function openSheet(title: string, build: (close: () => void) => (HTMLElement | null)[]) {
   const prev = document.activeElement as HTMLElement | null;
   const close = () => { root.remove(); prev?.focus?.(); };
   const root = h('div', {
@@ -208,10 +219,12 @@ export interface MoreDeps {
   openCustomize: () => void;
   openShortcuts: () => void;
   openEffects?: () => void;
+  /** Acciones de proyecto e imagen (guardar, exportar, importar…), primera sección de la hoja. */
+  actions?: { label: string; run: () => void }[];
 }
 
 /** Vista, entrada táctil y ajustes que en el teléfono no caben en la barra superior. */
-export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts, openEffects }: MoreDeps) {
+export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts, openEffects, actions }: MoreDeps) {
   openSheet('Más opciones', close => {
     const p = prefs();
     const seg = <T extends string>(label: string, value: T, options: [T, string][], set: (v: T) => void) =>
@@ -225,6 +238,15 @@ export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts
       input.addEventListener('change', () => set(input.checked));
       return h('label', { class: 'switch' }, input, h('span', { class: 'track' }), h('span', null, label));
     };
+    const range = (label: string, value: number, set: (v: number) => void) => {
+      const out = h('output', null, `${value}%`);
+      const input = h('input', { type: 'range', min: '0', max: '100', step: '1', value: String(value), 'aria-label': label });
+      const fill = () => input.style.setProperty('--fill', `${input.value}%`);
+      fill();
+      input.addEventListener('input', () => { fill(); out.textContent = `${input.value}%`; });
+      input.addEventListener('change', () => set(Number(input.value)));
+      return h('div', { class: 'ctl' }, h('div', { class: 'ctl-row' }, h('span', { class: 'ctl-label' }, label), out), input);
+    };
     const viewBtn = (label: string, run: () => void) => h('button', { type: 'button', class: 'btn', on: { click: run } }, label);
     const fingerHelp: Record<FingerMode, string> = {
       auto: 'El dedo dibuja hasta que uses un lápiz; desde entonces el dedo sólo navega y la palma no pinta.',
@@ -233,6 +255,8 @@ export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts
     };
     const help = h('p', { class: 'ctl-help' }, fingerHelp[p.finger]);
     return [
+      actions?.length ? h('section', { class: 'sheet-sec' }, h('h3', null, 'Proyecto e imagen'),
+        h('div', { class: 'sheet-row' }, ...actions.map(a => viewBtn(a.label, () => { close(); a.run(); })))) : null,
       h('section', { class: 'sheet-sec' }, h('h3', null, 'Vista'),
         h('div', { class: 'sheet-row' },
           viewBtn('Encajar', () => engine.fit()), viewBtn('100 %', () => engine.zoomTo(1)),
@@ -243,6 +267,12 @@ export function openMore({ engine, prefs, setPrefs, openCustomize, openShortcuts
         sw('Mantener pulsado para tomar color', p.hold, v => setPrefs({ ...prefs(), hold: v })),
         sw('Deslizadores de tamaño y opacidad', p.sliders, v => setPrefs({ ...prefs(), sliders: v })),
         seg('Lado de los deslizadores', p.sliderSide, [['left', 'Izquierda'], ['right', 'Derecha']], v => setPrefs({ ...prefs(), sliderSide: v }))),
+      h('section', { class: 'sheet-sec' }, h('h3', null, 'Estabilizador táctil'),
+        h('p', { class: 'ctl-help' }, 'Se suma al estabilizador de cada pincel según con qué dibujes.'),
+        range('Suavizado extra con el dedo', p.touchBoost, v => setPrefs({ ...prefs(), touchBoost: v })),
+        range('Suavizado extra con el lápiz', p.penBoost, v => setPrefs({ ...prefs(), penBoost: v })),
+        sw('Presión simulada con el dedo (más fino al ir rápido)', p.fingerPressure, v => setPrefs({ ...prefs(), fingerPressure: v })),
+        sw('Quitar ganchos al empezar y al soltar', p.cleanup, v => setPrefs({ ...prefs(), cleanup: v }))),
       h('section', { class: 'sheet-sec' }, h('h3', null, 'Gestos'),
         h('ul', { class: 'gesture-list' },
           h('li', null, h('b', null, 'Dos dedos'), ' mover, ampliar y girar'),

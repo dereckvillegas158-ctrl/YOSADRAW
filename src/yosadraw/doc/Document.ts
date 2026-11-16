@@ -27,6 +27,22 @@ export interface Command {
 
 export const MAX_LAYERS = 32;
 
+/**
+ * Imagen de referencia: ventana flotante sobre el lienzo con una imagen para
+ * copiar (no forma parte del dibujo ni de la exportación). Se guarda con el proyecto.
+ */
+export interface RefImage {
+  id: string;
+  name: string;
+  image: HTMLCanvasElement;
+  /** Ventana en fracciones de la pantalla (x, y, ancho, alto). */
+  rect: [number, number, number, number];
+  /** Zoom y desplazamiento de la imagen dentro de la ventana (px de imagen en el centro). */
+  zoom: number;
+  pan: [number, number];
+  opacity: number;
+}
+
 export type DocProfile = 'srgb' | 'p3' | 'gray';
 
 /** Propiedades del documento que se guardan con el proyecto. */
@@ -49,6 +65,8 @@ export class Document {
   activeId = '';
   selection: Selection | null = null;
   settings: DocSettings = { background: '#ffffff', dpi: 300, profile: 'srgb' };
+  /** Imágenes de referencia (no deshacibles, no se exportan). */
+  references: RefImage[] = [];
   private nextItem = 1;
   private nextLayer = 1;
 
