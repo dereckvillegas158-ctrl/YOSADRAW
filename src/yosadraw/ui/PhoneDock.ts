@@ -1,5 +1,7 @@
 import type { ToolManager } from '../tools/ToolManager';
 import { CATEGORIES } from '../tools/types';
+import { CATEGORIES as FX_CATEGORIES, type Category as FxCategory } from '../effects/effects';
+import { FX_ICONS } from './Toolbar';
 import { h } from './dom';
 import { openSheet } from './Mobile';
 import type { PropertiesBar } from './PropertiesBar';
@@ -20,6 +22,8 @@ export interface DockDeps {
   propsHome: HTMLElement;
   openPanel: (tab: 'layers' | 'color') => void;
   openMore: () => void;
+  /** Panel de efectos (con una categoría elegida). */
+  openEffects?: (o: { cat?: FxCategory | 'all' }) => void;
 }
 
 /**
@@ -77,7 +81,8 @@ export class PhoneDock {
 
   openTools() {
     const { mgr } = this.d;
-    openSheet('Herramientas', close => CATEGORIES.map(cat => {
+    const fx = this.d.openEffects;
+    openSheet('Herramientas', close => [...CATEGORIES.map(cat => {
       const tools = mgr.tools.filter(t => t.category === cat.id);
       if (!tools.length) return null;
       return h('section', { class: 'sheet-sec' }, h('h3', null, cat.label),
@@ -85,7 +90,12 @@ export class PhoneDock {
           type: 'button', class: 'tool-cell', 'aria-pressed': String(t.id === mgr.current.id), title: t.hint,
           on: { click: () => { mgr.select(t.id); close(); } },
         }, h('span', { class: 'tc-icon', html: t.icon }), h('span', { class: 'tc-label' }, t.label)))));
-    }));
+    }),
+    // Efectos: apartado propio, como en la barra de herramientas del PC.
+    fx ? h('section', { class: 'sheet-sec' }, h('h3', null, 'Efectos'),
+      h('div', { class: 'tool-grid' }, ...[{ id: 'all' as const, label: 'Todos' }, ...FX_CATEGORIES].map(c => h('button', {
+        type: 'button', class: 'tool-cell fx-cell', on: { click: () => { close(); fx({ cat: c.id }); } },
+      }, h('span', { class: 'tc-icon', html: FX_ICONS[c.id] }), h('span', { class: 'tc-label' }, c.label))))) : null]);
   }
 
   /** Las propiedades de la herramienta en una hoja (se reutiliza la barra de propiedades). */

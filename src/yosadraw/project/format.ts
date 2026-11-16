@@ -181,6 +181,7 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
     }
     layers.push({
       id: l.id, name: l.name, visible: l.visible, locked: l.locked, alphaLock: l.alphaLock, opacity: l.opacity, blend: l.blend, items: out,
+      ...(l.clip ? { clip: true } : {}),
       ...(cels ? { cels: outCels } : {}), ...(l.group ? { group: l.group } : {}), ...(l.sync ? { sync: true } : {}), ...(l.reference ? { reference: true } : {}),
     });
   }
@@ -370,6 +371,7 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
     id: str(l.id, `L${i + 1}_r`), name: str(l.name, `Capa ${i + 1}`), visible: l.visible !== false, locked: l.locked === true, alphaLock: l.alphaLock === true,
     opacity: Math.min(1, Math.max(0, num(l.opacity, 1))), blend: blend(l.blend),
     items: (Array.isArray(l.items) ? l.items as J[] : []).map(it => readItem(r, it)),
+    ...(l.clip === true ? { clip: true } : {}),
     ...(animIn && Array.isArray(l.cels) ? { cels: readCels(l.cels as J[], pool) } : {}),
     ...(animIn && typeof l.group === 'string' ? { group: l.group } : {}),
     ...(animIn && l.sync === true ? { sync: true } : {}), ...(animIn && l.reference === true ? { reference: true } : {}),

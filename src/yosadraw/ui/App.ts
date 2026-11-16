@@ -5,6 +5,7 @@ import type { CanvasEngine } from '../engine';
 import { ToolManager } from '../tools/ToolManager';
 import { BrushStudio } from './BrushStudio';
 import { ColorPanel } from './ColorPanel';
+import { normalizePalettePrefs } from './palettes';
 import { ExportDialog } from './ExportDialog';
 import { EFFECTS_ICON, EffectsPanel } from './EffectsPanel';
 import { openCustomize, openShortcuts } from './dialogs';
@@ -75,7 +76,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   applyTouch();
 
   // ---------- Guardado de preferencias ----------
-  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, anim: animPrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
+  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, anim: animPrefs, palettes: palettePrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
@@ -84,14 +85,15 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   mgr.onChange = save;
 
   // ---------- Barra de herramientas y propiedades ----------
-  const toolbar = new Toolbar(mgr, layout, l => { layout = l; save(); });
+  const toolbar = new Toolbar(mgr, layout, l => { layout = l; save(); }, o => effects.show(o));
   $('toolbar-host').append(toolbar.el);
   const props = new PropertiesBar(mgr, lib, thumbs);
   $('props-host').append(props.el);
 
   // ---------- Panel lateral con pestañas ----------
   const layers = new LayersPanel(engine);
-  const color = new ColorPanel(mgr);
+  let palettePrefs = normalizePalettePrefs(saved?.palettes);
+  const color = new ColorPanel(mgr, palettePrefs, p => { palettePrefs = p; save(); });
   const library = new LibraryPanel(lib, thumbs);
   // YOSADRAW ANIMATE: controlador, pestaña de propiedades y (más abajo) línea de tiempo.
   const anim = new AnimStudio(engine, mgr, painter);
@@ -200,7 +202,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   $('more-btn').addEventListener('click', more);
   // Teléfono: dock simplificado (herramientas · pincel · borrador · ajustes · capas · color · más).
   const dock = new PhoneDock({
-    mgr, props, propsHome: $('props-host'), openMore: more,
+    mgr, props, propsHome: $('props-host'), openMore: more, openEffects: o => effects.show(o),
     openPanel: t => { const open = document.body.classList.contains('panel-open') && tab === t; if (!open) showTab(t); setPanel(!open); },
   });
   $('workspace').append(dock.el);

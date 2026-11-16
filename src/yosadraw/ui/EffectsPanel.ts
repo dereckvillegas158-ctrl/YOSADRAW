@@ -46,8 +46,13 @@ export class EffectsPanel {
 
   get open() { return !!this.root; }
 
-  show() {
-    if (this.root) return;
+  /** Abre el panel; `cat` filtra por categoría y `effect` elige un efecto (desde la barra de herramientas). */
+  show(o: { cat?: Category | 'all'; effect?: string } = {}) {
+    const eff = o.effect ? EFFECTS.find(e => e.id === o.effect) : o.cat && o.cat !== 'all' && this.effect.cat !== o.cat ? EFFECTS.find(e => e.cat === o.cat) : undefined;
+    if (o.cat) this.cat = o.cat;
+    else if (eff) this.cat = 'all';
+    if (this.root) { if (eff) this.select(eff); else this.render(); return; }
+    if (eff) { this.effect = eff; this.values = { ...defaults(eff), ...(this.prefs.values[eff.id] ?? {}) }; }
     if (!glAvailable()) { toast('Este dispositivo no admite WebGL2: los efectos no están disponibles.', 'error'); return; }
     this.engine.inputLocked = true;
     this.root = h('aside', {

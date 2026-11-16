@@ -773,6 +773,106 @@ const texture: EffectDef[] = [
   },
 ];
 
+// ---------------------------------------------------------------- efectos esenciales añadidos (1.5)
+
+color.push(
+  point('shadows', 'Sombras e iluminaciones', [pct('sh', 'Aclarar sombras', 35, 0, 100), pct('hl', 'Recuperar iluminaciones', 0, 0, 100)], 'uniform float u_s, u_h;', `
+    float L = luma(c);
+    c = mix(c, pow(max(c, vec3(0.0)), vec3(1.0 / (1.0 + u_s * 1.5))), 1.0 - smoothstep(0.0, 0.6, L));
+    c = mix(c, pow(max(c, vec3(0.0)), vec3(1.0 + u_h * 1.5)), smoothstep(0.4, 1.0, L));`,
+  v => ({ u_s: num(v, 'sh') / 100, u_h: num(v, 'hl') / 100 })),
+  point('duotone', 'Duotono', [{ key: 'dark', label: 'Sombras', type: 'color', def: '#1b1530' }, { key: 'light', label: 'Luces', type: 'color', def: '#f2c84b' }, pct('contrast', 'Contraste', 0)],
+    'uniform vec3 u_d, u_l; uniform float u_c;', `
+    float t = luma(c);
+    float k = u_c >= 0.0 ? 1.0 / max(0.01, 1.0 - u_c * 0.99) : 1.0 + u_c;
+    t = clamp((t - 0.5) * k + 0.5, 0.0, 1.0);
+    c = mix(u_d, u_l, t);`,
+    v => ({ u_d: hexRgb(String(v.dark)), u_l: hexRgb(String(v.light)), u_c: num(v, 'contrast') / 100 })),
+  point('solarize', 'Solarizar', [pct('thr', 'Umbral', 50, 0, 100)], 'uniform float u_t;', `
+    c = mix(c, 1.0 - c, step(vec3(u_t), c));`,
+  v => ({ u_t: num(v, 'thr') / 100 })),
+  point('channels', 'Intercambiar canales', [{ key: 'order', label: 'Orden', type: 'select', def: 'rbg', options: [['rbg', 'R B G'], ['grb', 'G R B'], ['gbr', 'G B R'], ['brg', 'B R G'], ['bgr', 'B G R']] }], 'uniform float u_m;', `
+    if (u_m < 0.5) c = c.rbg; else if (u_m < 1.5) c = c.grb; else if (u_m < 2.5) c = c.gbr; else if (u_m < 3.5) c = c.brg; else c = c.bgr;`,
+  v => ({ u_m: ['rbg', 'grb', 'gbr', 'brg', 'bgr'].indexOf(String(v.order)) })),
+);
+
+const BILATERAL = `${HEAD}
+uniform float u_r, u_tol, u_step;
+void main() {
+  vec2 p = inPos();
+  vec4 c0 = tx(p); vec3 u0 = unpm(c0);
+  vec4 acc = vec4(0.0); float ws = 0.0;
+  for (float y = -8.0; y <= 8.0; y += 1.0) for (float x = -8.0; x <= 8.0; x += 1.0) {
+    vec2 d = vec2(x, y) * u_step;
+    float r2 = dot(d, d);
+    if (r2 > u_r * u_r) continue;
+    vec4 s = tx(p + d);
+    vec3 du = unpm(s) - u0;
+    float w = exp(-r2 / (2.0 * u_r * u_r * 0.25)) * exp(-dot(du, du) / (2.0 * u_tol * u_tol)) * (0.05 + s.a);
+    acc += s * w; ws += w;
+  }
+  o = ws > 0.0 ? acc / ws : c0;
+}`;
+blur.push({
+  id: 'bilateral', label: 'Suavizado que conserva bordes', cat: 'blur',
+  params: [{ key: 'radius', label: 'Radio', type: 'range', min: 1, max: 40, def: 6, unit: ' px', spatial: true }, pct('tol', 'Tolerancia de bordes', 25, 1, 100)],
+  margin: (v, u) => num(v, 'radius') * u + 4,
+  run: (ctx, t, v) => { const r = Math.max(1, num(v, 'radius') * ctx.unit); return ctx.pass(BILATERAL, t, { u_r: r, u_step: Math.max(1, r / 8), u_tol: Math.max(0.01, num(v, 'tol') / 100 * 0.6) }); },
+});
+
+const HIGHPASS = `${HEAD}
+uniform sampler2D u_b; uniform float u_k;
+void main() {
+  vec2 p = inPos();
+  vec4 a = tx(p), b = texture(u_b, p / u_size);
+  vec3 d = (unpm(a) - unpm(b)) * u_k + 0.5;
+  o = pm(d, a.a);
+}`;
+sharpen.push({
+  id: 'highpass', label: 'Paso alto', cat: 'sharpen',
+  params: [{ key: 'radius', label: 'Radio', type: 'range', min: 0.5, max: 60, step: 0.1, def: 3, unit: ' px', spatial: true }, pct('amount', 'Intensidad', 100, 10, 400)],
+  margin: (v, u) => num(v, 'radius') * u * 3 + 4,
+  run: (ctx, t, v) => {
+    const b = gaussian(ctx, t, num(v, 'radius') * ctx.unit);
+    const r = ctx.pass(HIGHPASS, t, { u_k: num(v, 'amount') / 100 }, { u_b: b });
+    ctx.gl.release(b);
+    return r;
+  },
+});
+
+const MIRROR = `${HEAD}
+uniform float u_mode, u_n, u_dx, u_dy;
+void main() {
+  vec2 g = gpos(), l = g - u_doc.xy, s = u_doc.zw;
+  if (u_mode < 0.5) { if (l.x > s.x * 0.5) l.x = s.x - l.x; }            // izquierda → derecha
+  else if (u_mode < 1.5) { if (l.x < s.x * 0.5) l.x = s.x - l.x; }       // derecha → izquierda
+  else if (u_mode < 2.5) { if (l.y > s.y * 0.5) l.y = s.y - l.y; }       // arriba → abajo
+  else if (u_mode < 3.5) { if (l.x > s.x * 0.5) l.x = s.x - l.x; if (l.y > s.y * 0.5) l.y = s.y - l.y; } // cuatro cuadrantes
+  else if (u_mode < 4.5) {                                                // caleidoscopio
+    vec2 c = s * 0.5, d = l - c;
+    float seg = 6.2831853 / u_n, a = atan(d.y, d.x) + 1.5707963, r = length(d);
+    a = mod(a, seg); if (a > seg * 0.5) a = seg - a;
+    a -= 1.5707963;
+    l = c + vec2(cos(a), sin(a)) * r;
+  } else {                                                                // desplazar en mosaico
+    l = mod(l - vec2(u_dx, u_dy) * s, s);
+  }
+  o = tx(u_doc.xy + l - u_offset);
+}`;
+distort.push(
+  {
+    id: 'mirror', label: 'Espejo / caleidoscopio', cat: 'distort', global: true,
+    params: [{ key: 'mode', label: 'Modo', type: 'select', def: 'lr', options: [['lr', 'Izquierda → derecha'], ['rl', 'Derecha → izquierda'], ['tb', 'Arriba → abajo'], ['quad', 'Cuatro cuadrantes'], ['kaleido', 'Caleidoscopio']] },
+      { key: 'segments', label: 'Segmentos (caleidoscopio)', type: 'range', min: 2, max: 24, def: 6 }],
+    run: (ctx, t, v) => ctx.pass(MIRROR, t, { u_mode: ['lr', 'rl', 'tb', 'quad', 'kaleido'].indexOf(String(v.mode)), u_n: Math.max(2, Math.round(num(v, 'segments'))), u_dx: 0, u_dy: 0 }),
+  },
+  {
+    id: 'offset', label: 'Desplazar en mosaico', cat: 'distort', global: true,
+    params: [pct('dx', 'Horizontal', 50, -100, 100), pct('dy', 'Vertical', 50, -100, 100)],
+    run: (ctx, t, v) => ctx.pass(MIRROR, t, { u_mode: 5, u_n: 2, u_dx: num(v, 'dx') / 100, u_dy: num(v, 'dy') / 100 }),
+  },
+);
+
 export const EFFECTS: EffectDef[] = [...color, ...blur, ...sharpen, ...stylize, ...distort, ...texture];
 export const effectById = (id: string) => EFFECTS.find(e => e.id === id);
 export function defaults(e: EffectDef): Values { return Object.fromEntries(e.params.map(p => [p.key, p.def])); }

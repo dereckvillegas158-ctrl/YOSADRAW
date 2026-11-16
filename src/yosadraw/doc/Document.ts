@@ -22,6 +22,8 @@ export interface Layer {
   sync?: boolean;
   /** Pista de referencia: se ve al animar pero no se exporta. */
   reference?: boolean;
+  /** Máscara de recorte: sólo se ve sobre los píxeles de la capa base de debajo (doc/clip.ts). */
+  clip?: boolean;
 }
 
 /** Cambio deshacible. `layers` = capas cuyo contenido cambia ('structure' = orden/altas/bajas). */
@@ -197,7 +199,7 @@ export class Document {
     return { label: 'Mover capa', layers: [id], structure: true, redo: () => move(from, to), undo: () => move(to, from) };
   }
 
-  cmdLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend'>>, label = 'Propiedades de capa'): Command {
+  cmdLayerProps(id: string, patch: Partial<Pick<Layer, 'name' | 'visible' | 'locked' | 'alphaLock' | 'opacity' | 'blend' | 'clip'>>, label = 'Propiedades de capa'): Command {
     const l = this.layer(id)!;
     const before = Object.fromEntries(Object.keys(patch).map(k => [k, (l as unknown as Record<string, unknown>)[k]])) as typeof patch;
     return {
@@ -215,9 +217,12 @@ export class Document {
     // Las pistas animadas no se combinan (cada fotograma tiene su propio dibujo).
     if (upper.cels || lower.cels) return null;
     const lowerItems = lower.items.slice(), prevActive = this.activeId;
-    const content: Item[] = upper.opacity === 1 && upper.blend === 'normal'
+    // Una capa con recorte sobre su base se combina como grupo «sobre lo que ya hay» (source-atop):
+    // conserva el recorte dentro de la capa resultante.
+    const clipped = !!upper.clip && !lower.clip;
+    const content: Item[] = upper.opacity === 1 && upper.blend === 'normal' && !clipped
       ? upper.items.slice()
-      : [this.item({ kind: 'group', items: upper.items.slice(), opacity: upper.opacity, blend: upper.blend })];
+      : [Object.assign(this.item({ kind: 'group', items: upper.items.slice(), opacity: upper.opacity, blend: upper.blend }), clipped ? { lock: true } : {})];
     return {
       label: 'Combinar hacia abajo', layers: [upper.id, lower.id], structure: true,
       redo: () => { lower.items = [...lowerItems, ...content]; this.layers.splice(this.index(upper.id), 1); this.activeId = lower.id; },

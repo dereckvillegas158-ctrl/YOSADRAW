@@ -1,3 +1,4 @@
+import { ClipComposer } from '../doc/clip';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
 import { drawSelectionMask, selectionBounds } from '../doc/Selection';
 import type { CanvasEngine } from '../engine';
@@ -68,6 +69,7 @@ export async function renderForExport(engine: CanvasEngine, o: ExportOptions, on
   const cctx = comp.getContext('2d', { willReadFrequently: true })!;
 
   const job: RasterJob = { width, height, composite: new Uint8ClampedArray(0), layers: [], individual: [] };
+  const clips = new ClipComposer(doc.layers.filter(l => l.visible || psdLayers));
   for (let i = 0; i < needed.length; i++) {
     const layer = needed[i];
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -81,7 +83,9 @@ export async function renderForExport(engine: CanvasEngine, o: ExportOptions, on
     renderer.renderItems(ctx, layer.items, V, 1);
     ctx.restore();
     if (mask) { ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(mask, 0, 0); ctx.globalCompositeOperation = 'source-over'; }
-    if (layer.visible) {
+    // Máscara de recorte: la capa queda recortada a su base (también en la capa del PSD).
+    const showClip = clips.prepare(layer, ctx);
+    if (layer.visible && showClip) {
       cctx.globalAlpha = layer.opacity;
       cctx.globalCompositeOperation = blendOp(layer.blend);
       cctx.drawImage(canvas, 0, 0);

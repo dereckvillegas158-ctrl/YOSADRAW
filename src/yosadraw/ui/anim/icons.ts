@@ -32,6 +32,7 @@ export const TI = {
   lock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', 15),
   unlock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>', 15),
   sync: svg('<path d="M20 11a8 8 0 0 0-14.5-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.5 4.5L20 16M20 20v-4h-4"/>', 15),
+  clip: svg('<path d="M7 4v9a4 4 0 0 0 4 4h9"/><path d="m16.5 13.5 3.5 3.5-3.5 3.5"/>', 15),
   ref: svg('<rect x="3" y="5" width="18" height="14" rx="2" stroke-dasharray="3 2.5"/><circle cx="12" cy="12" r="2.5"/>', 15),
   chevDown: svg('<path d="m6 9 6 6 6-6"/>', 15),
   chevRight: svg('<path d="m9 6 6 6-6 6"/>', 15),
