@@ -253,7 +253,7 @@ export class Gallery {
       h('div', { class: 'g-info' },
         h('div', { class: 'g-name', title: e.name }, e.name),
         h('div', { class: 'g-meta' }, trashed ? `Se borrará en ${days} ${days === 1 ? 'día' : 'días'}` : `Modificado ${ago(e.modified)}`),
-        h('div', { class: 'g-meta g-specs' }, `${e.width} × ${e.height} · ${PROJECT_EXT.toUpperCase()}${e.source !== 'yosa' ? ` (de ${e.source.toUpperCase()})` : ''} · ${e.layers} ${e.layers === 1 ? 'capa' : 'capas'}`)),
+        h('div', { class: 'g-meta g-specs' }, `${e.width} × ${e.height} · ${PROJECT_EXT.toUpperCase()}${e.source !== 'yosa' ? ` (de ${e.source.toUpperCase()})` : ''} · ${e.anim ? `animación · ${e.anim.frames} f · ${e.anim.fps} fps` : `${e.layers} ${e.layers === 1 ? 'capa' : 'capas'}`}`)),
       h('button', { type: 'button', class: 'icon sm g-more', 'aria-label': `Opciones de ${e.name}`, title: 'Opciones', html: GI.more, on: { click: (ev: Event) => { ev.stopPropagation(); this.cardMenu(e, ev.currentTarget as HTMLElement); } } }));
     card.addEventListener('click', () => { if (trashed) this.cardMenu(e, card.querySelector('.g-more')!); else void this.open(e.id); });
     card.addEventListener('contextmenu', ev => { ev.preventDefault(); this.cardMenu(e, card.querySelector('.g-more')!); });
@@ -447,7 +447,7 @@ export class Gallery {
     await this.run('No se pudo crear el proyecto', async () => {
       this.busy(true, 'Creando…');
       try { await this.session.create(spec, this.section === 'folders' ? this.folder : null); } finally { this.busy(false); }
-      this.prefs.lastNew = { width: spec.width, height: spec.height, dpi: spec.dpi, background: spec.background, profile: spec.profile };
+      this.prefs.lastNew = { width: spec.width, height: spec.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, anim: spec.anim ?? null };
       this.host.persist();
       this.host.showEditor();
     });

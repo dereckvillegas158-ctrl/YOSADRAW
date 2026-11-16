@@ -88,6 +88,11 @@ async function writeBinaryAtomic(file, data) {
 }
 
 function registerIpc() {
+  // Animación: vídeo, GIF/APNG/WebP y secuencias con FFmpeg (desktop/video.cjs).
+  require('./video.cjs').register({
+    isApproved, rememberFolder,
+    sanitizeName: n => String(n || 'Animación').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'Animación',
+  });
   ipcMain.handle('store:get', async (_e, key) => {
     try { return new Uint8Array(await fs.readFile(storePath(key))); }
     catch (err) { if (err.code === 'ENOENT') return null; throw err; }

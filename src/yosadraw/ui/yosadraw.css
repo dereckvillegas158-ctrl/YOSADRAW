@@ -44,7 +44,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .fatal { position: fixed; inset: auto 16px 16px; padding: 12px 16px; background: var(--danger); color: #1a0710; border-radius: var(--radius); }
 
-.app { height: 100%; display: grid; grid-template-rows: auto auto 1fr auto; }
+.app { height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
 
 /* ---------- Barra superior ---------- */
 .topbar {
@@ -92,8 +92,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .link:hover { text-decoration: underline; }
 
 /* ---------- Área de trabajo ---------- */
-.workspace { display: grid; grid-template-columns: auto minmax(0, 1fr) 320px; min-height: 0; overflow: hidden; }
-body.toolbar-right .workspace { grid-template-columns: 320px minmax(0, 1fr) auto; }
+.workspace { display: grid; grid-template-columns: auto minmax(0, 1fr) var(--panel-w, 320px); min-height: 0; overflow: hidden; }
+body.toolbar-right .workspace { grid-template-columns: var(--panel-w, 320px) minmax(0, 1fr) auto; }
 body.toolbar-right #toolbar-host { order: 3; }
 body.toolbar-right .panel { order: 1; border-left: 0; border-right: 1px solid var(--line); }
 body.toolbar-right .canvas-host { order: 2; }

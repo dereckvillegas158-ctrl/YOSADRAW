@@ -2,6 +2,7 @@ import type { DocProfile } from '../doc/Document';
 import { MAX_DOC_SIDE } from '../project/format';
 import { docSizeProblem, type NewProjectSpec } from '../project/session';
 import { h } from './dom';
+import { FPS_OPTIONS } from '../anim/model';
 
 export interface Template { id: string; label: string; sub: string; width: number; height: number; dpi: number; background?: string | null }
 
@@ -16,6 +17,8 @@ export const TEMPLATES: Template[] = [
   { id: 'post', label: 'Publicación 4:5', sub: '1080 × 1350 · 72 ppp', width: 1080, height: 1350, dpi: 72 },
   { id: 'wide', label: 'Panorámico 4K', sub: '3840 × 2160 · 72 ppp', width: 3840, height: 2160, dpi: 72 },
   { id: 'illus', label: 'Ilustración 4:3', sub: '4096 × 3072 · 300 ppp', width: 4096, height: 3072, dpi: 300 },
+  { id: 'hd', label: 'Vídeo Full HD', sub: '1920 × 1080 · 72 ppp', width: 1920, height: 1080, dpi: 72 },
+  { id: 'hd720', label: 'Vídeo HD', sub: '1280 × 720 · 72 ppp', width: 1280, height: 720, dpi: 72 },
   { id: 'icon', label: 'Icono', sub: '1024 × 1024 · 72 ppp', width: 1024, height: 1024, dpi: 72, background: null },
 ];
 
@@ -30,7 +33,9 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     const spec: NewProjectSpec = {
       name: defaultName, width: last?.width ?? 2048, height: last?.height ?? 2048, dpi: last?.dpi ?? 300,
       background: last?.background === null ? null : '#ffffff', profile: last?.profile ?? 'srgb',
+      anim: last?.anim ?? null,
     };
+    let animSpec = { fps: last?.anim?.fps ?? 12, frames: last?.anim?.frames ?? 48 };
     const prev = document.activeElement as HTMLElement | null;
     let done = false;
     const finish = (v: NewProjectSpec | null) => { if (done) return; done = true; root.remove(); prev?.focus?.(); resolve(v); };
@@ -87,11 +92,33 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
       markTemplate();
     }
     for (const el of [nameIn, wIn, hIn, dpiIn]) el.addEventListener('input', sync);
+
+    // Tipo de proyecto: dibujo o animación (la línea de tiempo es de la versión de PC).
+    const fpsSel = h('select', { 'aria-label': 'Fotogramas por segundo' }, ...FPS_OPTIONS.map(f => h('option', { value: String(f), selected: f === animSpec.fps }, `${f} fps`)));
+    const durIn = h('input', { type: 'number', min: '1', max: '20000', value: String(animSpec.frames), inputmode: 'numeric', 'aria-label': 'Duración en fotogramas' });
+    const durInfo = h('span', { class: 'ctl-help' });
+    const syncAnim = () => {
+      animSpec = { fps: Number(fpsSel.value), frames: Math.max(1, Math.min(20000, Math.round(Number(durIn.value) || 1))) };
+      durInfo.textContent = `= ${(animSpec.frames / animSpec.fps).toFixed(2).replace('.', ',')} s`;
+      if (spec.anim) spec.anim = { ...animSpec };
+    };
+    fpsSel.addEventListener('change', syncAnim);
+    durIn.addEventListener('input', syncAnim);
+    const animBox = h('div', { class: 'np-dims np-anim', hidden: !spec.anim }, h('label', null, h('span', null, 'FPS'), fpsSel), h('label', null, h('span', null, 'Duración (fotogramas)'), durIn), durInfo);
+    const kindSeg = seg<string>('Tipo', spec.anim ? 'anim' : 'draw', [['draw', 'Dibujo'], ['anim', 'Animación']], v => {
+      spec.anim = v === 'anim' ? { ...animSpec } : null;
+      animBox.hidden = !spec.anim;
+      // Una animación nueva propone Full HD si el tamaño era el de un dibujo por defecto.
+      if (spec.anim && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === 'hd')!);
+    });
+    syncAnim();
+    if (document.documentElement.classList.contains('phone') || document.documentElement.classList.contains('android')) { kindSeg.hidden = true; spec.anim = null; animBox.hidden = true; }
     const swap = h('button', { type: 'button', class: 'icon sm np-swap', title: 'Girar orientación', 'aria-label': 'Intercambiar ancho y alto', html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v14M3.5 7.5 7 4l3.5 3.5M17 20V6M20.5 16.5 17 20l-3.5-3.5"/></svg>', on: { click: () => { const w = wIn.value; wIn.value = hIn.value; hIn.value = w; sync(); } } });
 
     createBtn.addEventListener('click', () => { sync(); if (!createBtn.disabled) finish({ ...spec, name: spec.name.trim() || defaultName }); });
     const form = h('div', { class: 'np-form' },
       h('label', { class: 'np-field' }, h('span', { class: 'ex-label' }, 'Nombre'), nameIn),
+      kindSeg, animBox,
       h('div', { class: 'np-field' }, h('span', { class: 'ex-label' }, 'Tamaño (píxeles)'),
         h('div', { class: 'np-dims' }, h('label', null, h('span', null, 'Ancho'), wIn), swap, h('label', null, h('span', null, 'Alto'), hIn), h('label', null, h('span', null, 'Resolución (ppp)'), dpiIn))),
       h('div', { class: 'np-summary' }, preview, info),

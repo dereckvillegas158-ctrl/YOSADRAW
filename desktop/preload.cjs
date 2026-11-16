@@ -26,4 +26,13 @@ contextBridge.exposeInMainWorld('yosadraw', {
   storeDelete: key => ipcRenderer.invoke('store:delete', String(key)),
   storeList: prefix => ipcRenderer.invoke('store:list', String(prefix)),
   storeLocation: () => ipcRenderer.invoke('store:location'),
+  // Animación: exportación con FFmpeg (fotogramas RGBA de uno en uno) y audio que Chromium no decodifica.
+  video: {
+    probe: () => ipcRenderer.invoke('video:probe'),
+    begin: opts => ipcRenderer.invoke('video:begin', opts),
+    frame: (id, data) => ipcRenderer.invoke('video:frame', Number(id), data),
+    finish: id => ipcRenderer.invoke('video:finish', Number(id)),
+    abort: id => ipcRenderer.invoke('video:abort', Number(id)),
+  },
+  decodeAudio: (data, name) => ipcRenderer.invoke('audio:decode', data, String(name ?? '')),
 });

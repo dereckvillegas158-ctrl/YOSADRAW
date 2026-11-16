@@ -1,3 +1,4 @@
+import { newAnimation, newCel } from '../anim/model';
 import { Document, type DocProfile } from '../doc/Document';
 import type { CanvasEngine } from '../engine';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
@@ -7,7 +8,7 @@ import { browserImageCodec, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SIDE, normaliz
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 export interface NewProjectSpec {
   name: string;
@@ -16,6 +17,8 @@ export interface NewProjectSpec {
   dpi: number;
   background: string | null;
   profile: DocProfile;
+  /** Proyecto de animación (FPS y duración en fotogramas). */
+  anim?: { fps: number; frames: number } | null;
 }
 
 export interface SessionState {
@@ -123,8 +126,14 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     const problem = docSizeProblem(spec.width, spec.height);
     if (problem) throw new Error(problem);
     const doc = new Document(Math.round(spec.width), Math.round(spec.height), { background: spec.background, dpi: spec.dpi, profile: spec.profile });
+    if (spec.anim) {
+      // Animación: una pista animada con un primer dibujo vacío en el fotograma 1.
+      doc.anim = newAnimation(spec.anim.fps, spec.anim.frames);
+      doc.layers[0].name = 'Animación 1';
+      doc.layers[0].cels = [newCel(0, 1)];
+    }
     const name = this.library.uniqueName(spec.name.trim() || 'Sin título');
-    const meta = normalizeMeta({ id: newId(), name, width: doc.width, height: doc.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, source: 'yosa', app: APP_VERSION });
+    const meta = normalizeMeta({ id: newId(), name, width: doc.width, height: doc.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, source: 'yosa', app: APP_VERSION, anim: spec.anim ? { frames: spec.anim.frames, fps: spec.anim.fps } : null });
     const e = await this.library.create(meta, m => this.serialize(doc, m), { folder });
     this.load(doc, e);
     this.changed();
@@ -167,9 +176,10 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     const t = performance.now();
     // La miniatura repinta todo el documento: sólo hace falta al guardar, no en la copia de recuperación.
     const thumb = withThumb ? await this.thumbnail(doc) : null;
-    const bytes = await writeProject(doc, { ...meta, width: doc.width, height: doc.height, layers: doc.layers.length }, { codec: this.codec, cache: this.imageCache, thumb });
+    const animMeta = doc.anim ? { frames: doc.anim.length, fps: doc.anim.fps } : null;
+    const bytes = await writeProject(doc, { ...meta, width: doc.width, height: doc.height, layers: doc.layers.length, anim: animMeta }, { codec: this.codec, cache: this.imageCache, thumb });
     this.lastSerializeMs = performance.now() - t;
-    return { bytes, thumb, meta: { layers: doc.layers.length } };
+    return { bytes, thumb, meta: { layers: doc.layers.length, anim: animMeta } };
   }
 
   /** Guarda en el proyecto abierto. Si otra ventana lo guardó antes, lanza ConflictError (salvo `force`). */

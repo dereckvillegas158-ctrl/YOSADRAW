@@ -1,0 +1,13 @@
+YOSADRAW incluye FFmpeg para exportar animaciones (vídeo, GIF, APNG, WebP y secuencias).
+
+FFmpeg es software libre (https://ffmpeg.org). El ejecutable incluido (ffmpeg.exe, versión 4.1,
+compilación estática de Zeranoe distribuida por el paquete npm @ffmpeg-installer/win32-x64) está
+configurado con --enable-gpl --enable-version3 e incluye libx264, libx265, libvpx, libwebp,
+libmp3lame, libopus y libvorbis, por lo que se distribuye bajo la licencia GNU GPL versión 3.
+
+- Licencia: https://www.gnu.org/licenses/gpl-3.0.html
+- Código fuente de FFmpeg 4.1: https://ffmpeg.org/releases/ffmpeg-4.1.tar.xz
+- Repositorio: https://git.ffmpeg.org/ffmpeg.git
+
+YOSADRAW ejecuta FFmpeg como un programa aparte (no se enlaza con él) y le envía los fotogramas
+por su entrada estándar.
