@@ -125,3 +125,44 @@ describe('formato .yosa', () => {
     await expect(readProject(missing, codec)).rejects.toThrow(/Falta/);
   });
 });
+
+describe('formato .yosa: animación', () => {
+  it('conserva cels, pistas, grupos, audio, papel cebolla, marcadores y notas; los dibujos repetidos se escriben una vez', async () => {
+    const { newAnimation, newCel } = await import('../src/yosadraw/anim/model');
+    const doc = new Document(320, 240);
+    doc.anim = newAnimation(24, 60);
+    const l = doc.layers[0];
+    const shared = [doc.item({ kind: 'stroke', stroke: stroke() })];
+    l.cels = [newCel(0, 2, shared, true, 'A'), newCel(2, 3, shared.slice(), false, 'B'), newCel(8, 1, [doc.item({ kind: 'bitmap', image: new FakeImage(8, 8, 'cel') as unknown as CanvasImageSource, x: 0, y: 0, w: 8, h: 8 })])];
+    l.sync = true;
+    const bg = doc.newLayer('Fondo'); bg.reference = true; doc.layers.unshift(bg);
+    doc.anim.groups.push({ id: 'g1', name: 'Personaje', visible: true, locked: false, opacity: 0.5, collapsed: false });
+    l.group = 'g1';
+    doc.anim.current = 3; doc.anim.range = [2, 40]; doc.anim.onion.before = 4; doc.anim.onion.colorAfter = '#00ff00';
+    doc.anim.markers.push({ id: 'm1', frame: 10, name: 'Impacto', color: '#ff0000' });
+    doc.anim.notes[5] = 'Mira a cámara';
+    doc.anim.audio.push({ id: 'a1', name: 'voz.mp3', lane: doc.anim.lanes[0].id, data: new Uint8Array([1, 2, 3, 4]), mime: 'audio/mpeg', duration: 2.5, offset: 0.5, trimStart: 0.1, trimEnd: 0.2, volume: 0.8, muted: false, dialogue: [{ id: 'd', start: 3, end: 20, text: 'Hola' }], mouth: [{ frame: 4, shape: 'D' }] });
+    l.items = l.cels[1].content.items; // fotograma 3 = cel B
+    const bytes = await writeProject(doc, meta, { codec });
+    const json = JSON.parse(new TextDecoder().decode((await import('fflate')).unzipSync(bytes)['project.json']));
+    expect(json.document.pool).toHaveLength(2); // el trazo compartido una sola vez
+    const r = await readProject(bytes, codec);
+    const a = r.doc.anim!;
+    expect([a.fps, a.length, a.current, a.range]).toEqual([24, 60, 3, [2, 40]]);
+    expect(r.meta.anim).toEqual({ frames: 60, fps: 24 });
+    const rl = r.doc.layers[1];
+    expect(rl.cels!.map(c => [c.start, c.length, c.key, c.label, c.content.items.length])).toEqual([[0, 2, true, 'A', 1], [2, 3, false, 'B', 1], [8, 1, true, '', 1]]);
+    expect(rl.cels![0].content.items[0]).toBe(rl.cels![1].content.items[0]);
+    expect([rl.sync, rl.group, r.doc.layers[0].reference, r.doc.layers[0].cels]).toEqual([true, 'g1', true, undefined]);
+    expect(a.groups[0].opacity).toBe(0.5);
+    expect(a.onion.before).toBe(4);
+    expect(a.onion.colorAfter).toBe('#00ff00');
+    expect(a.markers[0].name).toBe('Impacto');
+    expect(a.notes[5]).toBe('Mira a cámara');
+    const c = a.audio[0];
+    expect([...c.data]).toEqual([1, 2, 3, 4]);
+    expect([c.offset, c.trimStart, c.trimEnd, c.volume, c.dialogue[0].text, c.mouth[0].shape]).toEqual([0.5, 0.1, 0.2, 0.8, 'Hola', 'D']);
+    // Un proyecto de dibujo sigue sin animación.
+    expect((await readProject(await writeProject(new Document(100, 100), meta, { codec }), codec)).doc.anim).toBeNull();
+  });
+});

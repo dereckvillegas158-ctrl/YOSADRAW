@@ -23,7 +23,7 @@ export const isAndroidApp = () => Capacitor.isNativePlatform() && Capacitor.getP
 const MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', bmp: 'image/bmp',
   tif: 'image/tiff', tiff: 'image/tiff', psd: 'image/vnd.adobe.photoshop', pdf: 'application/pdf',
-  zip: 'application/zip', json: 'application/json', yosa: 'application/octet-stream',
+  zip: 'application/zip', json: 'application/json', yosa: 'application/octet-stream', gif: 'image/gif', mp4: 'video/mp4',
 };
 export const mimeOf = (name: string) => MIME[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
 
@@ -67,7 +67,7 @@ export function installAndroidBridge() {
 
   const bridge: DesktopBridge = {
     platform: 'android',
-    version: '1.3.0',
+    version: '1.4.0',
     loadLibrary: async () => (await files.readText({ name: 'library.json' })).data,
     saveLibrary: json => files.writeText({ name: 'library.json', data: json }),
     loadSettings: async () => (await files.readText({ name: 'settings.json' })).data,

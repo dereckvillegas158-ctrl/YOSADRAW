@@ -14,6 +14,7 @@ import { fromOverlayUi, Navigation, type NavMode } from './Navigation';
 import { invert, multiply, ViewTransform, type AABB, type Mat, type ViewState } from './ViewTransform';
 import type { Item } from '../doc/items';
 import type { Rect } from '../brush/StrokePainter';
+import * as anim from '../anim/model';
 
 export type EngineMode = 'paint' | 'erase' | 'pan' | 'rotate' | 'custom';
 
@@ -52,6 +53,8 @@ export type EngineEvents = {
   stylusEraser: boolean;
   /** Se cargó otro documento (abrir o crear un proyecto). */
   document: Document;
+  /** Animación: cambió el fotograma actual. */
+  frame: number;
 };
 
 /** Qué hace un dedo sobre el lienzo. */
@@ -68,7 +71,9 @@ export interface CanvasEngineOptions {
   doc?: Document;
 }
 
-interface LayerView { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; crisp: ViewTransform | null; dirty: boolean; clipped: boolean; ms: number }
+interface LayerView { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; crisp: ViewTransform | null; dirty: boolean; clipped: boolean; ms: number; src?: Item[] }
+/** Capa fantasma del papel cebolla: dibujo de otro fotograma de una pista. */
+interface OnionGhost extends Layer { track: string; side: 'before' | 'after' }
 
 const LIVE_RENDER_BUDGET_MS = 7;
 const SETTLE_MS = 90;
@@ -265,6 +270,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.ghosts = [];
     this.abandonJob();
     this.doc = doc;
+    anim.apply(doc);
+    this.onionLayers = [];
     this.history = new History();
     this.items = new ItemRenderer(this.painter, doc.width, doc.height);
     this.symmetry = { ...this.symmetry, enabled: false, cx: doc.width / 2, cy: doc.height / 2 };
@@ -301,26 +308,62 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   /** Ejecuta un comando y lo añade al historial. `rendered` = la capa ya muestra el resultado. */
   exec(cmd: Command | null, rendered = false): boolean {
     if (!cmd || this.session) return false;
+    const a = this.doc.anim;
+    if (a) {
+      anim.capture(this.doc);
+      if (!cmd.anim) {
+        // Pintar en un fotograma vacío de una pista animada crea ahí un dibujo nuevo (en el mismo paso deshacible).
+        const blank = cmd.layers.filter(id => { const l = this.doc.layer(id); return l?.cels && !anim.celAt(l, a.current); });
+        const make = blank.length ? anim.cmdAnim(this.doc, cmd.label, () => { for (const id of blank) this.doc.layer(id)!.cels!.push(anim.newCel(a.current)); }) : null;
+        if (make) {
+          const inner = cmd;
+          cmd = {
+            label: inner.label, layers: [...new Set([...inner.layers, ...make.layers])], structure: true, selection: inner.selection,
+            redo: () => { make.redo(); inner.redo(); },
+            undo: () => { inner.undo(); anim.capture(this.doc); make.undo(); },
+          };
+          rendered = false;
+        }
+      }
+      this.cmdFrame.set(cmd, a.current);
+    }
     this.history.exec(cmd);
     this.afterChange(cmd, rendered);
     return true;
   }
 
+  /** Fotograma en que se hizo cada cambio: deshacer lleva antes a ese fotograma. */
+  private cmdFrame = new WeakMap<Command, number>();
+
+  private jumpFor(c: Command | undefined) {
+    const a = this.doc.anim, f = c && this.cmdFrame.get(c);
+    if (a && c && !c.anim && f !== undefined && f !== a.current) this.setFrame(f);
+  }
+
   undo() {
     if (this.isDrawing) return;
+    this.jumpFor(this.history.peekUndo);
+    if (this.doc.anim) anim.capture(this.doc);
     const c = this.history.undo();
     if (c) this.afterChange(c, false);
   }
 
   redo() {
     if (this.isDrawing) return;
+    this.jumpFor(this.history.peekRedo);
+    if (this.doc.anim) anim.capture(this.doc);
     const c = this.history.redo();
     if (c) this.afterChange(c, false);
   }
 
   private afterChange(cmd: Command, rendered: boolean) {
     this._revision++;
-    if (cmd.structure) this.syncLayers();
+    if (this.doc.anim) {
+      anim.capture(this.doc);
+      this.rebuildOnion();
+      if (cmd.anim) this.emit('frame', this.doc.anim.current);
+    }
+    if (cmd.structure || this.doc.anim) this.syncLayers();
     if (!rendered) for (const id of cmd.layers) { const v = this.layerViews.get(id); if (v) v.dirty = true; }
     if (!rendered && cmd.layers.length) this.rerender(true);
     this.emit('history', this.historyState);
@@ -378,9 +421,134 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   /** La capa activa se puede editar; si no, avisa y devuelve null. */
   editableLayer(): Layer | null {
     const l = this.doc.active;
-    if (!l.visible) { this.emit('notice', 'La capa activa está oculta'); return null; }
-    if (l.locked) { this.emit('notice', 'La capa activa está bloqueada'); return null; }
+    if (this.playing) { this.emit('notice', 'Pausa la reproducción para dibujar'); return null; }
+    if (!anim.effectiveVisible(this.doc, l)) { this.emit('notice', l.visible ? 'El grupo de la capa activa está oculto' : 'La capa activa está oculta'); return null; }
+    if (anim.effectiveLocked(this.doc, l)) { this.emit('notice', l.locked ? 'La capa activa está bloqueada' : 'El grupo de la capa activa está bloqueado'); return null; }
     return l;
+  }
+
+  // =================== Animación ===================
+
+  /** Reproduciendo: el lienzo muestra la imagen del reproductor y no se puede dibujar. */
+  playing = false;
+  private onionLayers: OnionGhost[] = [];
+  private playbackEl: HTMLCanvasElement | null = null;
+
+  get currentFrame() { return this.doc.anim?.current ?? 0; }
+
+  /** Va a un fotograma: guarda lo editado, carga los dibujos de ese fotograma y repinta sólo las pistas animadas. */
+  setFrame(f: number, o: { quiet?: boolean } = {}) {
+    const a = this.doc.anim;
+    if (!a || this.session || this.pending) return;
+    f = anim.clampFrame(a, f);
+    if (f === a.current) return;
+    this.handler?.cancel?.();
+    anim.capture(this.doc);
+    a.current = f;
+    anim.apply(this.doc);
+    for (const l of this.doc.layers) if (l.cels) { const v = this.layerViews.get(l.id); if (v) v.dirty = true; }
+    if (!this.playing) {
+      this.rebuildOnion();
+      this.syncLayers();
+      this.rerender(true);
+      this.requestFrame();
+    }
+    if (!o.quiet) this.emit('frame', f);
+  }
+
+  /** Ajustes de papel cebolla cambiados (o pista activa distinta): reconstruye los fantasmas. */
+  refreshOnion() { this.rebuildOnion(); this.syncLayers(); this.rerender(false); this.requestFrame(); }
+
+  private rebuildOnion() {
+    const a = this.doc.anim, o = a?.onion;
+    this.onionLayers = [];
+    if (!a || !o?.enabled || this.playing) return;
+    const tracks = (o.allTracks ? this.doc.layers : [this.doc.active]).filter(l => l.cels && anim.effectiveVisible(this.doc, l) && !l.reference);
+    for (const t of tracks) {
+      const cels = t.cels!;
+      const cur = anim.celAt(t, a.current);
+      const prev = cels.filter(c => anim.celEnd(c) <= (cur ? cur.start : a.current + 1) && c !== cur && c.start < a.current);
+      const next = cels.filter(c => c.start > a.current && c !== cur);
+      const ghost = (c: anim.Cel, side: 'before' | 'after', k: number): OnionGhost => ({
+        id: `onion:${t.id}:${c.id}`, name: '', visible: true, locked: true, alphaLock: false, blend: 'normal', items: c.content.items,
+        opacity: o.opacity * o.falloff ** (k - 1), track: t.id, side,
+      });
+      for (let k = Math.min(o.before, prev.length); k >= 1; k--) this.onionLayers.push(ghost(prev[prev.length - k], 'before', k));
+      for (let k = Math.min(o.after, next.length); k >= 1; k--) this.onionLayers.push(ghost(next[k - 1], 'after', k));
+    }
+    this.syncOnionFilters();
+  }
+
+  private onionSvg: SVGSVGElement | null = null;
+  private onionFilterId = `yosa-onion-${Math.random().toString(36).slice(2, 7)}`;
+  /** Tinte del papel cebolla: filtro SVG (color sólido con el alfa del dibujo), aplicado por la GPU sin repintar. */
+  private syncOnionFilters() {
+    const o = this.doc.anim?.onion;
+    if (!o) return;
+    if (!this.onionSvg) {
+      const ns = 'http://www.w3.org/2000/svg';
+      this.onionSvg = document.createElementNS(ns, 'svg');
+      Object.assign(this.onionSvg.style, { position: 'absolute', width: '0', height: '0' });
+      this.onionSvg.setAttribute('aria-hidden', 'true');
+      for (const side of ['before', 'after']) {
+        const f = document.createElementNS(ns, 'filter');
+        f.id = `${this.onionFilterId}-${side}`;
+        f.setAttribute('color-interpolation-filters', 'sRGB');
+        const flood = document.createElementNS(ns, 'feFlood');
+        flood.setAttribute('result', 'c');
+        const comp = document.createElementNS(ns, 'feComposite');
+        comp.setAttribute('in', 'c'); comp.setAttribute('in2', 'SourceGraphic'); comp.setAttribute('operator', 'in');
+        f.append(flood, comp);
+        this.onionSvg.append(f);
+      }
+      this.element.append(this.onionSvg);
+    }
+    const floods = this.onionSvg.querySelectorAll('feFlood');
+    floods[0].setAttribute('flood-color', o.colorBefore);
+    floods[1].setAttribute('flood-color', o.colorAfter);
+  }
+
+  /** Orden de pintado: cada pista con sus fantasmas de papel cebolla debajo. */
+  private renderList(): Layer[] {
+    if (!this.onionLayers.length) return this.doc.layers;
+    const out: Layer[] = [];
+    for (const l of this.doc.layers) { for (const g of this.onionLayers) if (g.track === l.id) out.push(g); out.push(l); }
+    return out;
+  }
+
+  /** Superficie del reproductor encima del lienzo (null = volver a las capas). */
+  setPlaybackSurface(c: HTMLCanvasElement | null) {
+    if (this.playbackEl === c) return;
+    this.playbackEl?.remove();
+    this.playbackEl = c;
+    // Se ve el papel (fondo y hoja) y encima la imagen del reproductor; las capas se ocultan.
+    const paper = this.stack.firstElementChild as HTMLElement;
+    for (const el of [...this.stack.children] as HTMLElement[]) if (el !== paper && el !== c) el.style.display = c ? 'none' : '';
+    if (c) {
+      Object.assign(c.style, { position: 'absolute', left: '0', top: '0', width: `${this.vw}px`, height: `${this.vh}px`, pointerEvents: 'none' });
+      paper.after(c);
+    }
+  }
+
+  /** Dibujos de interfaz extra sobre el lienzo (guías de movimiento…), en px CSS. */
+  readonly overlays: ((ctx: CanvasRenderingContext2D) => void)[] = [];
+
+  /** Tamaño del visor en px CSS. */
+  get viewport() { return { w: this.vw, h: this.vh }; }
+
+  /** Empieza o termina la reproducción (sin papel cebolla mientras se reproduce). */
+  setPlaying(on: boolean) {
+    if (this.playing === on) return;
+    if (on) { this.cancelStroke(); this.handler?.cancel?.(); }
+    this.playing = on;
+    if (!on) {
+      // Al parar, las pistas muestran el fotograma en que se detuvo.
+      for (const l of this.doc.layers) if (l.cels) { const v = this.layerViews.get(l.id); if (v) v.dirty = true; }
+      this.rebuildOnion();
+      this.syncLayers();
+      this.rerender(true);
+    } else { this.onionLayers = []; this.syncLayers(); }
+    this.requestFrame();
   }
 
   private toDoc(q: StrokePoint): StrokePoint {
@@ -890,21 +1058,53 @@ export class CanvasEngine extends Emitter<EngineEvents> {
 
   // =================== Render ===================
 
+  private groupEls = new Map<string, HTMLDivElement>();
+
   private syncLayers() {
-    const ids = new Set(this.doc.layers.map(l => l.id));
+    const list = this.renderList();
+    const ids = new Set(list.map(l => l.id));
     for (const [id, v] of this.layerViews) if (!ids.has(id)) { v.canvas.remove(); this.layerViews.delete(id); }
+    // Grupos de pistas: contenedor aislado con la opacidad y visibilidad del grupo (el navegador compone el grupo exacto).
+    const groups = new Map((this.doc.anim?.groups ?? []).map(g => [g.id, g]));
+    for (const [id, el] of this.groupEls) if (!groups.has(id)) { el.remove(); this.groupEls.delete(id); }
     let prev: Element = this.stack.firstElementChild!; // papel
-    for (const l of this.doc.layers) {
+    const lastIn = new Map<string, Element>();
+    for (const l of list) {
       let v = this.layerViews.get(l.id);
       if (!v) {
-        const canvas = this.makeCanvas('layer');
+        const canvas = this.makeCanvas('track' in l ? 'onion' : 'layer');
         const ctx = canvas.getContext('2d', { desynchronized: true })!;
         v = { canvas, ctx, crisp: null, dirty: true, clipped: false, ms: 0 };
         this.layerViews.set(l.id, v);
         this.sizeLayer(v);
       }
-      if (prev.nextElementSibling !== v.canvas) prev.after(v.canvas);
-      prev = v.canvas;
+      // Un fantasma de papel cebolla se repinta si el dibujo de ese fotograma cambió.
+      if (v.src !== l.items) { if (v.src && 'track' in l) v.dirty = true; v.src = l.items; }
+      const gid = ('track' in l ? this.doc.layer((l as OnionGhost).track)?.group : l.group) ?? null;
+      const g = gid ? groups.get(gid) : undefined;
+      if (g) {
+        let el = this.groupEls.get(g.id);
+        if (!el) {
+          el = document.createElement('div');
+          el.dataset.group = g.id;
+          Object.assign(el.style, { position: 'absolute', inset: '0', isolation: 'isolate', pointerEvents: 'none' });
+          this.groupEls.set(g.id, el);
+        }
+        el.style.opacity = String(g.opacity);
+        el.style.visibility = g.visible ? '' : 'hidden';
+        if (!lastIn.has(g.id)) {
+          if (el.parentElement !== this.stack || prev.nextElementSibling !== el) prev.after(el);
+          prev = el;
+          lastIn.set(g.id, el);
+        }
+        const after = lastIn.get(g.id)!;
+        if (after === el) { if (el.firstElementChild !== v.canvas) el.prepend(v.canvas); }
+        else if (after.nextElementSibling !== v.canvas) after.after(v.canvas);
+        lastIn.set(g.id, v.canvas);
+      } else {
+        if (prev.nextElementSibling !== v.canvas) prev.after(v.canvas);
+        prev = v.canvas;
+      }
       this.applyLayerStyle(l);
     }
   }
@@ -915,6 +1115,10 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     v.canvas.style.opacity = String(l.opacity);
     v.canvas.style.mixBlendMode = l.blend;
     v.canvas.style.visibility = l.visible ? 'visible' : 'hidden';
+    if ('track' in l) {
+      const g = l as OnionGhost;
+      v.canvas.style.filter = this.doc.anim?.onion.tint ? `url(#${this.onionFilterId}-${g.side})` : '';
+    }
   }
 
   private sizeLayer(v: LayerView) {
@@ -979,8 +1183,9 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private stale(): Layer[] {
+    if (this.playing) return [];
     // Las capas ocultas no se repintan (al mostrarlas se marcan sucias y entran aquí).
-    return this.doc.layers.filter(l => { const v = this.layerViews.get(l.id); return l.visible && v && (v.dirty || !v.crisp || !this.nearView(v.crisp, this.view)); });
+    return this.renderList().filter(l => { const v = this.layerViews.get(l.id); return l.visible && anim.effectiveVisible(this.doc, 'track' in l ? this.doc.layer((l as OnionGhost).track) ?? l : l) && v && (v.dirty || !v.crisp || !this.nearView(v.crisp, this.view)); });
   }
 
   // ---------- Coste estimado del repintado ----------
@@ -1315,6 +1520,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.drawSelection(ctx);
     this.drawAssists(ctx);
     if (this.handler?.overlay) { ctx.save(); this.handler.overlay(ctx); ctx.restore(); }
+    for (const o of this.overlays) { ctx.save(); o(ctx); ctx.restore(); }
     if (this.picking) { this.drawLoupe(ctx); return; }
     const h = this.hover;
     if (h && h.type !== 'touch' && (this._mode === 'paint' || this._mode === 'erase') && this.primaryMode() === 'draw' && !this.nav.active) {

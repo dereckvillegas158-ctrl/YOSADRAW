@@ -30,6 +30,23 @@ export const ACTIONS: ActionDef[] = [
   { id: 'add-reference', label: 'Añadir imagen de referencia…', group: 'Archivo', shortcut: ['Ctrl+Alt+R'], run: m => m.hooks.addReference?.() },
   { id: 'effects', label: 'Efectos…', group: 'Imagen', shortcut: ['Ctrl+Shift+F'], run: m => m.hooks.openEffects?.() },
   { id: 'export', label: 'Exportar…', group: 'Archivo', shortcut: ['Ctrl+Shift+E'], run: m => m.hooks.openExport?.() },
+  { id: 'anim-play', label: 'Reproducir / pausa', group: 'Animación', shortcut: ['Ctrl+Enter'], run: m => m.hooks.anim?.('play') },
+  { id: 'anim-prev', label: 'Fotograma anterior', group: 'Animación', shortcut: [','], run: m => m.hooks.anim?.('prev') },
+  { id: 'anim-next', label: 'Fotograma siguiente', group: 'Animación', shortcut: ['.'], run: m => m.hooks.anim?.('next') },
+  { id: 'anim-prev-cel', label: 'Dibujo anterior de la pista', group: 'Animación', shortcut: ['Alt+Left'], run: m => m.hooks.anim?.('prev-cel') },
+  { id: 'anim-next-cel', label: 'Dibujo siguiente de la pista', group: 'Animación', shortcut: ['Alt+Right'], run: m => m.hooks.anim?.('next-cel') },
+  { id: 'anim-prev-key', label: 'Clave o marcador anterior', group: 'Animación', shortcut: ['Alt+Shift+Left'], run: m => m.hooks.anim?.('prev-key') },
+  { id: 'anim-next-key', label: 'Clave o marcador siguiente', group: 'Animación', shortcut: ['Alt+Shift+Right'], run: m => m.hooks.anim?.('next-key') },
+  { id: 'anim-first', label: 'Primer fotograma', group: 'Animación', shortcut: ['Home'], run: m => m.hooks.anim?.('first') },
+  { id: 'anim-last', label: 'Último fotograma', group: 'Animación', shortcut: ['End'], run: m => m.hooks.anim?.('last') },
+  { id: 'anim-new', label: 'Nuevo fotograma', group: 'Animación', shortcut: ['Ctrl+Alt+F'], run: m => m.hooks.anim?.('new') },
+  { id: 'anim-dup', label: 'Duplicar fotograma', group: 'Animación', shortcut: ['Ctrl+Alt+D'], run: m => m.hooks.anim?.('dup') },
+  { id: 'anim-hold', label: 'Alargar exposición (+1)', group: 'Animación', shortcut: ['Ctrl+Alt+Right'], run: m => m.hooks.anim?.('hold') },
+  { id: 'anim-unhold', label: 'Acortar exposición (−1)', group: 'Animación', shortcut: ['Ctrl+Alt+Left'], run: m => m.hooks.anim?.('unhold') },
+  { id: 'anim-key', label: 'Fotograma clave / intermedio', group: 'Animación', shortcut: ['Ctrl+Alt+K'], run: m => m.hooks.anim?.('key') },
+  { id: 'anim-onion', label: 'Papel cebolla', group: 'Animación', shortcut: ['O'], run: m => m.hooks.anim?.('onion') },
+  { id: 'anim-xsheet', label: 'Hoja de exposición', group: 'Animación', shortcut: ['Ctrl+Alt+X'], run: m => m.hooks.anim?.('xsheet') },
+  { id: 'anim-export', label: 'Exportar animación', group: 'Animación', shortcut: ['Ctrl+Alt+E'], run: m => m.hooks.anim?.('export') },
   { id: 'swap-colors', label: 'Intercambiar colores', group: 'Color', shortcut: ['X'], run: m => m.swapColors() },
   { id: 'default-colors', label: 'Colores por defecto', group: 'Color', shortcut: ['D'], run: m => m.setColors('#1b1530', '#ffffff') },
   { id: 'brush-bigger', label: 'Pincel más grande', group: 'Pincel', shortcut: [']'], run: m => m.resizeBrush(1.2) },
@@ -64,7 +81,7 @@ export class ToolManager extends Emitter<ToolManagerEvents> {
   colors: ColorState = { primary: '#1b1530', secondary: '#ffffff', recent: [] };
   private recentTimer = 0;
 
-  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, readonly hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void; openExport?(): void; openEffects?(): void; importImage?(): void; addReference?(): void; project?(a: 'save' | 'saveAs' | 'new' | 'gallery'): void }) {
+  constructor(readonly engine: CanvasEngine, readonly lib: BrushLibrary, readonly hooks: { openBrushStudio(p: BrushPreset): void; notify(m: string, k?: 'info' | 'ok' | 'error'): void; openExport?(): void; openEffects?(): void; importImage?(): void; addReference?(): void; anim?(id: string): void; project?(a: 'save' | 'saveAs' | 'new' | 'gallery'): void }) {
     super();
     const defaults: Record<string, string[]> = {};
     for (const t of TOOLS) defaults[`tool:${t.id}`] = t.shortcut;

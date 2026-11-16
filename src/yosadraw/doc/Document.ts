@@ -2,6 +2,7 @@ import { combineBounds } from './util';
 import { localBounds, transformItem, type Item, type ItemData, type LayerBlend } from './items';
 import { selectionBounds, type Selection } from './Selection';
 import { transformAABB, type Mat } from '../engine/ViewTransform';
+import type { Animation, Cel } from '../anim/model';
 
 export interface Layer {
   id: string;
@@ -13,6 +14,14 @@ export interface Layer {
   opacity: number;
   blend: LayerBlend;
   items: Item[];
+  /** Animación: cels de la pista (sin definir = capa estática, igual en todos los fotogramas). */
+  cels?: Cel[];
+  /** Grupo de pistas. */
+  group?: string | null;
+  /** Insertar o quitar tiempo en una pista sincronizada desplaza también las demás sincronizadas. */
+  sync?: boolean;
+  /** Pista de referencia: se ve al animar pero no se exporta. */
+  reference?: boolean;
 }
 
 /** Cambio deshacible. `layers` = capas cuyo contenido cambia ('structure' = orden/altas/bajas). */
@@ -21,6 +30,8 @@ export interface Command {
   layers: string[];
   structure?: boolean;
   selection?: boolean;
+  /** Cambia la línea de tiempo (cels, fotograma actual…). */
+  anim?: boolean;
   redo(): void;
   undo(): void;
 }
@@ -67,6 +78,8 @@ export class Document {
   settings: DocSettings = { background: '#ffffff', dpi: 300, profile: 'srgb' };
   /** Imágenes de referencia (no deshacibles, no se exportan). */
   references: RefImage[] = [];
+  /** Animación (null = proyecto de dibujo normal). */
+  anim: Animation | null = null;
   private nextItem = 1;
   private nextLayer = 1;
 
@@ -87,7 +100,7 @@ export class Document {
     this.activeId = layers.some(l => l.id === activeId) ? activeId : layers[layers.length - 1].id;
     this.selection = selection;
     const maxItem = (items: Item[]): number => items.reduce((m, i) => Math.max(m, i.id, i.kind === 'group' ? maxItem(i.items) : 0), 0);
-    this.nextItem = Math.max(counters.nextItem, 1 + Math.max(0, ...layers.map(l => maxItem(l.items))));
+    this.nextItem = Math.max(counters.nextItem, 1 + Math.max(0, ...layers.map(l => Math.max(maxItem(l.items), ...(l.cels ?? []).map(c => maxItem(c.content.items))))));
     this.nextLayer = Math.max(counters.nextLayer, layers.length + 1);
   }
 
@@ -127,7 +140,7 @@ export class Document {
     const l = () => this.layer(layerId)!;
     return {
       label, layers: [layerId],
-      redo: () => { l().items.push(...items); },
+      redo: () => { l().items = [...l().items, ...items]; },
       undo: () => { const ids = new Set(items.map(i => i.id)); l().items = l().items.filter(i => !ids.has(i.id)); },
     };
   }
@@ -157,7 +170,12 @@ export class Document {
 
   cmdDuplicateLayer(id: string): Command {
     const src = this.layer(id)!;
-    const copy: Layer = { ...src, id: this.newLayer().id, name: `${src.name} copia`, items: src.items.slice() };
+    const copy: Layer = {
+      ...src, id: this.newLayer().id, name: `${src.name} copia`, items: src.items.slice(),
+      // Cada cel duplicado tiene su propio contenido (editar la copia no cambia el original).
+      cels: src.cels?.map(c => ({ ...c, id: `${c.id}d${Math.random().toString(36).slice(2, 6)}`, content: { items: c.content.items.slice() } })),
+    };
+    if (copy.cels && this.anim) copy.items = copy.cels.find(c => this.anim!.current >= c.start && this.anim!.current < c.start + c.length)?.content.items ?? [];
     return { ...this.cmdAddLayer(id, copy), label: 'Duplicar capa' };
   }
 
@@ -194,6 +212,8 @@ export class Document {
     const i = this.index(id);
     if (i <= 0) return null;
     const upper = this.layers[i], lower = this.layers[i - 1];
+    // Las pistas animadas no se combinan (cada fotograma tiene su propio dibujo).
+    if (upper.cels || lower.cels) return null;
     const lowerItems = lower.items.slice(), prevActive = this.activeId;
     const content: Item[] = upper.opacity === 1 && upper.blend === 'normal'
       ? upper.items.slice()
@@ -245,6 +265,8 @@ export class History {
   get canRedo() { return this.redoStack.length > 0; }
   get undoDepth() { return this.undoStack.length; }
   get redoDepth() { return this.redoStack.length; }
+  get peekUndo(): Command | undefined { return this.undoStack[this.undoStack.length - 1]; }
+  get peekRedo(): Command | undefined { return this.redoStack[this.redoStack.length - 1]; }
   get nextUndo() { return this.undoStack[this.undoStack.length - 1]?.label; }
   get nextRedo() { return this.redoStack[this.redoStack.length - 1]?.label; }
 }

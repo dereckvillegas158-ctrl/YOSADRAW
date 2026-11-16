@@ -144,6 +144,7 @@ public class YosaFilesPlugin extends Plugin {
     }
 
     private static boolean isImage(String mime) { return mime != null && mime.startsWith("image/"); }
+    private static boolean isVideo(String mime) { return mime != null && mime.startsWith("video/"); }
 
     private void publish(PluginCall call) {
         io.execute(() -> {
@@ -153,11 +154,16 @@ public class YosaFilesPlugin extends Plugin {
                 String name = safeName(call.getString("name", "Dibujo"));
                 String mime = call.getString("mime", "application/octet-stream");
                 boolean image = isImage(mime);
+                // Vídeos (animaciones MP4) en Películas/YOSADRAW; imágenes y GIF en Imágenes; el resto en Descargas.
+                boolean video = isVideo(mime);
+                String folder = video ? Environment.DIRECTORY_MOVIES : image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS;
                 JSObject r = new JSObject();
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     ContentResolver cr = getContext().getContentResolver();
-                    String rel = (image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS) + "/" + FOLDER;
-                    Uri collection = image
+                    String rel = folder + "/" + FOLDER;
+                    Uri collection = video
+                        ? MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                        : image
                         ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                         : MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
                     ContentValues v = new ContentValues();
@@ -186,7 +192,7 @@ public class YosaFilesPlugin extends Plugin {
                     r.put("path", rel + "/" + shown);
                     r.put("name", shown);
                 } else {
-                    File dir = new File(Environment.getExternalStoragePublicDirectory(image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS), FOLDER);
+                    File dir = new File(Environment.getExternalStoragePublicDirectory(folder), FOLDER);
                     if (!dir.exists() && !dir.mkdirs()) throw new IOException("No se pudo crear " + dir.getPath());
                     File dest = unique(dir, name);
                     try (InputStream in = new FileInputStream(part); OutputStream out = new FileOutputStream(dest)) { copy(in, out); }

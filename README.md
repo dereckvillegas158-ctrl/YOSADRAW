@@ -27,8 +27,8 @@ npm run desktop:dev    # la app en Electron, con recarga en caliente
 
 | Comando | Resultado en `release/` | Dónde se puede generar |
 |---|---|---|
-| `npm run dist:win` | `YOSADRAW-Setup-1.3.0-x64.exe` (instalador) y `YOSADRAW-1.3.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
-| `npm run dist:win:zip` | `YOSADRAW-1.3.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
+| `npm run dist:win` | `YOSADRAW-Setup-1.4.0-x64.exe` (instalador) y `YOSADRAW-1.4.0-x64-portable.exe` | Windows. En Linux/macOS necesita Wine |
+| `npm run dist:win:zip` | `YOSADRAW-1.4.0-win.zip` (carpeta con `YOSADRAW.exe`, sin instalar) | Cualquier sistema |
 | `npm run dist:win:dir` | `release/win-unpacked/YOSADRAW.exe` | Cualquier sistema |
 
 El workflow `.github/workflows/build-windows.yml` compila el instalador y la versión portable
@@ -252,6 +252,109 @@ de la interfaz.
 | Abrir proyecto | 1,3 s | 0,8 s | descompresión en el worker |
 | Arranque (JS principal) | 1,39 MB | 0,34 MB | el codificador de exportación (PSD, WebP) se carga al exportar por primera vez |
 | Memoria | 144 MB | 97 MB | |
+
+## YOSADRAW ANIMATE (animación)
+Animación 2D fotograma a fotograma integrada en YOSADRAW (no es otra app): **Nuevo proyecto → Tipo:
+Animación**. En PC, la versión completa (línea de tiempo, audio, hoja de exposición, FFmpeg…). En el
+teléfono y en la app de Android, una versión sencilla con el mismo modelo y el mismo archivo `.yosa`
+(un proyecto se puede empezar en el teléfono y seguir en el PC, y al revés).
+
+### Teléfono y Android (versión sencilla)
+- Encima del dock, una tira de **cuadrados con la miniatura** de cada fotograma y un «+» al final. Tocar
+  un cuadrado va a ese fotograma; mantenerlo pulsado abre: duplicar, insertar vacío, copiar, pegar, mover
+  a la izquierda/derecha y eliminar.
+- Botones: reproducir/pausa, papel cebolla (mantén pulsado: ajustes), velocidad (6–60 fps), contador,
+  duplicar, nuevo fotograma y ⚙ (exportar, bucle, capa nueva, fondo fijo, importar imágenes o audio).
+- Se dibuja con **las mismas herramientas** del teléfono (pinceles, estabilizador táctil, borrador,
+  capas, color, deshacer con dos dedos…). Cada fotograma es una columna común a todas las capas: añadir,
+  duplicar o borrar mantiene las capas alineadas; una capa sin animar hace de fondo fijo.
+- **Exportar** sin FFmpeg (`src/yosadraw/anim/webexport.ts`): GIF (gifenc, paleta por fotograma, bucle y
+  fondo transparente) y **vídeo MP4 H.264** con el codificador del sistema (WebCodecs: en Android, el de
+  hardware del teléfono) y el audio en AAC si el sistema lo codifica (mp4-muxer). Tamaños 1080, 720, 480 y
+  320 (lado corto). En Android se guardan con MediaStore: GIF en *Imágenes/YOSADRAW*, MP4 en
+  *Películas/YOSADRAW*, con botón **Compartir**.
+- Código: `src/yosadraw/ui/anim/PhoneAnim.ts`.
+
+### Cómo está hecho (sin sistemas duplicados)
+- **Modelo** (`src/yosadraw/anim/model.ts`): una animación es un `Document` con `doc.anim`. Cada capa es
+  una pista: estática (igual en todos los fotogramas, p. ej. el fondo) o animada (`layer.cels`: dibujos con
+  inicio y duración). En el fotograma actual `layer.items` **es** la lista del cel visible, así que pinceles,
+  estabilizador, herramientas, selección, transformar, efectos y bloqueo de alfa funcionan sin cambios.
+  Pintar en un fotograma vacío crea el dibujo en el mismo paso deshacible. Deshacer un trazo lleva primero
+  al fotograma donde se hizo. Las operaciones de la línea de tiempo son comandos del historial (instantáneas
+  de referencias: no copian dibujos).
+- **Papel cebolla**: los dibujos vecinos son capas fantasma que pinta el mismo repintado progresivo por
+  lotes del lienzo; el tinte es un filtro SVG en la GPU (cambiar color u opacidad no repinta).
+- **Grupos de pistas**: contenedor aislado con opacidad/visibilidad/bloqueo (el navegador compone el grupo).
+- **Render** (`anim/render.ts`): caché **por dibujo** (un dibujo mantenido 6 fotogramas se rasteriza una vez;
+  las capas estáticas, una sola vez), recortada a la caja del dibujo y con presupuesto de memoria (¼ de la
+  RAM, 384 MB–1,5 GB, LRU). Nunca está toda la animación rasterizada en memoria.
+- **Reproductor** (`anim/player.ts`): reloj del audio (AudioContext) si hay clips, así imagen y sonido no se
+  separan; compone desde la caché a resolución de pantalla × calidad (completa, media, baja). Si un fotograma
+  no llega a tiempo se salta y se cuenta (la velocidad no cambia). Parado, precalienta la caché en segundo
+  plano; la barra verde de la regla marca los fotogramas listos para tiempo real.
+- **Audio** (`anim/audio.ts`): decodificación con Chromium (MP3, WAV, OGG, FLAC, AAC/M4A, Opus) y, si falla,
+  con FFmpeg. Forma de onda por picos, pistas con volumen/silencio/solo, clips con desplazamiento, recorte y
+  volumen. Mezcla sin conexión (OfflineAudioContext) para exportar. Sincronización labial: diálogos de
+  referencia por clip y bocas (X, A–H) por fotograma; «Generar por volumen» propone bocas según la energía
+  (no reconoce fonemas) y «Aplicar bocas» expone los dibujos etiquetados de una pista siguiendo esas bocas.
+- **Guardado** (`project/format.ts`): el `.yosa` guarda cels, pistas (grupo, sincronizada, referencia),
+  FPS, duración, intervalo, fotograma actual, papel cebolla, marcadores, grupos, guías, notas de la hoja de
+  exposición y los archivos de audio originales con sus ajustes. Un dibujo repetido se escribe una vez.
+  Los proyectos de dibujo no cambian y las versiones antiguas abren una animación como su fotograma actual.
+  El guardado automático y las copias de recuperación también cubren la animación.
+
+### Línea de tiempo y paneles
+- Barra: ir al principio/fin, clave o marcador anterior/siguiente, fotograma anterior/siguiente,
+  reproducir (Ctrl+Intro), bucle, fotograma actual y código de tiempo, FPS (6, 8, 12, 15, 24, 30, 60),
+  duración, nuevo / duplicar / eliminar fotograma, clave ↔ intermedio, alargar/acortar exposición
+  (Ctrl+Alt+→/←), papel cebolla (O) y sus ajustes, interpolar, guía, hoja de exposición (Ctrl+Alt+X),
+  marcador, importar audio, importar imágenes como fotogramas (clic derecho: como referencia), calidad,
+  FPS reales de la reproducción, zoom y «Exportar animación» (Ctrl+Alt+E).
+- Rejilla (canvas, escala a miles de fotogramas): clic = ir al fotograma y seleccionar; arrastrar un dibujo =
+  moverlo (Alt = copiar, también a otra pista); arrastrar su borde derecho = duración; doble clic en un hueco =
+  dibujo nuevo; Mayús+clic = rango; Ctrl+clic = añadir. En la regla: arrastrar = cabezal (con sonido),
+  Mayús+arrastrar = intervalo, doble clic = marcador. Con la rejilla enfocada: Supr, Ctrl+C/X/V, Ctrl+A, K, M,
+  flechas. Clips de audio: arrastrar = mover (a otra pista de audio también), bordes = recortar.
+- Cabeceras: visibilidad, bloqueo, sincronizar, referencia, «Animar» (capa estática → animada), grupos
+  plegables. Menús contextuales para renombrar, ordenar, duplicar, agrupar, exponer en unos/doses/treses.
+- Pestaña **Animación** del panel derecho: propiedades del fotograma (duración, clave, etiqueta/boca), de la
+  pista (opacidad, fusión, grupo, sincronizada, referencia), del grupo, del clip de audio (pista, inicio,
+  recortes, volumen, silencio, diálogos, bocas), guías y marcadores. El panel y la línea de tiempo se
+  redimensionan arrastrando su borde. Todos los atajos se cambian en «Atajos de teclado».
+- **Interpolar movimiento**: a partir de un dibujo genera intermedios (copias transformadas, editables)
+  desplazando, girando, escalando y desvaneciendo, con curva (lineal, acelerar, frenar, suave), en unos,
+  doses…, en línea recta o siguiendo una **guía** dibujada en el lienzo (opcionalmente orientado).
+
+### Exportación (FFmpeg)
+La app de escritorio incluye FFmpeg (GPL v3, `resources/ffmpeg`, ver `LICENSE.txt` junto al ejecutable).
+Cada fotograma se compone y se envía en RGBA a FFmpeg, que lo codifica al momento (con contrapresión: la
+memoria no crece con la duración). La interfaz elige de una lista cerrada; la línea de órdenes la construye
+el proceso principal (`desktop/video.cjs`).
+
+| Formato | Códec | Alfa | Audio |
+|---|---|---|---|
+| MP4 | H.264 (libx264) o H.265 (libx265, `hvc1`) | – | AAC 192 kbit/s |
+| MOV | H.264, H.265 o ProRes 4444 (alfa) / 422 HQ | ProRes | AAC o PCM |
+| WebM | VP9 (`yuva420p`) | sí | Opus |
+| GIF | paleta óptima de toda la animación + difuminado | 1 bit | – |
+| APNG / WebP animado | apng / libwebp_anim | sí | – |
+| Secuencias | PNG, JPEG, TIFF (LZW) | PNG, TIFF | – |
+| Hoja de sprites | PNG + JSON (formato «hash» de TexturePacker) | sí | – |
+
+Opciones: tamaño del lienzo, 720p, 1080p, 1440p o 4K (encajado, vertical si el lienzo lo es; pares en
+vídeo), FPS de salida (si difieren del proyecto se repiten o se saltan fotogramas sin cambiar la duración),
+calidad constante o bitrate, intervalo (todo, el de reproducción o personalizado), transparencia y audio
+mezclado (con volúmenes, recortes y silencios). Las pistas de referencia no se exportan.
+**Recuperación ante fallos:** se escribe en `nombre.part` y sólo se renombra al terminar; si la app se
+cierra a mitad, al volver a abrirla borra los restos (registro en `userData/exports-in-progress.json`).
+En el navegador (sin FFmpeg) sólo está la hoja de sprites.
+
+### Pruebas
+`tests/anim-model.test.ts` (fotogramas, deshacer, duplicar, insertar/quitar tiempo con pistas sincronizadas,
+mover, copiar/pegar, exponer, marcadores, grupos, interpolación), `tests/project-format.test.ts`
+(guardado completo de una animación) y `tests/video-ffmpeg.test.ts` (codifica de verdad los 11 formatos con
+el FFmpeg incluido y comprueba códecs, alfa y audio en los archivos).
 
 ## Imágenes: importar y referencias
 - **Importar imagen como capa** (Ctrl+Mayús+O, menú del proyecto, «Más» en el teléfono, arrastrar

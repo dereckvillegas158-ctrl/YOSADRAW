@@ -20,6 +20,14 @@ import { closeTopOverlay, dragToClose, isPhone, normalizeTouch, openMore, QuickS
 import { PropertiesBar } from './PropertiesBar';
 import { PhoneDock } from './PhoneDock';
 import { IMAGE_TYPES, importImageLayer, pickAndImport, References } from './Images';
+import { AnimStudio } from './anim/AnimStudio';
+import { PhoneAnim } from './anim/PhoneAnim';
+import { AnimPanel, onionPopover, qualityPopover } from './anim/AnimPanel';
+import { Timeline } from './anim/Timeline';
+import { AnimExport, normalizeAnimExport, type AnimExportPrefs } from './anim/AnimExport';
+import { drawGuide, guideOverlay, openTween, openXSheet } from './anim/dialogs';
+import type { PreviewQuality } from '../anim/player';
+import * as animModel from '../anim/model';
 import { Thumbnails } from './thumbnails';
 import { normalizeLayout, Toolbar } from './Toolbar';
 
@@ -45,11 +53,21 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     project: a => void projectAction(a),
     importImage: () => void pickAndImport(engine, mgr),
     addReference: () => void refs.add(),
+    anim: id => animAction(id),
   });
   mgr.load((saved?.tools as Record<string, unknown>) ?? null);
   let layout = normalizeLayout(saved?.toolbar);
   let tab = typeof saved?.tab === 'string' ? saved.tab : 'layers';
   let touch: TouchPrefs = normalizeTouch(saved?.touch);
+  // Animación (PC): altura de la línea de tiempo, ancho del panel, reproducción y exportación.
+  const ap = (saved?.anim ?? {}) as Record<string, unknown>;
+  const animPrefs = {
+    tlHeight: typeof ap.tlHeight === 'number' ? Math.min(700, Math.max(140, ap.tlHeight)) : 270,
+    panelW: typeof ap.panelW === 'number' ? Math.min(620, Math.max(260, ap.panelW)) : 320,
+    quality: ([1, 0.5, 0.25].includes(ap.quality as number) ? ap.quality : 1) as PreviewQuality,
+    showRef: ap.showRef !== false, scrub: ap.scrub !== false,
+    export: normalizeAnimExport(ap.export) as AnimExportPrefs,
+  };
   const applyTouch = () => {
     engine.fingerMode = touch.finger; engine.holdToPick = touch.hold;
     Object.assign(engine.inputTuning, { touchBoost: touch.touchBoost, penBoost: touch.penBoost, fingerPressure: touch.fingerPressure, cleanup: touch.cleanup });
@@ -57,7 +75,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   applyTouch();
 
   // ---------- Guardado de preferencias ----------
-  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
+  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, anim: animPrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
@@ -75,15 +93,35 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   const layers = new LayersPanel(engine);
   const color = new ColorPanel(mgr);
   const library = new LibraryPanel(lib, thumbs);
+  // YOSADRAW ANIMATE: controlador, pestaña de propiedades y (más abajo) línea de tiempo.
+  const anim = new AnimStudio(engine, mgr, painter);
+  anim.player.quality = animPrefs.quality;
+  anim.player.showReference = animPrefs.showRef;
+  anim.scrubAudio = animPrefs.scrub;
+  const animPanel = new AnimPanel(anim, { drawGuide: () => drawGuide(anim) });
   const tabs = [
     { id: 'layers', label: 'Capas', el: layers.el },
     { id: 'color', label: 'Color', el: color.el },
     { id: 'brushes', label: 'Pinceles', el: library.el },
+    { id: 'anim', label: 'Animación', el: animPanel.el },
   ];
   const tabButtons = tabs.map(t => h('button', { type: 'button', role: 'tab', id: `tab-${t.id}`, 'aria-controls': `pane-${t.id}`, on: { click: () => showTab(t.id) } }, t.label));
   const panes = tabs.map(t => h('div', { role: 'tabpanel', id: `pane-${t.id}`, 'aria-labelledby': `tab-${t.id}`, class: 'pane' }, t.el));
   const grip = h('div', { class: 'sheet-grip panel-grip', 'aria-hidden': 'true' });
-  $('panel').append(grip, h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Paneles' }, ...tabButtons), ...panes);
+  // Panel derecho redimensionable (PC): se arrastra su borde.
+  const resizer = h('div', { class: 'panel-resizer', title: 'Arrastra para cambiar el ancho', 'aria-hidden': 'true' });
+  const applyPanelW = () => document.documentElement.style.setProperty('--panel-w', `${animPrefs.panelW}px`);
+  applyPanelW();
+  resizer.addEventListener('pointerdown', e => { resizer.setPointerCapture(e.pointerId); resizer.classList.add('active'); });
+  resizer.addEventListener('pointermove', e => {
+    if (!resizer.hasPointerCapture(e.pointerId)) return;
+    const r = $('panel').getBoundingClientRect();
+    const right = document.body.classList.contains('toolbar-right');
+    animPrefs.panelW = Math.round(Math.min(620, Math.max(260, right ? e.clientX - r.left : r.right - e.clientX)));
+    applyPanelW();
+  });
+  resizer.addEventListener('pointerup', () => { resizer.classList.remove('active'); save(); });
+  $('panel').append(resizer, grip, h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Paneles' }, ...tabButtons), ...panes);
   const setPanel = (open: boolean) => {
     document.body.classList.toggle('panel-open', open);
     $('panel-toggle').setAttribute('aria-expanded', String(open));
@@ -319,6 +357,66 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   });
   // Al pasar a segundo plano (otra pestaña, minimizar): copia de recuperación inmediata.
   document.addEventListener('visibilitychange', () => { if (document.hidden) void session.flushRecovery(); });
+  // ---------- Animación (PC) ----------
+  const animExport = new AnimExport(anim, animPrefs.export, p => { animPrefs.export = p; save(); }, () => session.entry?.name ?? 'Animación');
+  const applyTlHeight = () => document.documentElement.style.setProperty('--tl-h', `${animPrefs.tlHeight}px`);
+  applyTlHeight();
+  const timeline = new Timeline(anim, {
+    onionSettings: el => onionPopover(anim, el),
+    quality: el => qualityPopover(anim, el, () => { animPrefs.quality = anim.player.quality; animPrefs.showRef = anim.player.showReference; animPrefs.scrub = anim.scrubAudio; save(); }),
+    tween: () => void openTween(anim),
+    xsheet: () => openXSheet(anim),
+    exportAnim: () => void animExport.show(),
+    guide: () => drawGuide(anim),
+    resize: (dy, done) => { if (dy) { animPrefs.tlHeight = Math.min(Math.round(innerHeight * 0.7), Math.max(140, animPrefs.tlHeight + dy)); applyTlHeight(); } if (done) save(); },
+  });
+  $('timeline-host').append(timeline.el);
+  engine.overlays.push(guideOverlay(anim));
+  // Teléfono y Android: animación simplificada (fotogramas en cuadrados sobre el lienzo).
+  let phoneAnim: PhoneAnim | null = null;
+  function setAnimMode() {
+    const has = !!engine.doc.anim;
+    const android = document.documentElement.classList.contains('android');
+    const simple = has && (isPhone() || android);
+    const on = has && !simple;
+    document.body.classList.toggle('anim-mode', on);
+    document.body.classList.toggle('anim-phone', simple);
+    if (simple && !phoneAnim) { phoneAnim = new PhoneAnim(anim, () => session.entry?.name ?? 'Animación'); $('canvas-host').append(phoneAnim.el); }
+    if (simple) phoneAnim!.render();
+    const btn = document.getElementById('tab-anim');
+    if (btn) btn.hidden = !on;
+    if (!on && tab === 'anim') showTab('layers');
+    if (on) timeline.update();
+  }
+  engine.on('document', setAnimMode);
+  watchDevice(setAnimMode);
+  setAnimMode();
+  function animAction(id: string) {
+    if (!engine.doc.anim || gallery.visible) return;
+    switch (id) {
+      case 'play': anim.player.toggle(); break;
+      case 'prev': anim.step(-1); break;
+      case 'next': anim.step(1); break;
+      case 'prev-cel': anim.stepCel(-1); break;
+      case 'next-cel': anim.stepCel(1); break;
+      case 'prev-key': anim.stepKey(-1); break;
+      case 'next-key': anim.stepKey(1); break;
+      case 'first': anim.go(0); break;
+      case 'last': anim.go(engine.doc.anim.length - 1); break;
+      case 'new': anim.newFrame(false); break;
+      case 'dup': anim.newFrame(true); break;
+      case 'hold': anim.insertTime(1); break;
+      case 'unhold': anim.insertTime(-1); break;
+      case 'key': anim.toggleKey(); break;
+      case 'onion': anim.run(() => animModel.cmdAnimSettings(engine.doc, { onion: { enabled: !engine.doc.anim!.onion.enabled } }, 'Papel cebolla')); break;
+      case 'xsheet': openXSheet(anim); break;
+      case 'export': void animExport.show(); break;
+    }
+  }
+  // La pista activa cambia el papel cebolla (sólo se ve el de la pista activa).
+  let lastActive = '';
+  engine.on('doc', () => { if (engine.doc.anim && engine.doc.activeId !== lastActive) { lastActive = engine.doc.activeId; engine.refreshOnion(); } });
+
   // Sin proyecto abierto se empieza en la galería.
   blank();
   gallery.show();
@@ -348,5 +446,5 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { mgr, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
+  return { mgr, anim, timeline, animExport, animPanel, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
 }

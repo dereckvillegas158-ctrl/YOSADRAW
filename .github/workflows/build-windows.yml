@@ -1,4 +1,4 @@
-# Compila YOSADRAW para Windows x64 (instalador NSIS + versión portable)
+# Compila YOSADRAW para Windows x64 (instalador NSIS, .exe portable y zip portable)
 # en una máquina Windows de GitHub. Al subir una etiqueta v*, publica además
 # la release con los .exe y el APK de Android firmado (de la rama `binarios`,
 # porque la clave de firma no se sube a GitHub).
@@ -6,6 +6,11 @@ name: Build Windows x64
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release existente a la que añadir los archivos (p. ej. v1.3.0). Vacío: sólo compilar.'
+        required: false
+        default: ''
   push:
     tags: ['v*']
 
@@ -26,28 +31,37 @@ jobs:
       - run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - run: npx electron-builder --win zip --x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
         with:
           name: YOSADRAW-windows-x64
           path: |
             release/*.exe
+            release/*.zip
             release/*.blockmap
           if-no-files-found: error
       - name: APK firmado (rama binarios)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          v="${GITHUB_REF_NAME#v}"
+          v="${TAG#v}"
           git fetch --depth=1 origin binarios
-          git show "FETCH_HEAD:YOSADRAW-$v.apk" > "release/YOSADRAW-$v.apk"
+          # Hay versiones sólo de PC: si no hay APK de esta versión, la release va sin él.
+          if git cat-file -e "FETCH_HEAD:YOSADRAW-$v.apk" 2>/dev/null; then git show "FETCH_HEAD:YOSADRAW-$v.apk" > "release/YOSADRAW-$v.apk"; else echo "Sin APK para $v"; fi
       - name: Publicar release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          v="${GITHUB_REF_NAME#v}"
-          files=(release/YOSADRAW-Setup-$v-x64.exe release/YOSADRAW-$v-x64-portable.exe "release/YOSADRAW-$v.apk")
+          v="${TAG#v}"
+          files=(release/YOSADRAW-Setup-$v-x64.exe release/YOSADRAW-$v-x64-portable.exe "release/YOSADRAW-$v-win.zip")
+          if [ -f "release/YOSADRAW-$v.apk" ]; then files+=("release/YOSADRAW-$v.apk"); fi
           # Si la release ya existe (creada desde la web de GitHub), sólo se le añaden los archivos.
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
-          else gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "YOSADRAW $v" --notes-file RELEASE_NOTES.md; fi
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release upload "$TAG" "${files[@]}" --clobber
+          else gh release create "$TAG" "${files[@]}" --title "YOSADRAW $v" --notes-file RELEASE_NOTES.md; fi
