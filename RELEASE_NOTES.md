@@ -1,7 +1,7 @@
 ## YOSADRAW 1.3.0
 
 ### Descargas
-- **Windows 64 bits:** `YOSADRAW-Setup-1.3.0-x64.exe` (instalador) o `YOSADRAW-1.3.0-x64-portable.exe` (sin instalar). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Windows 64 bits:** `YOSADRAW-Setup-1.3.0-x64.exe` (instalador), `YOSADRAW-1.3.0-x64-portable.exe` o `YOSADRAW-1.3.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
 - **Android 7.0 o superior:** `YOSADRAW-1.3.0.apk`. Ábrelo en el teléfono y permite instalar apps de origen desconocido si te lo pide.
 
 ### Novedades
