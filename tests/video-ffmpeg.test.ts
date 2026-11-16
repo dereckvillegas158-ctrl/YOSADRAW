@@ -37,9 +37,12 @@ async function encode(o: Record<string, unknown>, out: string, audio: string | n
   const p = spawn(bin!, args, { stdio: ['pipe', 'ignore', 'pipe'] });
   let err = '';
   p.stderr.on('data', d => { err += d; });
-  for (let k = 0; k < frames; k++) if (!p.stdin.write(frame(k, o.width as number, o.height as number))) await new Promise(r => p.stdin.once('drain', r));
+  // Si FFmpeg se cierra (error de opciones), no se espera a un «drain» que no llegará.
+  const closed = new Promise<number | null>(r => p.on('close', r));
+  p.stdin.on('error', () => undefined);
+  for (let k = 0; k < frames && p.exitCode === null; k++) if (!p.stdin.write(frame(k, o.width as number, o.height as number))) await Promise.race([new Promise(r => p.stdin.once('drain', r)), closed]);
   p.stdin.end();
-  const code = await new Promise(r => p.on('close', r));
+  const code = await closed;
   if (code !== 0) throw new Error(`${o.format}: ${err}`);
 }
 
@@ -59,7 +62,7 @@ describe.skipIf(!bin)('exportación de animación con FFmpeg (archivos reales)',
     ['WebM VP9 con alfa + Opus', { format: 'webm', codec: 'vp9', alpha: true }, 'o.webm', [/Video: vp9/, /Audio: opus/, /alpha_mode/i]],
     ['GIF con transparencia', { format: 'gif', alpha: true }, 'o.gif', [/Video: gif/]],
     ['APNG', { format: 'apng', alpha: true }, 'o.png', [/Video: apng/, /rgba/]],
-    ['WebP animado', { format: 'webp', alpha: true }, 'o.webp', [/webp/]],
+    ['WebP animado', { format: 'webp', alpha: true }, 'o.webp', [/webp/i]],
   ];
   for (const [label, o, name, expects] of cases) {
     it(label, async () => {
@@ -68,6 +71,8 @@ describe.skipIf(!bin)('exportación de animación con FFmpeg (archivos reales)',
       expect(statSync(out).size).toBeGreaterThan(100);
       const txt = info(out);
       for (const re of expects) expect(txt).toMatch(re);
+      // WebP: ha de ser animado, con un ANMF por fotograma.
+      if (o.format === 'webp') { const buf = require('node:fs').readFileSync(out) as Buffer; expect(buf.toString('latin1').split('ANMF').length - 1).toBe(12); expect(buf.toString('latin1')).toContain('ANIM'); }
     }, 60_000);
   }
   for (const [fmt, ext] of [['png-seq', 'png'], ['jpeg-seq', 'jpg'], ['tiff-seq', 'tif']] as const) {
