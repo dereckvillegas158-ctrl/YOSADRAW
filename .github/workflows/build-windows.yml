@@ -48,7 +48,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          v="${TAG#v}"
+          v="$(node -p "require('./package.json').version")"  # versión del programa (no depende del nombre de la etiqueta)
           git fetch --depth=1 origin binarios
           # Hay versiones sólo de PC: si no hay APK de esta versión, la release va sin él.
           if git cat-file -e "FETCH_HEAD:YOSADRAW-$v.apk" 2>/dev/null; then git show "FETCH_HEAD:YOSADRAW-$v.apk" > "release/YOSADRAW-$v.apk"; else echo "Sin APK para $v"; fi
@@ -59,7 +59,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          v="${TAG#v}"
+          v="$(node -p "require('./package.json').version")"  # versión del programa (no depende del nombre de la etiqueta)
           files=(release/YOSADRAW-Setup-$v-x64.exe release/YOSADRAW-$v-x64-portable.exe "release/YOSADRAW-$v-win.zip")
           if [ -f "release/YOSADRAW-$v.apk" ]; then files+=("release/YOSADRAW-$v.apk"); fi
           # Si la release ya existe (creada desde la web de GitHub), sólo se le añaden los archivos.
