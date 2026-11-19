@@ -14,6 +14,13 @@ export class SessionBuffers {
   readonly snapCtx = this.snap.getContext('2d')!;
   readonly bufCtx = this.buf.getContext('2d')!;
   readonly tmpCtx = this.tmp.getContext('2d')!;
+  /** Silueta del trazo para el borde duro (se crea sólo si hace falta). */
+  private envCanvas: HTMLCanvasElement | null = null;
+  envCtx(): CanvasRenderingContext2D {
+    const e = this.envCanvas ??= document.createElement('canvas');
+    if (e.width !== this.buf.width || e.height !== this.buf.height) { e.width = this.buf.width; e.height = this.buf.height; }
+    return e.getContext('2d')!;
+  }
   ensure(w: number, h: number) {
     for (const c of [this.snap, this.buf, this.tmp]) if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   }
@@ -85,6 +92,7 @@ export class BrushStrokeSession {
     b.snapCtx.globalCompositeOperation = 'source-over';
     b.bufCtx.setTransform(1, 0, 0, 1, 0, 0);
     b.bufCtx.clearRect(0, 0, b.buf.width, b.buf.height);
+    if (this.preset.render.edge === 'hard' && this.painter.edged(this.preset)) { const e = b.envCtx(); e.setTransform(1, 0, 0, 1, 0, 0); e.clearRect(0, 0, e.canvas.width, e.canvas.height); }
     if (this.mixing) {
       // Lo que hay en la capa al empezar: de ahí recoge color el pincel.
       const img = b.snapCtx.getImageData(0, 0, b.snap.width, b.snap.height);
@@ -141,6 +149,7 @@ export class BrushStrokeSession {
         let set: DabSet | Float32Array = d.data;
         if (this.mixing) { this.colorize(i, g, from, this.mixers[i], this.tracks[i]); set = { dabs: d.data, count: d.count, colors: this.tracks[i].data }; }
         this.painter.drawDabs(buffers.bufCtx, this.preset, this.inkColor(), set, from, d.count, M, dpr, this.painter.contentAlpha(this.preset), this.tool === 'eraser');
+        if (this.preset.render.edge === 'hard' && this.painter.edged(this.preset)) this.painter.drawEnvelope(buffers.envCtx(), this.preset, d.data, from, d.count, M, dpr);
         this.painter.dabsRect(d.data, from, d.count, M, dpr, this.rect);
         this.drawn[i] = d.count;
       });
@@ -182,7 +191,9 @@ export class BrushStrokeSession {
 
   private composite(rIn: Rect) {
     const t = this.surf.target, b = this.surf.buffers;
-    const r = this.clampToTarget(rIn);
+    // El borde suave se extiende unos píxeles fuera de los sellos.
+    const pad = this.painter.edged(this.preset) && this.preset.render.edge === 'soft' ? 6 : 0;
+    const r = this.clampToTarget(pad ? { x0: rIn.x0 - pad, y0: rIn.y0 - pad, x1: rIn.x1 + pad, y1: rIn.y1 + pad } : rIn);
     if (rectEmpty(r)) return;
     this.restore(r);
     const p = this.preset;
@@ -196,11 +207,13 @@ export class BrushStrokeSession {
       return;
     }
     let src = b.buf;
-    if (fixedGrain || clip) {
+    const edged = this.painter.edged(p);
+    if (fixedGrain || clip || edged) {
       b.tmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       b.tmpCtx.globalCompositeOperation = 'copy';
       b.tmpCtx.drawImage(b.buf, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
       b.tmpCtx.globalCompositeOperation = 'source-over';
+      if (edged) this.painter.applyEdge(b.tmpCtx, p, r, this.surf.dpr, p.render.edge === 'hard' ? b.envCtx().canvas : null);
       if (fixedGrain) this.painter.applyFixedGrain(b.tmpCtx, p, this.surf.M, this.surf.dpr, r);
       if (clip) this.painter.applyClip(b.tmpCtx, clip, r);
       src = b.tmp;

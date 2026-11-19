@@ -521,3 +521,6 @@ kbd { font: 500 12px var(--font-mono); padding: 2px 7px; border-radius: 6px; bac
    les quitaba el color: aquí se recupera. */
 .color-panel .chips .chip { background: var(--c); border-radius: 9px; padding: 0; border: 2px solid var(--surface); color: transparent; }
 .color-panel .chips .chip[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
+/* Estilos rápidos del Brush Studio */
+.ctl-styles { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctl-styles .btn { flex: 1 1 auto; }

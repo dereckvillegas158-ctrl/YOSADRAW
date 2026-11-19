@@ -63,6 +63,11 @@ export class StrokePainter {
 
   constructor(readonly tips: TipCache, readonly grains: GrainCache) {}
 
+  /** El pincel procesa el borde del trazo (suave o duro). */
+  edged(p: BrushPreset) { return p.render.mode !== 'smooth' && (p.render.edge === 'soft' || p.render.edge === 'hard'); }
+  /** Varía el color sello a sello (o trazo a trazo). */
+  jitters(p: BrushPreset) { return p.render.mode !== 'smooth' && (p.color.hue > 0 || p.color.sat > 0 || p.color.light > 0); }
+
   ready(p: BrushPreset): boolean { return this.tips.ready(p.tip) && this.grains.ready(p.grain); }
 
   contentAlpha(p: BrushPreset): number {
@@ -74,7 +79,7 @@ export class StrokePainter {
     return p.render.accumulation === 'glaze' ? p.opacity.opacity : 1;
   }
   usesBuffer(p: BrushPreset, tool: StrokeTool, atop = false): boolean {
-    return atop || tool === 'eraser' || p.render.blend !== 'normal' || (p.grain.enabled && p.grain.mode === 'fixed') || this.compositeAlpha(p) < 1;
+    return atop || this.edged(p) || tool === 'eraser' || p.render.blend !== 'normal' || (p.grain.enabled && p.grain.mode === 'fixed') || this.compositeAlpha(p) < 1;
   }
 
   /** Rectángulo de dispositivo que cubre un rango de sellos. */
@@ -106,6 +111,8 @@ export class StrokePainter {
       this.pointsRect(s.points, s.preset.size.size * 2, M, dpr, r);
       for (const mm of s.mirrors ?? []) this.pointsRect(s.points.map(p => ({ ...p, ...applyMat(mm, p.x, p.y) })), s.preset.size.size * 2, M, dpr, r);
     } else for (const set of s.sets) this.dabsRect(set.dabs, 0, set.count, M, dpr, r);
+    // El borde suave se extiende un poco fuera de los sellos.
+    if (s.preset.render.edge === 'soft') { r.x0 -= 6; r.y0 -= 6; r.x1 += 6; r.y1 += 6; }
     return clampRect(r, w, h);
   }
 
@@ -113,7 +120,9 @@ export class StrokePainter {
   drawDabs(ctx: CanvasRenderingContext2D, p: BrushPreset, color: string, set: DabSet | Float32Array, from: number, to: number,
     M: Mat, dpr: number, alphaMul: number, ignoreColors = false) {
     const dabs = set instanceof Float32Array ? set : set.dabs;
-    const colors = set instanceof Float32Array || ignoreColors ? undefined : set.colors;
+    let colors = set instanceof Float32Array || ignoreColors ? undefined : set.colors;
+    // Dinámica de color: colores por sello deterministas (dependen de la posición del sello).
+    if (!colors && !ignoreColors && this.jitters(p) && to > from) colors = jitterColors(p, color, dabs, from, to);
     const W = ctx.canvas.width, H = ctx.canvas.height;
     const L0 = dpr * M[0], L1 = dpr * M[1], L2 = dpr * M[2], L3 = dpr * M[3];
     const smax = matScale(M).max * dpr;
@@ -265,6 +274,76 @@ export class StrokePainter {
     ctx.restore();
   }
 
+  /**
+   * Contorno «duro»: la silueta de los sellos dibujada como forma vectorial (con
+   * antialiasing) en `env`. Se usa como máscara: fuera, limpio; dentro, los sellos.
+   */
+  drawEnvelope(env: CanvasRenderingContext2D, p: BrushPreset, dabs: Float32Array, from: number, to: number, M: Mat, dpr: number, ox = 0, oy = 0) {
+    const L0 = dpr * M[0], L1 = dpr * M[1], L2 = dpr * M[2], L3 = dpr * M[3];
+    const k = 0.45 + 0.5 * p.render.edgeAmount;
+    const shape = ['round', 'square', 'diamond', 'triangle'].includes(p.tip.shape) ? p.tip.shape : 'round';
+    const fx = p.tip.flipX ? -1 : 1, fy = p.tip.flipY ? -1 : 1;
+    env.save();
+    env.fillStyle = '#000';
+    env.globalCompositeOperation = 'source-over';
+    for (let i = from; i < to; i++) {
+      const o = i * DAB_STRIDE;
+      const x = dabs[o], y = dabs[o + 1], d = dabs[o + 2] * k;
+      if (dabs[o + 3] < 0.01) continue;
+      const ang = dabs[o + 4], c = Math.cos(ang), s = Math.sin(ang);
+      const sx = d * fx, sy = d * dabs[o + 5] * fy;
+      const ra = c * sx, rb = s * sx, rc = -s * sy, rd = c * sy;
+      env.setTransform(L0 * ra + L2 * rb, L1 * ra + L3 * rb, L0 * rc + L2 * rd, L1 * rc + L3 * rd, dpr * (M[0] * x + M[2] * y + M[4]) - ox, dpr * (M[1] * x + M[3] * y + M[5]) - oy);
+      vectorTipPath(env, shape);
+      env.fill();
+    }
+    env.restore();
+  }
+
+  private edgeTmp: CanvasRenderingContext2D | null = null;
+  private edgeCtx(w: number, h: number) {
+    const t = this.edgeTmp ??= document.createElement('canvas').getContext('2d')!;
+    if (t.canvas.width < w || t.canvas.height < h) { t.canvas.width = Math.max(w, t.canvas.width); t.canvas.height = Math.max(h, t.canvas.height); }
+    t.setTransform(1, 0, 0, 1, 0, 0); t.globalCompositeOperation = 'source-over'; t.globalAlpha = 1; t.filter = 'none';
+    return t;
+  }
+
+  /**
+   * Procesa el borde del trazo ya dibujado en `ctx` (rectángulo r). Suave: el trazo
+   * se superpone a una copia desenfocada de sí mismo (el borde se suaviza hacia
+   * fuera, el interior no pierde nitidez). Duro: se recorta con la silueta vectorial
+   * (`env` ya dibujada, o se calcula de los sellos).
+   */
+  applyEdge(ctx: CanvasRenderingContext2D, p: BrushPreset, r: Rect, dpr: number, env?: HTMLCanvasElement | null, sets?: DabSet[], M?: Mat) {
+    if (rectEmpty(r) || !this.edged(p)) return;
+    const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    if (p.render.edge === 'soft') {
+      const t = this.edgeCtx(w, h);
+      t.clearRect(0, 0, w, h);
+      t.filter = `blur(${(0.5 + p.render.edgeAmount * 2.2) * Math.max(1, dpr * 0.75)}px)`;
+      t.drawImage(ctx.canvas, r.x0, r.y0, w, h, 0, 0, w, h);
+      t.filter = 'none';
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.drawImage(t.canvas, 0, 0, w, h, r.x0, r.y0, w, h);
+      ctx.restore();
+      return;
+    }
+    let mask = env ?? null, mx = r.x0, my = r.y0;
+    if (!mask && sets && M) {
+      // Silueta en un lienzo del tamaño del trazo (no del documento).
+      const t = this.edgeCtx(w, h);
+      t.clearRect(0, 0, w, h);
+      for (const s of sets) this.drawEnvelope(t, p, s.dabs, 0, s.count, M, dpr, r.x0, r.y0);
+      mask = t.canvas; mx = 0; my = 0;
+    }
+    if (!mask) return;
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(mask, mx, my, w, h, r.x0, r.y0, w, h);
+    ctx.restore();
+  }
+
   applyFixedGrain(ctx: CanvasRenderingContext2D, p: BrushPreset, M: Mat, dpr: number, r: Rect) {
     const pat = this.grains.pattern(ctx, p.grain);
     if (!pat || rectEmpty(r)) return;
@@ -346,11 +425,45 @@ export class StrokePainter {
     scratch.clearRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
     scratch.restore();
     this.drawContent(scratch, s, M, dpr, this.contentAlpha(p));
+    if (this.edged(p)) this.applyEdge(scratch, p, r, dpr, null, s.sets, M);
     if (p.grain.enabled && p.grain.mode === 'fixed') this.applyFixedGrain(scratch, p, M, dpr, r);
     if (clip) this.applyClip(scratch, clip, r);
     this.composite(target, scratch.canvas, r, p, s.tool, atop);
     return r;
   }
+}
+
+/** Colores por sello con la dinámica de color del pincel (RGBA; el alfa queda a 255). */
+function jitterColors(p: BrushPreset, color: string, dabs: Float32Array, from: number, to: number): Uint8ClampedArray {
+  const n = parseInt(color.replace('#', ''), 16) || 0;
+  const [h0, s0, l0] = rgbToHsl(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+  const out = new Uint8ClampedArray(to * 4);
+  const seedOf = (x: number, y: number) => { let k = Math.imul(Math.round(x * 8) | 0, 73856093) ^ Math.imul(Math.round(y * 8) | 0, 19349663); k = Math.imul(k ^ (k >>> 15), 2246822507); k = Math.imul(k ^ (k >>> 13), 3266489909); return (k ^ (k >>> 16)) >>> 0; };
+  const rnd = (seed: number, j: number) => { let k = Math.imul(seed + j * 0x9e3779b9, 1597334677); k ^= k >>> 15; k = Math.imul(k, 2246822519); k ^= k >>> 13; return ((k >>> 0) % 100000) / 100000; };
+  const strokeSeed = seedOf(dabs[0], dabs[1]);
+  for (let i = from; i < to; i++) {
+    const o = i * DAB_STRIDE;
+    const sd = p.color.perStroke ? strokeSeed : seedOf(dabs[o], dabs[o + 1]);
+    const hh = h0 + (rnd(sd, 1) - 0.5) * p.color.hue;
+    const ss = Math.max(0, Math.min(1, s0 + (rnd(sd, 2) - 0.5) * 2 * p.color.sat));
+    const ll = Math.max(0, Math.min(1, l0 + (rnd(sd, 3) - 0.5) * 2 * p.color.light * 0.5));
+    const [r, g, b] = hslToRgb(((hh % 1) + 1) % 1, ss, ll);
+    out[i * 4] = r * 255; out[i * 4 + 1] = g * 255; out[i * 4 + 2] = b * 255; out[i * 4 + 3] = 255;
+  }
+  return out;
+}
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  if (mx === mn) return [0, 0, l];
+  const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h / 6, s, l];
+}
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  if (!s) return [l, l, l];
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+  const f = (t: number) => { t = ((t % 1) + 1) % 1; return t < 1 / 6 ? p + (q - p) * 6 * t : t < 0.5 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p; };
+  return [f(h + 1 / 3), f(h), f(h - 1 / 3)];
 }
 
 function rgb(c: Uint8ClampedArray, i: number) { return `rgb(${c[i * 4]},${c[i * 4 + 1]},${c[i * 4 + 2]})`; }
