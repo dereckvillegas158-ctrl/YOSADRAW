@@ -356,6 +356,29 @@ mover, copiar/pegar, exponer, marcadores, grupos, interpolación), `tests/projec
 (guardado completo de una animación) y `tests/video-ffmpeg.test.ts` (codifica de verdad los 11 formatos con
 el FFmpeg incluido y comprueba códecs, alfa y audio en los archivos).
 
+## YOSADRAW MOTION (editor de vídeo)
+
+Nuevo proyecto → **Vídeo**. El proyecto es un `.yosa` con `document.motion` (composiciones,
+pistas, clips, keyframes, efectos, máscaras, marcadores y fichas de medios). Los archivos de los
+medios se guardan una sola vez en el almacén de la app (`m/<id>`, más `.mp4` si se convirtió,
+`.proxy` y `.fNNNNN` para secuencias) y se leen por streaming: en PC por `app://yosadraw/store/…`
+con rangos HTTP, en Android desde el servidor local de la app y en el navegador como Blob.
+«Exportar proyecto .yosa» los añade dentro (`media/m/…`) y al abrirlo pasan al almacén.
+
+| Módulo | Archivo |
+|---|---|
+| Modelo, historial y operaciones | `src/yosadraw/motion/model.ts` |
+| Keyframes, curvas y presets | `src/yosadraw/motion/keys.ts` |
+| Medios (importar, streaming, proxies, miniaturas, forma de onda) | `src/yosadraw/motion/media.ts` |
+| Compositor (Canvas2D + efectos WebGL2) | `src/yosadraw/motion/render.ts` |
+| Audio (WebAudio en vivo y OfflineAudioContext al exportar) | `src/yosadraw/motion/audio.ts` |
+| Reproductor en tiempo real | `src/yosadraw/motion/player.ts` |
+| Interfaz (visor, línea de tiempo, biblioteca, inspector, curvas, exportar) | `src/yosadraw/ui/motion/*` |
+
+En PC, FFmpeg (`desktop/video.cjs`) lee metadatos, convierte a H.264 lo que Chromium no
+reproduce, crea proxies y codifica la exportación al vuelo; en Android se usa WebCodecs.
+Pruebas: `tests/motion-model.test.ts` y `tests/motion-project.test.ts`.
+
 ## Imágenes: importar y referencias
 - **Importar imagen como capa** (Ctrl+Mayús+O, menú del proyecto, «Más» en el teléfono, arrastrar
   al lienzo o pegar con Ctrl+V): crea una capa nueva encima de la activa con la imagen centrada (se

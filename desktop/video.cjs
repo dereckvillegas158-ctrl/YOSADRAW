@@ -47,6 +47,8 @@ async function cleanupInterrupted() {
 }
 
 const clampInt = (v, lo, hi, d) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
+/** FPS con decimales (23,976, 29,97…): hasta milésimas. */
+const clampFps = v => { const n = Math.round(Number(v) * 1000) / 1000; return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(240, n)) : 24; };
 
 /** Opciones de la interfaz → argumentos de FFmpeg (lista cerrada). */
 function buildArgs(o, input, audioFile, out) {
@@ -115,7 +117,7 @@ function buildArgs(o, input, audioFile, out) {
 const sessions = new Map();
 let nextId = 1;
 
-function register({ isApproved, rememberFolder, sanitizeName }) {
+function register({ isApproved, rememberFolder, sanitizeName, storePath }) {
   void cleanupInterrupted();
 
   ipcMain.handle('video:probe', async () => {
@@ -136,7 +138,7 @@ function register({ isApproved, rememberFolder, sanitizeName }) {
     const o = {
       folder: String(raw?.folder ?? ''), name: sanitizeName(String(raw?.name ?? 'Animación')),
       format: FORMATS.includes(raw?.format) ? raw.format : null, codec: CODECS.includes(raw?.codec) ? raw.codec : 'h264',
-      width: clampInt(raw?.width, 16, 8192, 0), height: clampInt(raw?.height, 16, 8192, 0), fps: clampInt(raw?.fps, 1, 120, 24),
+      width: clampInt(raw?.width, 16, 8192, 0), height: clampInt(raw?.height, 16, 8192, 0), fps: clampFps(raw?.fps),
       quality: clampInt(raw?.quality, 0, 100, 80), bitrate: clampInt(raw?.bitrate, 0, 400000, 0), alpha: raw?.alpha === true, loop: raw?.loop !== false,
       overwrite: raw?.overwrite === true, frames: clampInt(raw?.frames, 1, 200000, 1),
     };
@@ -254,6 +256,58 @@ function register({ isApproved, rememberFolder, sanitizeName }) {
       p.stdin.on('error', () => undefined);
       p.stdin.end(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
     });
+  });
+
+  // ---------------- YOSADRAW MOTION: medios del almacén (m/<id>) ----------------
+  const MEDIA_KEY = /^m\/[A-Za-z0-9._~-]{1,140}$/;
+  const mediaPath = key => { if (!MEDIA_KEY.test(String(key)) || String(key).includes('..')) throw new Error('Clave de medio no válida'); return storePath(String(key)); };
+
+  /** Metadatos con FFmpeg (duración, tamaño, FPS, si tiene audio): sirve también para MKV o AVI. */
+  ipcMain.handle('media:probe', async (_e, key) => {
+    const bin = ffmpegPath();
+    if (!bin) throw new Error('FFmpeg no está disponible');
+    const file = mediaPath(key);
+    const out = await new Promise(resolve => {
+      const p = spawn(bin, ['-hide_banner', '-i', file], { windowsHide: true });
+      let err = '';
+      p.stderr.on('data', d => { err += d; });
+      p.on('close', () => resolve(err));
+      p.on('error', () => resolve(''));
+    });
+    const dur = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(out);
+    const v = /Stream #[^\n]*Video: [^\n]*?(\d{2,5})x(\d{2,5})[^\n]*?(?:(\d+(?:\.\d+)?) fps|(\d+(?:\.\d+)?) tbr)/.exec(out);
+    return {
+      dur: dur ? Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) : 0,
+      w: v ? Number(v[1]) : 0, h: v ? Number(v[2]) : 0, fps: v ? Number(v[3] || v[4]) : 0,
+      hasVideo: /Stream #[^\n]*Video:/.test(out), hasAudio: /Stream #[^\n]*Audio:/.test(out),
+    };
+  });
+
+  /**
+   * Convierte un medio a MP4 H.264 + AAC: `compat` para formatos que Chromium no reproduce
+   * (AVI, MKV con códecs raros…) y `proxy` (540p, rápido) para editar con fluidez.
+   */
+  ipcMain.handle('media:transcode', async (_e, key, outKey, mode) => {
+    const bin = ffmpegPath();
+    if (!bin) throw new Error('FFmpeg no está disponible');
+    const src = mediaPath(key), dst = mediaPath(outKey);
+    const tmp = `${dst}.${process.pid}.part`;
+    journalAdd(tmp);
+    const args = ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-map', '0:v:0?', '-map', '0:a:0?',
+      '-c:v', 'libx264', '-preset', mode === 'proxy' ? 'veryfast' : 'medium', '-crf', mode === 'proxy' ? '26' : '18', '-pix_fmt', 'yuv420p',
+      ...(mode === 'proxy' ? ['-vf', 'scale=-2:min(540\\,ih)'] : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2']),
+      '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-f', 'mp4', tmp];
+    const res = await new Promise(resolve => {
+      const p = spawn(bin, args, { windowsHide: true });
+      let err = '';
+      p.stderr.on('data', d => { err = (err + d).slice(-3000); });
+      p.on('close', code => resolve({ code, err }));
+      p.on('error', e => resolve({ code: -1, err: e.message }));
+    });
+    if (res.code !== 0) { await fsp.rm(tmp, { force: true }); journalRemove(tmp); throw new Error(`No se pudo convertir: ${res.err.trim().split('\n').pop() || res.code}`); }
+    await fsp.rename(tmp, dst);
+    journalRemove(tmp);
+    return (await fsp.stat(dst)).size;
   });
 
   app.on('before-quit', () => { for (const s of sessions.values()) { try { s.proc.kill('SIGKILL'); } catch { /* */ } } });

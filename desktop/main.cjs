@@ -17,7 +17,7 @@ const MAX_FILE = 20 * 1024 * 1024;
 
 const CSP = [
   "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:", "font-src 'self' data:", "connect-src 'self'", "worker-src 'self' blob:",
+  "img-src 'self' data: blob:", "media-src 'self' data: blob:", "font-src 'self' data: blob:", "connect-src 'self'", "worker-src 'self' blob:",
   "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ');
 
@@ -26,7 +26,7 @@ const MIME = {
   '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json', '.ico': 'image/x-icon',
 };
 
-protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }]);
 
 const libraryFile = () => path.join(app.getPath('userData'), 'brushes.json');
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -72,7 +72,7 @@ async function writeAtomic(file, content) {
 
 // ---------- Almacén de proyectos (galería) ----------
 // Claves «carpeta/nombre» con caracteres seguros: nunca salen de userData/projects.
-const STORE_KEY = /^(p|t|v|r|meta)\/[A-Za-z0-9._~-]{1,140}$/;
+const STORE_KEY = /^(p|t|v|r|meta|m)\/[A-Za-z0-9._~-]{1,140}$/;
 const storeRoot = () => path.join(app.getPath('userData'), 'projects');
 function storePath(key) {
   if (typeof key !== 'string' || !STORE_KEY.test(key) || key.includes('..')) throw new Error('Clave de almacén no válida');
@@ -90,7 +90,7 @@ async function writeBinaryAtomic(file, data) {
 function registerIpc() {
   // Animación: vídeo, GIF/APNG/WebP y secuencias con FFmpeg (desktop/video.cjs).
   require('./video.cjs').register({
-    isApproved, rememberFolder,
+    isApproved, rememberFolder, storePath,
     sanitizeName: n => String(n || 'Animación').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'Animación',
   });
   ipcMain.handle('store:get', async (_e, key) => {
@@ -104,7 +104,7 @@ function registerIpc() {
   ipcMain.handle('store:delete', async (_e, key) => { await fs.rm(storePath(key), { force: true }); });
   ipcMain.handle('store:list', async (_e, prefix) => {
     const dir = String(prefix).split('/')[0];
-    if (!/^(p|t|v|r|meta)$/.test(dir)) throw new Error('Prefijo no válido');
+    if (!/^(p|t|v|r|m|meta)$/.test(dir)) throw new Error('Prefijo no válido');
     try {
       const names = await fs.readdir(path.join(storeRoot(), dir));
       return names.filter(n => !n.endsWith('.tmp')).map(n => `${dir}/${n}`).filter(k => k.startsWith(String(prefix)));
@@ -211,9 +211,33 @@ function registerIpc() {
   });
 }
 
+async function serveStore(req, key) {
+  let file;
+  try { file = storePath(key); } catch { return new Response('Forbidden', { status: 403 }); }
+  if (!key.startsWith('m/')) return new Response('Forbidden', { status: 403 });
+  const st = await fs.stat(file).catch(() => null);
+  if (!st || !st.isFile()) return new Response('Not found', { status: 404 });
+  const size = st.size;
+  const headers = { 'Accept-Ranges': 'bytes', 'Content-Type': 'application/octet-stream', 'Access-Control-Allow-Origin': '*' };
+  const m = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') || '');
+  const { Readable } = require('node:stream');
+  const fsSync = require('node:fs');
+  if (m) {
+    let start = m[1] ? Number(m[1]) : NaN, end = m[2] ? Number(m[2]) : size - 1;
+    if (Number.isNaN(start)) { start = Math.max(0, size - end); end = size - 1; }
+    end = Math.min(end, size - 1);
+    if (start > end || start >= size) return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${size}` } });
+    return new Response(Readable.toWeb(fsSync.createReadStream(file, { start, end })), { status: 206, headers: { ...headers, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${size}` } });
+  }
+  return new Response(Readable.toWeb(fsSync.createReadStream(file)), { status: 200, headers: { ...headers, 'Content-Length': String(size) } });
+}
+
 function serveApp() {
   protocol.handle('app', async req => {
     const url = new URL(req.url);
+    // Medios de YOSADRAW MOTION: app://yosadraw/store/m/<id>, por streaming y con rangos
+    // (el vídeo se busca sin leer el archivo entero).
+    if (url.pathname.startsWith('/store/')) return serveStore(req, decodeURIComponent(url.pathname.slice(7)));
     let rel = decodeURIComponent(url.pathname);
     if (rel === '/' || rel === '') rel = '/index.html';
     const file = path.normalize(path.join(DIST, rel));

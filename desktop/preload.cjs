@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('yosadraw', {
   storeDelete: key => ipcRenderer.invoke('store:delete', String(key)),
   storeList: prefix => ipcRenderer.invoke('store:list', String(prefix)),
   storeLocation: () => ipcRenderer.invoke('store:location'),
+  // Medios de YOSADRAW MOTION por streaming (protocolo app:// con rangos).
+  storeUrl: key => Promise.resolve(/^m\/[A-Za-z0-9._~-]{1,140}$/.test(String(key)) ? `app://yosadraw/store/${key}` : null),
   // Animación: exportación con FFmpeg (fotogramas RGBA de uno en uno) y audio que Chromium no decodifica.
   video: {
     probe: () => ipcRenderer.invoke('video:probe'),
@@ -33,6 +35,11 @@ contextBridge.exposeInMainWorld('yosadraw', {
     frame: (id, data) => ipcRenderer.invoke('video:frame', Number(id), data),
     finish: id => ipcRenderer.invoke('video:finish', Number(id)),
     abort: id => ipcRenderer.invoke('video:abort', Number(id)),
+  },
+  // YOSADRAW MOTION: metadatos y conversión de medios con FFmpeg.
+  media: {
+    probe: key => ipcRenderer.invoke('media:probe', String(key)),
+    transcode: (key, outKey, mode) => ipcRenderer.invoke('media:transcode', String(key), String(outKey), mode === 'proxy' ? 'proxy' : 'compat'),
   },
   decodeAudio: (data, name) => ipcRenderer.invoke('audio:decode', data, String(name ?? '')),
 });

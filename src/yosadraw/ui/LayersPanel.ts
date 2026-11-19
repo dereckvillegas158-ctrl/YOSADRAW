@@ -5,7 +5,7 @@ import type { Mat } from '../engine/ViewTransform';
 import type { CanvasEngine } from '../engine';
 import { h, toast } from './dom';
 
-const BLENDS: { value: LayerBlend; label: string }[] = [
+export const BLENDS: { value: LayerBlend; label: string }[] = [
   { value: 'normal', label: 'Normal' }, { value: 'multiply', label: 'Multiplicar' }, { value: 'screen', label: 'Trama' },
   { value: 'overlay', label: 'Superponer' }, { value: 'darken', label: 'Oscurecer' }, { value: 'lighten', label: 'Aclarar' },
   { value: 'color-burn', label: 'Subexponer color' }, { value: 'color-dodge', label: 'Sobreexponer color' },

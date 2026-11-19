@@ -31,6 +31,10 @@ import type { PreviewQuality } from '../anim/player';
 import * as animModel from '../anim/model';
 import { Thumbnails } from './thumbnails';
 import { normalizeLayout, Toolbar } from './Toolbar';
+import { MotionStudio, normalizeMotionPrefs } from './motion/MotionStudio';
+import { MotionUI } from './motion/MotionUI';
+import { MExport, normalizeMotionExport } from './motion/MExport';
+import { openNewProject } from './NewProjectDialog';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -69,6 +73,8 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     showRef: ap.showRef !== false, scrub: ap.scrub !== false,
     export: normalizeAnimExport(ap.export) as AnimExportPrefs,
   };
+  // Vídeo (YOSADRAW MOTION): tamaños de paneles, calidad de vista previa, atajos y exportación.
+  const motionPrefs = normalizeMotionPrefs(saved?.motion);
   const applyTouch = () => {
     engine.fingerMode = touch.finger; engine.holdToPick = touch.hold;
     Object.assign(engine.inputTuning, { touchBoost: touch.touchBoost, penBoost: touch.penBoost, fingerPressure: touch.fingerPressure, cleanup: touch.cleanup });
@@ -76,7 +82,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   applyTouch();
 
   // ---------- Guardado de preferencias ----------
-  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, anim: animPrefs, palettes: palettePrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
+  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, anim: animPrefs, motion: motionPrefs, palettes: palettePrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
@@ -342,21 +348,26 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   };
   session.on('state', showSession);
   showSession();
-  $('project-chip').addEventListener('click', () => {
+  $('project-chip').addEventListener('click', () => projectMenu($('project-chip')));
+  function projectMenu(anchor: HTMLElement) {
     const e = session.entry;
     if (!e) return;
-    const anchor = $('project-chip');
+    const video = !!engine.doc.motion;
     const items: [string, () => void][] = [
       ['Guardar', () => void projectAction('save')], ['Guardar como…', () => void projectAction('saveAs')],
       ['Renombrar…', () => void gallery.renameOpen()], ['Historial de versiones…', () => void gallery.versions(projects.get(e.id)!)],
-      ['Información', () => void gallery.info(projects.get(e.id)!)], ['Exportar imagen…', () => void exportDialog.show()],
-      ['Importar imagen como capa…', () => void pickAndImport(engine, mgr)], ['Añadir imagen de referencia…', () => void refs.add()],
-      ['Exportar archivo .yosa', () => void (session.dirty ? gallery.save() : Promise.resolve(true)).then(ok => { if (ok) void gallery.exportNative(projects.get(e.id)!); })],
+      ['Información', () => void gallery.info(projects.get(e.id)!)],
+      ...(video ? [['Exportar vídeo…', () => void motionExport.show()]] as [string, () => void][] : [
+        ['Exportar imagen…', () => void exportDialog.show()],
+        ['Importar imagen como capa…', () => void pickAndImport(engine, mgr)], ['Añadir imagen de referencia…', () => void refs.add()],
+        ['Enviar a YOSADRAW MOTION…', () => void sendToMotion()],
+      ] as [string, () => void][]),
+      [video ? 'Exportar proyecto .yosa (con sus medios)' : 'Exportar archivo .yosa', () => void (session.dirty ? gallery.save() : Promise.resolve(true)).then(ok => { if (ok) void gallery.exportNative(projects.get(e.id)!); })],
       [session.prefs.autoSave ? 'Desactivar guardado automático' : 'Activar guardado automático', () => { session.prefs.autoSave = !session.prefs.autoSave; save(); toast(session.prefs.autoSave ? `Guardado automático cada ${session.prefs.autoSaveMinutes} min` : 'Guardado automático desactivado (se siguen haciendo copias de recuperación)', 'ok'); }],
       ['Volver a la galería', () => void toGallery()],
     ];
     gallery.popupMenu(anchor, e.name, items.map(([label, run]) => ({ label, run })));
-  });
+  }
   // Al pasar a segundo plano (otra pestaña, minimizar): copia de recuperación inmediata.
   document.addEventListener('visibilitychange', () => { if (document.hidden) void session.flushRecovery(); });
   // ---------- Animación (PC) ----------
@@ -419,6 +430,56 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   let lastActive = '';
   engine.on('doc', () => { if (engine.doc.anim && engine.doc.activeId !== lastActive) { lastActive = engine.doc.activeId; engine.refreshOnion(); } });
 
+  // ---------- Vídeo: YOSADRAW MOTION ----------
+  const motion = new MotionStudio({ engine, projects, painter, prefs: motionPrefs, persist: save });
+  const motionExport = new MExport(motion, normalizeMotionExport(motionPrefs.export), p => { motionPrefs.export = p; save(); }, () => session.entry?.name ?? 'Vídeo');
+  const motionUI = new MotionUI(motion, {
+    save: () => void projectAction('save'), gallery: () => void toGallery(), projectMenu: a => projectMenu(a),
+    exportVideo: () => void motionExport.show(), name: () => session.entry?.name ?? 'Vídeo',
+  });
+  document.body.append(motionUI.el);
+  session.motionThumb = () => motion.thumbnail();
+  session.on('state', st => { if (motion.active) motionUI.setDirty(st.dirty, st.entry?.name ?? 'Vídeo'); });
+  function setMotionMode() {
+    const on = !!engine.doc.motion;
+    document.body.classList.toggle('motion-mode', on);
+    if (on && motion.doc !== engine.doc) void motion.open(engine.doc);
+    else if (!on && motion.active) motion.close();
+  }
+  engine.on('document', setMotionMode);
+  /**
+   * «Enviar a YOSADRAW MOTION»: guarda el dibujo, abre (o crea) un proyecto de vídeo
+   * y añade el dibujo como medio en el cabezal. El dibujo original no cambia: si se
+   * vuelve a editar, en el editor de vídeo aparece «actualizar».
+   */
+  async function sendToMotion() {
+    const e = session.entry;
+    if (!e || engine.doc.motion) return;
+    mgr.resetForDocument();
+    if (session.dirty && !(await gallery.save())) return;
+    const videos = projects.list().filter(x => !x.trashed && x.motion).sort((a, b) => b.modified - a.modified);
+    const choice = await new Promise<string | null>(resolve => gallery.popupMenu($('project-chip'), 'Enviar a…', [
+      { label: 'Proyecto de vídeo nuevo…', run: () => resolve('') },
+      ...videos.slice(0, 12).map(v => ({ label: v.name, run: () => resolve(v.id) })),
+    ]));
+    if (choice === null) return;
+    try {
+      if (choice) await session.open(choice);
+      else {
+        const spec = await openNewProject(projects.uniqueName(`${e.name} (vídeo)`), { width: e.width > e.height ? 1920 : 1080, height: e.width > e.height ? 1080 : 1920, dpi: 72, background: '#ffffff', profile: 'srgb', motion: { fps: 30, dur: 10 } });
+        if (!spec) return;
+        if (!spec.motion) spec.motion = { fps: 30, dur: 10 };
+        spec.anim = null;
+        await session.create(spec);
+      }
+      gallery.hide();
+      const item = await motion.media.fromProject(e.id, null, e.background !== null);
+      motion.edit(`Importar ${item.name}`, (m, comp) => { m.media.push(item); motion.placeMedia(comp, [item], motion.time); });
+      motion.mediaChanged();
+      toast(`«${e.name}» está en el vídeo (se actualiza si editas el dibujo)`, 'ok');
+    } catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }
+  }
+
   // Sin proyecto abierto se empieza en la galería.
   blank();
   gallery.show();
@@ -428,10 +489,12 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     const t = e.target as HTMLElement;
     // Esc con el foco fuera de un diálogo (p. ej. tras pulsar un botón que desaparece): cierra lo de encima.
     if (e.key === 'Escape' && !studio.open && !t.closest('.dialog-backdrop, .studio-backdrop, .menu, .popover') && closeTopOverlay()) { e.preventDefault(); return; }
-    if (studio.open || exportDialog.open || t.closest('.dialog-backdrop, .menu, .popover, .fx-panel')) return;
+    if (studio.open || exportDialog.open || motionExport.open || t.closest('.dialog-backdrop, .menu, .popover, .fx-panel')) return;
     if (gallery.visible) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault(); return; }
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'radio', 'color'].includes(t.type))) return;
     if (t instanceof HTMLSelectElement && e.key.startsWith('Arrow')) return;
+    // Editor de vídeo: sus propios atajos (configurables).
+    if (motion.active) { if (!(t instanceof HTMLInputElement && t.type === 'range' && e.key.startsWith('Arrow')) && motionUI.handleKey(e)) { e.preventDefault(); e.stopPropagation(); } return; }
     if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(true); return; }
     if (t instanceof HTMLInputElement && t.type === 'range' && e.key.startsWith('Arrow')) return;
     if (mgr.handleKey(e)) { e.preventDefault(); e.stopPropagation(); }
@@ -448,5 +511,5 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { mgr, anim, timeline, animExport, animPanel, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
+  return { motion, motionUI, motionExport, mgr, anim, timeline, animExport, animPanel, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
 }
