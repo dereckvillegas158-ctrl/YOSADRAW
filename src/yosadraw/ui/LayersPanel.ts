@@ -4,6 +4,7 @@ import { ItemRenderer } from '../doc/ItemRenderer';
 import type { Mat } from '../engine/ViewTransform';
 import type { CanvasEngine } from '../engine';
 import { h, toast } from './dom';
+import { cmdDeleteFolder, cmdFolderProps, cmdLayerToFolder, cmdMoveLayerFolders, cmdNewFolder, folderOf, groupsOf, membersOf, type Folder } from '../doc/folders';
 
 export const BLENDS: { value: LayerBlend; label: string }[] = [
   { value: 'normal', label: 'Normal' }, { value: 'multiply', label: 'Multiplicar' }, { value: 'screen', label: 'Trama' },
@@ -27,6 +28,12 @@ const I = {
   down: svg('<path d="m6 10 6 6 6-6"/>'),
   merge: svg('<path d="M7 4v5a5 5 0 0 0 5 5 5 5 0 0 1 5 5v1M17 4v5a5 5 0 0 1-3 4.6"/><path d="m4 17 3 3 3-3"/>'),
   clear: svg('<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2.5"/><path d="m9 9 6 6M15 9l-6 6"/>'),
+  folder: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M12 10v6M9 13h6"/>'),
+  folderIcon: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>'),
+  vector: svg('<path d="M4 18C8 6 14 20 20 6"/><rect x="2.5" y="16.5" width="3" height="3" fill="currentColor"/><rect x="18.5" y="4.5" width="3" height="3" fill="currentColor"/><path d="M18 15v6M15 18h6"/>'),
+  chev: svg('<path d="m6 9 6 6 6-6"/>'),
+  chevR: svg('<path d="m9 6 6 6-6 6"/>'),
+  more: svg('<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>'),
   trash: svg('<path d="M4 7h16M9.5 7V4.8a.8.8 0 0 1 .8-.8h3.4a.8.8 0 0 1 .8.8V7M6.5 7l.8 12.2a1 1 0 0 0 1 .8h7.4a1 1 0 0 0 1-.8L17.5 7"/>'),
 };
 
@@ -41,6 +48,8 @@ export class LayersPanel {
   private thumbTimer = 0;
   private dirtyThumbs = new Set<string>();
   private opacityStart: number | null = null;
+  /** Carpeta elegida (la opacidad y la fusión del panel se aplican a ella). */
+  private folderSel: string | null = null;
 
   constructor(private engine: CanvasEngine) {
     this.list = h('ul', { class: 'layer-list', role: 'listbox', 'aria-label': 'Capas (la de arriba se dibuja encima)' });
@@ -52,10 +61,12 @@ export class LayersPanel {
     this.el = h('section', { class: 'block layers', 'aria-labelledby': 'layers-title' },
       h('div', { class: 'lib-head' }, h('h2', { id: 'layers-title' }, 'Capas'),
         h('div', { class: 'lib-actions' },
-          btn(I.plus, 'Nueva capa (Ctrl+Mayús+N)', () => engine.addLayer()),
+          btn(I.plus, 'Nueva capa (Ctrl+Mayús+N)', () => { this.folderSel = null; engine.addLayer(); }),
+          btn(I.vector, 'Nueva capa vectorial (trazos editables con «Editar vector»)', () => { this.folderSel = null; engine.addLayer({ vector: true }); }),
+          btn(I.folder, 'Nueva carpeta con la capa activa', () => { const c = cmdNewFolder(d(), d().activeId); if (engine.exec(c)) this.folderSel = d().active.group ?? null; }),
           btn(I.dup, 'Duplicar capa (Ctrl+J)', () => engine.exec(d().cmdDuplicateLayer(d().activeId))),
-          btn(I.up, 'Subir capa', () => engine.exec(d().cmdMoveLayer(d().activeId, d().index(d().activeId) + 1))),
-          btn(I.down, 'Bajar capa', () => engine.exec(d().cmdMoveLayer(d().activeId, d().index(d().activeId) - 1))),
+          btn(I.up, 'Subir capa (entra o sale de las carpetas)', () => engine.exec(cmdMoveLayerFolders(d(), d().activeId, 1))),
+          btn(I.down, 'Bajar capa (entra o sale de las carpetas)', () => engine.exec(cmdMoveLayerFolders(d(), d().activeId, -1))),
           btn(I.merge, 'Combinar hacia abajo (Ctrl+E)', () => { if (!engine.exec(d().cmdMergeDown(d().activeId))) toast('No hay capa debajo con la que combinar'); }),
           btn(I.clear, 'Vaciar capa', () => { if (d().active.items.length) engine.exec(d().cmdSetItems(d().activeId, [], 'Vaciar capa')); }),
           btn(I.trash, 'Eliminar capa', () => { if (!engine.exec(d().cmdDeleteLayer(d().activeId))) toast('El documento necesita al menos una capa'); }))),
@@ -65,17 +76,21 @@ export class LayersPanel {
       this.list);
 
     this.opacity.addEventListener('input', () => {
+      const f = this.folder();
+      if (f) { this.opacityOut.textContent = `${this.opacity.value}%`; this.opacity.style.setProperty('--fill', `${this.opacity.value}%`); return; }
       const l = d().active;
       if (this.opacityStart === null) this.opacityStart = l.opacity;
       engine.previewLayerProps(l.id, { opacity: Number(this.opacity.value) / 100 });
       this.syncProps();
     });
     this.opacity.addEventListener('change', () => {
+      const f = this.folder();
+      if (f) { engine.exec(cmdFolderProps(d(), f.id, { opacity: Number(this.opacity.value) / 100 }, 'Opacidad de la carpeta')); return; }
       const l = d().active, from = this.opacityStart ?? l.opacity;
       this.opacityStart = null;
       engine.setLayerProps(l.id, { opacity: Number(this.opacity.value) / 100 }, { opacity: from });
     });
-    this.blend.addEventListener('change', () => engine.setLayerProps(d().activeId, { blend: this.blend.value as LayerBlend }));
+    this.blend.addEventListener('change', () => { const f = this.folder(); if (f) engine.exec(cmdFolderProps(d(), f.id, { blend: this.blend.value as LayerBlend }, 'Fusión de la carpeta')); else engine.setLayerProps(d().activeId, { blend: this.blend.value as LayerBlend }); });
 
     engine.on('doc', () => {
       this.render();
@@ -89,7 +104,18 @@ export class LayersPanel {
     this.scheduleThumbs();
   }
 
+  private folder() { return this.folderSel ? groupsOf(this.engine.doc).find(f => f.id === this.folderSel) ?? null : null; }
+
   private syncProps() {
+    const f = this.folder();
+    if (f) {
+      this.opacity.value = String(Math.round(f.opacity * 100));
+      this.opacity.style.setProperty('--fill', `${this.opacity.value}%`);
+      this.opacityOut.textContent = `${this.opacity.value}% (carpeta)`;
+      this.blend.value = f.blend ?? 'normal';
+      this.opacity.disabled = this.blend.disabled = f.locked;
+      return;
+    }
     const l = this.engine.doc.active;
     this.opacity.value = String(Math.round(l.opacity * 100));
     this.opacity.style.setProperty('--fill', `${this.opacity.value}%`);
@@ -199,18 +225,90 @@ export class LayersPanel {
     return h('li', {
       class: `layer-row${l.visible ? '' : ' hidden-layer'}${l.clip ? ' clipped' : ''}`, role: 'option', tabindex: '0', 'aria-selected': String(active),
       on: {
-        click: () => e.setActiveLayer(l.id),
+        click: () => { this.folderSel = null; e.setActiveLayer(l.id); },
+        contextmenu: (ev: Event) => { ev.preventDefault(); this.layerMenu(l, ev as MouseEvent); },
         keydown: (ev: Event) => { const k = (ev as KeyboardEvent).key; if (k === 'Enter' || k === ' ') { ev.preventDefault(); e.setActiveLayer(l.id); } },
       },
-    }, vis, h('span', { class: 'layer-thumb' }, this.thumb(l.id)), h('span', { class: 'layer-meta' }, name, h('span', { class: 'layer-sub' }, `${Math.round(l.opacity * 100)}% · ${BLENDS.find(b => b.value === l.blend)?.label}${l.clip ? ' · recorte' : ''}${l.alphaLock ? ' · alfa bloqueado' : ''}${l.items.length ? '' : ' · vacía'}`)), clipBtn, alpha, lock);
+    }, vis, h('span', { class: 'layer-thumb' }, this.thumb(l.id), l.vector ? h('span', { class: 'layer-vbadge', title: 'Capa vectorial', html: I.vector }) : null), h('span', { class: 'layer-meta' }, name, h('span', { class: 'layer-sub' }, `${l.vector ? 'vectorial · ' : ''}${Math.round(l.opacity * 100)}% · ${BLENDS.find(b => b.value === l.blend)?.label}${l.clip ? ' · recorte' : ''}${l.alphaLock ? ' · alfa bloqueado' : ''}${l.items.length ? '' : ' · vacía'}`)), clipBtn, alpha, lock,
+      h('button', { type: 'button', class: 'icon sm layer-more', title: 'Más (carpetas)', 'aria-label': `Más acciones de ${l.name}`, html: I.more, on: { click: (ev: Event) => { ev.stopPropagation(); this.layerMenu(l, ev as MouseEvent); } } }));
     void d;
+  }
+
+  private folderRow(f: Folder): HTMLElement {
+    const e = this.engine, d = e.doc;
+    const name = h('span', { class: 'layer-name', title: 'Doble clic para renombrar' }, f.name);
+    name.addEventListener('dblclick', ev => {
+      ev.stopPropagation();
+      const input = h('input', { type: 'text', class: 'rename', value: f.name, maxlength: '40', 'aria-label': 'Nombre de la carpeta' });
+      const done = (save: boolean) => { if (save && input.value.trim() && input.value.trim() !== f.name) e.exec(cmdFolderProps(d, f.id, { name: input.value.trim() }, 'Renombrar carpeta')); else this.render(); };
+      input.addEventListener('keydown', k => { k.stopPropagation(); if (k.key === 'Enter') done(true); if (k.key === 'Escape') done(false); });
+      input.addEventListener('blur', () => done(true));
+      name.replaceWith(input); input.focus(); input.select();
+    });
+    const ib = (icon: string, title: string, pressed: boolean, run: () => void) => h('button', { type: 'button', class: 'icon sm', title, 'aria-label': title, 'aria-pressed': String(pressed), html: icon, on: { click: (ev: Event) => { ev.stopPropagation(); run(); } } });
+    const n = membersOf(d, f.id).length;
+    return h('li', {
+      class: `layer-row folder-row${f.visible ? '' : ' hidden-layer'}`, role: 'option', tabindex: '0', 'aria-selected': String(this.folderSel === f.id), 'aria-expanded': String(!f.collapsed),
+      on: { click: () => { this.folderSel = f.id; this.render(); }, contextmenu: (ev: Event) => { ev.preventDefault(); this.folderMenu(f, ev as MouseEvent); } },
+    },
+      ib(f.visible ? I.eye : I.eyeOff, f.visible ? 'Ocultar carpeta' : 'Mostrar carpeta', f.visible, () => e.exec(cmdFolderProps(d, f.id, { visible: !f.visible }, f.visible ? 'Ocultar carpeta' : 'Mostrar carpeta'))),
+      ib(f.collapsed ? I.chevR : I.chev, f.collapsed ? 'Abrir carpeta' : 'Cerrar carpeta', !f.collapsed, () => { f.collapsed = !f.collapsed; this.render(); }),
+      h('span', { class: 'folder-icon', html: I.folderIcon }),
+      h('span', { class: 'layer-meta' }, name, h('span', { class: 'layer-sub' }, `${n} ${n === 1 ? 'capa' : 'capas'} · ${Math.round(f.opacity * 100)}% · ${BLENDS.find(b => b.value === (f.blend ?? 'normal'))?.label}`)),
+      ib(f.locked ? I.lock : I.unlock, f.locked ? 'Desbloquear carpeta' : 'Bloquear carpeta', f.locked, () => e.exec(cmdFolderProps(d, f.id, { locked: !f.locked }, 'Bloquear carpeta'))),
+      ib(I.more, 'Más acciones de la carpeta', false, () => this.folderMenu(f)));
+  }
+
+  private popup(items: { label: string; run: () => void; danger?: boolean; disabled?: boolean }[], at?: MouseEvent) {
+    document.querySelector('.menu.layers-menu')?.remove();
+    const m = h('div', { class: 'menu layers-menu', role: 'menu' }, ...items.map(it => h('button', { type: 'button', role: 'menuitem', class: it.danger ? 'danger' : '', disabled: !!it.disabled, on: { click: () => { m.remove(); it.run(); } } }, it.label)));
+    document.body.append(m);
+    const r = at ? { x: at.clientX, y: at.clientY } : (() => { const b = this.list.getBoundingClientRect(); return { x: b.left + 20, y: b.top + 20 }; })();
+    m.style.left = `${Math.min(r.x, innerWidth - m.offsetWidth - 8)}px`;
+    m.style.top = `${Math.min(r.y, innerHeight - m.offsetHeight - 8)}px`;
+    const out = (ev: Event) => { if (!m.contains(ev.target as Node)) { m.remove(); removeEventListener('pointerdown', out, true); } };
+    setTimeout(() => addEventListener('pointerdown', out, true));
+    m.addEventListener('keydown', ev => { if ((ev as KeyboardEvent).key === 'Escape') { ev.stopPropagation(); m.remove(); } });
+    (m.querySelector('button:not([disabled])') as HTMLElement | null)?.focus();
+  }
+
+  private layerMenu(l: Layer, at?: MouseEvent) {
+    const e = this.engine, d = e.doc;
+    const folders = groupsOf(d);
+    this.popup([
+      ...folders.filter(f => f.id !== l.group).map(f => ({ label: `Meter en «${f.name}»`, run: () => e.exec(cmdLayerToFolder(d, l.id, f.id)) })),
+      { label: 'Nueva carpeta con esta capa', run: () => { if (e.exec(cmdNewFolder(d, l.id))) this.folderSel = null; } },
+      { label: 'Sacar de la carpeta', disabled: !l.group, run: () => e.exec(cmdLayerToFolder(d, l.id, null)) },
+    ], at);
+  }
+
+  private folderMenu(f: Folder, at?: MouseEvent) {
+    const e = this.engine, d = e.doc;
+    this.popup([
+      { label: 'Nueva capa en la carpeta', run: () => { const top = membersOf(d, f.id).pop(); if (top) { e.setActiveLayer(top.id); e.addLayer(); } } },
+      { label: 'Nueva capa vectorial en la carpeta', run: () => { const top = membersOf(d, f.id).pop(); if (top) { e.setActiveLayer(top.id); e.addLayer({ vector: true }); } } },
+      { label: 'Desagrupar (conservar las capas)', run: () => { this.folderSel = null; e.exec(cmdDeleteFolder(d, f.id, false)); } },
+      { label: 'Eliminar la carpeta y sus capas', danger: true, run: () => { this.folderSel = null; if (!e.exec(cmdDeleteFolder(d, f.id, true))) toast('El documento necesita al menos una capa fuera de la carpeta'); } },
+    ], at);
   }
 
   render() {
     const d = this.engine.doc;
     const ids = new Set(d.layers.map(l => l.id));
     for (const id of [...this.thumbs.keys()]) if (!ids.has(id)) this.thumbs.delete(id);
-    this.list.replaceChildren(...[...d.layers].reverse().map(l => this.row(l, l.id === d.activeId)));
+    // De arriba abajo; cada carpeta muestra su cabecera encima de sus capas (sangradas).
+    const rows: HTMLElement[] = [];
+    let cur: string | null = null;
+    if (this.folderSel && !groupsOf(d).some(f => f.id === this.folderSel)) this.folderSel = null;
+    for (const l of [...d.layers].reverse()) {
+      const f = folderOf(d, l);
+      if ((f?.id ?? null) !== cur) { cur = f?.id ?? null; if (f) rows.push(this.folderRow(f)); }
+      if (f?.collapsed) continue;
+      const r = this.row(l, l.id === d.activeId && !this.folderSel);
+      if (f) r.classList.add('in-folder');
+      rows.push(r);
+    }
+    this.list.replaceChildren(...rows);
     this.syncProps();
     this.scheduleThumbs();
   }

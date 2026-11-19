@@ -1,6 +1,6 @@
 import { DEFAULT_PRESET, getPath, type BrushPreset } from '../brush/BrushPreset';
 import { fileToDataUrl } from '../brush/ImageStore';
-import { GRAIN_OPTIONS, SHAPE_OPTIONS, type Control } from '../brush/schema';
+import { BRUSH_STYLES, GRAIN_OPTIONS, SHAPE_OPTIONS, type Control } from '../brush/schema';
 import { CurveEditor } from './CurveEditor';
 import { h, pickFiles, toast } from './dom';
 
@@ -27,6 +27,12 @@ export function buildControl(c: Control, ctx: ControlContext): BuiltControl {
   const id = `ctl-${c.path.replace(/\./g, '-')}-${++uid}`;
   const help = 'help' in c && c.help ? h('p', { class: 'ctl-help', id: `${id}-help` }, c.help) : null;
   const describedBy = help ? `${id}-help` : undefined;
+
+  if (c.type === 'styles') {
+    const wrap = h('div', { class: 'ctl-styles', role: 'group', 'aria-label': c.label },
+      ...BRUSH_STYLES.map(st => h('button', { type: 'button', class: 'btn sm', title: `Aplicar el estilo «${st.label}»`, on: { click: () => { for (const [path, v] of Object.entries(st.patch)) ctx.set(path, v); toast(`Estilo «${st.label}» aplicado: ajústalo a tu gusto`, 'ok'); } } }, st.label)));
+    return { el: h('div', { class: 'ctl ctl-block' }, h('span', { class: 'ctl-label' }, c.label), wrap, help), sync: () => undefined };
+  }
 
   if (c.type === 'slider') {
     const display = c.display ?? 1;

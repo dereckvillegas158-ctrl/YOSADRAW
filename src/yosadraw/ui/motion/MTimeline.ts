@@ -1,4 +1,4 @@
-import { setValue } from '../../motion/keys';
+import { EASES, setValue } from '../../motion/keys';
 import {
   clipEnd, clone, forEachProp, moveClips, snapTo, sourceTime, splitClip, trimClip,
   type Clip, type Composition, type MediaItem, type Track,
@@ -23,7 +23,7 @@ type Drag =
   | { kind: 'scrub' }
   | { kind: 'move'; x0: number; y0: number; orig: Map<string, { start: number; track: string }>; moved: boolean; anchor: Clip }
   | { kind: 'trim'; id: string; edge: 'l' | 'r'; orig: Clip; x0: number }
-  | { kind: 'key'; id: string; t0: number; x0: number; orig: Clip }
+  | { kind: 'key'; id: string; t0: number; x0: number; orig: Clip; times: number[]; moved: boolean }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
   | { kind: 'marker'; id: string }
   | { kind: 'pan'; x0: number; y0: number; sx: number; sy: number }
@@ -333,8 +333,9 @@ export class MTimeline {
     if (sel) {
       const ts = new Set<number>();
       forEachProp(c, p => { for (const k of p.k ?? []) ts.add(Math.round(k.t * 1000) / 1000); });
-      g.fillStyle = '#ffd36b'; g.strokeStyle = '#2a1f00';
-      for (const t of ts) { const kx = this.tToX(c.start + t), ky = y + hh - 7; g.beginPath(); g.moveTo(kx, ky - 5); g.lineTo(kx + 5, ky); g.lineTo(kx, ky + 5); g.lineTo(kx - 5, ky); g.closePath(); g.fill(); g.stroke(); }
+      const ks = this.s.keySel.get(c.id) ?? [];
+      g.strokeStyle = '#2a1f00';
+      for (const t of ts) { g.fillStyle = ks.some(x => Math.abs(x - t) < 1e-3) ? '#ffffff' : '#ffd36b'; const kx = this.tToX(c.start + t), ky = y + hh - 7; g.beginPath(); g.moveTo(kx, ky - 5); g.lineTo(kx + 5, ky); g.lineTo(kx, ky + 5); g.lineTo(kx - 5, ky); g.closePath(); g.fill(); g.stroke(); }
     }
     g.restore();
     if (sel) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.roundRect(x0 + 1, y + 0.5, Math.max(2, x1 - x0 - 2), hh - 1, 5); g.stroke(); }
@@ -421,7 +422,15 @@ export class MTimeline {
     if (!s.sel.has(hit.c.id) || e.shiftKey || e.ctrlKey) s.select([hit.c.id], e.shiftKey || e.ctrlKey);
     if (s.locked(hit.c)) return;
     s.hist?.begin();
-    if (hit.zone === 'key') { this.drag = { kind: 'key', id: hit.c.id, t0: hit.keyT!, x0: x, orig: clone(hit.c) }; return; }
+    if (hit.zone === 'key') {
+      // Rombo: se elige (Mayús/Ctrl suma) y al arrastrar se mueven todos los elegidos del clip.
+      const cur = s.keySel.get(hit.c.id) ?? [];
+      if (!cur.some(t => Math.abs(t - hit.keyT!) < 1e-3) || e.shiftKey || e.ctrlKey) s.selectKeys(hit.c.id, [hit.keyT!], e.shiftKey || e.ctrlKey);
+      const times = [...(s.keySel.get(hit.c.id) ?? [hit.keyT!])];
+      this.drag = { kind: 'key', id: hit.c.id, t0: hit.keyT!, x0: x, orig: clone(hit.c), times, moved: false };
+      return;
+    }
+    s.clearKeys();
     if (hit.zone === 'l' || hit.zone === 'r') { this.drag = { kind: 'trim', id: hit.c.id, edge: hit.zone, orig: clone(hit.c), x0: x }; return; }
     const orig = new Map<string, { start: number; track: string }>();
     for (const c of this.comp.clips) orig.set(c.id, { start: c.start, track: c.track });
@@ -493,15 +502,26 @@ export class MTimeline {
     }
     if (d.kind === 'key') {
       const c0 = d.orig;
-      let nt = d.t0 + (x - d.x0) / this.pps;
-      nt = Math.max(0, Math.min(c0.dur, Math.round(nt * this.comp.fps) / this.comp.fps));
+      if (!d.moved && Math.abs(x - d.x0) < 3) return;
+      d.moved = true;
+      // Desplazamiento común (en fotogramas), limitado para que ninguno salga del clip.
+      let dt = Math.round(((x - d.x0) / this.pps) * this.comp.fps) / this.comp.fps;
+      dt = Math.max(-Math.min(...d.times), Math.min(c0.dur - Math.max(...d.times), dt));
       s.live((_m, comp) => {
         const i = comp.clips.findIndex(c => c.id === d.id);
         if (i < 0) return;
         const c = clone(c0);
-        forEachProp(c, p => { for (const k of p.k ?? []) if (Math.abs(k.t - d.t0) < 1e-3) k.t = nt; p.k?.sort((a, b) => a.t - b.t); });
+        forEachProp(c, p => {
+          if (!p.k) return;
+          const moving = p.k.filter(k => d.times.some(t => Math.abs(k.t - t) < 1e-3));
+          // Un keyframe que no se mueve y queda debajo de uno movido desaparece (como en otros editores).
+          p.k = p.k.filter(k => moving.includes(k) || !moving.some(m => Math.abs(m.t + dt - k.t) < 1e-4));
+          for (const k of moving) k.t += dt;
+          p.k.sort((a, b) => a.t - b.t);
+        });
         comp.clips[i] = c;
       });
+      s.keySel.set(d.id, d.times.map(t => t + dt));
       this.draw();
     }
   }
@@ -513,7 +533,7 @@ export class MTimeline {
     if (!d) return;
     if (d.kind === 'move') { if (d.moved) s.commit('Mover clips'); else { s.hist?.cancel(); if (!_e.shiftKey && !_e.ctrlKey) s.select([d.anchor.id]); } }
     else if (d.kind === 'trim') s.commit('Recortar');
-    else if (d.kind === 'key') s.commit('Mover keyframes');
+    else if (d.kind === 'key') { if (d.moved) s.commit('Mover keyframes'); else { s.hist?.cancel(); s.seek(this.comp.clips.find(c => c.id === d.id)!.start + d.t0); } }
     else if (d.kind === 'marker') s.commit('Mover marcador');
     else if (d.kind === 'pan' && Math.abs(this.sx - d.sx) * this.pps < 4 && Math.abs(this.sy - d.sy) < 4) s.select([]);
     this.draw();
@@ -564,6 +584,7 @@ export class MTimeline {
       return;
     }
     if (!s.sel.has(hit.c.id)) s.select([hit.c.id]);
+    if (hit.zone === 'key') { if (!(s.keySel.get(hit.c.id) ?? []).some(t => Math.abs(t - hit.keyT!) < 1e-3)) s.selectKeys(hit.c.id, [hit.keyT!]); keyMenu(s, e.clientX, e.clientY); return; }
     clipMenu(s, e.clientX, e.clientY, this.xToT(x));
   }
 
@@ -589,6 +610,18 @@ export class MTimeline {
   }
 }
 
+/** Menú de los keyframes elegidos. */
+export function keyMenu(s: MotionStudio, x: number, y: number) {
+  const n = [...s.keySel.values()].reduce((a, v) => a + v.length, 0);
+  menu(x, y, `${n} ${n === 1 ? 'keyframe' : 'keyframes'}`, [
+    { label: 'Copiar keyframes', run: () => s.copyKeyframes() },
+    { label: 'Pegar keyframes en el cabezal', disabled: !s.hasKeyClip, run: () => s.pasteKeyframes() },
+    { label: 'Borrar keyframes', danger: true, run: () => s.deleteKeyframes() },
+    null,
+    ...EASES.map(e => ({ label: `Curva: ${e.label}`, run: () => s.easeKeyframes(e.id) })),
+  ]);
+}
+
 /** Menú de acciones de los clips elegidos (línea de tiempo y teléfono). */
 export function clipMenu(s: MotionStudio, x: number, y: number, at = s.time) {
   const c = s.one;
@@ -600,6 +633,9 @@ export function clipMenu(s: MotionStudio, x: number, y: number, at = s.time) {
     { label: 'Duplicar', run: () => s.duplicate() },
     { label: 'Copiar', run: () => s.copy() },
     { label: 'Cortar', run: () => s.copy(true) },
+    null,
+    { label: 'Copiar todos sus keyframes', disabled: !c, run: () => s.copyKeyframes('all') },
+    { label: 'Pegar keyframes en el cabezal', disabled: !s.hasKeyClip, run: () => s.pasteKeyframes() },
     null,
     { label: 'Copiar atributos', disabled: !c, run: () => s.copyAttributes() },
     { label: 'Pegar atributos', disabled: !s.hasAttrs, run: () => s.pasteAttributes() },

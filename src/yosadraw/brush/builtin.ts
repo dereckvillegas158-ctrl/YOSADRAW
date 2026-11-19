@@ -279,6 +279,33 @@ export const BUILTIN_PRESETS: BrushPreset[] = [
     render: { accumulation: 'buildup' },
     stabilizer: { streamLine: 5, stabilization: 10, motionFiltering: 5, pressureSmoothing: 20 },
   }),
+  // ---- 1.7.0: borde duro, borde suave y dinámica de color
+  mk('clean-ink', 'Tinta limpia (borde duro)', 'Plumas', {
+    tip: { shape: 'round', hardness: 0.8 },
+    grain: { enabled: true, type: 'paper', scale: 0.7, depth: 0.25, mode: 'fixed' },
+    spacing: { spacing: 0.05 },
+    size: { size: 8, minPercent: 0.05, taperStart: 25, taperEnd: 35, taperMin: 0.05 },
+    pressure: { size: 0.9, opacity: 0, curve: FIRM },
+    render: { edge: 'hard', edgeAmount: 0.6 },
+    stabilizer: { streamLine: 35, stabilization: 25, motionFiltering: 15, pressureSmoothing: 30 },
+  }),
+  mk('soft-marker', 'Rotulador suave (antialiasing)', 'Marcadores', {
+    tip: { shape: 'round', hardness: 0.95, roundness: 0.6, angle: 35 },
+    spacing: { spacing: 0.04 },
+    size: { size: 14, minPercent: 0.8 },
+    opacity: { opacity: 0.85, flow: 1 },
+    pressure: { size: 0.15, opacity: 0 },
+    render: { blend: 'multiply', accumulation: 'glaze', edge: 'soft', edgeAmount: 0.35 },
+  }),
+  mk('confetti', 'Confeti de color', 'Efectos', {
+    tip: { shape: 'star', hardness: 0.9 },
+    spacing: { spacing: 1.2 },
+    scatter: { amount: 1.5, count: 2 },
+    size: { size: 18, jitter: 0.6 },
+    rotation: { mode: 'random', jitter: 1 },
+    pressure: { size: 0.4, opacity: 0 },
+    color: { hue: 0.35, sat: 0.1, light: 0.3 },
+  }),
 ];
 
 export const DEFAULT_BRUSH_ID = 'builtin-inking-nib';
@@ -286,7 +313,7 @@ export const DEFAULT_ERASER_ID = 'builtin-eraser-hard';
 export const CATEGORY_ORDER = ['Lápices', 'Plumas', 'Caligrafía', 'Marcadores', 'Pinceles', 'Aerógrafos', 'Acuarelas', 'Óleos', 'Difuminadores', 'Efectos', 'Borradores'];
 
 /** Versión del juego de fábrica. Al subirla, las bibliotecas guardadas reciben los pinceles nuevos. */
-export const FACTORY_VERSION = 2;
+export const FACTORY_VERSION = 3;
 /** Categorías de la versión 1 de cada pincel de fábrica (para migrar bibliotecas guardadas). */
 export const LEGACY_CATEGORY: Record<string, string> = {
   'pencil-hb': 'Bocetos', 'graphite-6b': 'Bocetos', 'technical-pen': 'Entintado', 'inking-nib': 'Entintado', 'smooth-line': 'Entintado',

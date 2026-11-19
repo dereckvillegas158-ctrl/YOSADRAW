@@ -1,7 +1,7 @@
 import { desktopBridge } from '../../brush/storage';
 import type { Item } from '../../doc/items';
 import * as M from '../../anim/model';
-import { encodeGif, encodeMp4, mp4Codec } from '../../anim/webexport';
+// Codificadores GIF y MP4: se cargan al exportar (no pesan al abrir la app).
 import { h, toast } from '../dom';
 import { openSheet } from '../Mobile';
 import type { AnimStudio } from './AnimStudio';
@@ -302,6 +302,7 @@ export class PhoneAnim {
     const progress = (k: number, n: number) => { bar.style.width = `${(k / n) * 100}%`; label.textContent = `Fotograma ${k} / ${n}`; };
     try {
       let data: Uint8Array | null, note = '';
+      const { encodeGif, encodeMp4, mp4Codec } = await import('../../anim/webexport');
       if (format === 'gif') data = await encodeGif({ width: w, height: hh, fps: a.fps, frames: a.length, frame, progress, cancelled: () => cancelled, loop, alpha });
       else {
         if (!(await mp4Codec(w, hh, a.fps))) throw new Error('este dispositivo no puede codificar vídeo H.264 a ese tamaño (prueba uno menor o GIF)');

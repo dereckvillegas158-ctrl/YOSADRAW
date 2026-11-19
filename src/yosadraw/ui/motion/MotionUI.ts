@@ -6,6 +6,7 @@ import { MCurves } from './MCurves';
 import { MI } from './icons';
 import { MInspector } from './MInspector';
 import { MHistory, MLibrary } from './MLibrary';
+import { MBrowser } from './MBrowser';
 import type { MotionStudio, MotionTool } from './MotionStudio';
 import { clipMenu, MTimeline } from './MTimeline';
 import { MViewer } from './MViewer';
@@ -35,6 +36,7 @@ export class MotionUI {
   readonly inspector: MInspector;
   readonly library: MLibrary;
   readonly history: MHistory;
+  readonly browser: MBrowser;
   private nameEl: HTMLElement;
   private dirtyEl: HTMLElement;
   private undoBtn: HTMLButtonElement;
@@ -52,6 +54,7 @@ export class MotionUI {
     this.inspector = new MInspector(s);
     this.library = new MLibrary(s);
     this.history = new MHistory(s);
+    this.browser = new MBrowser(s);
     this.timeline.onCurves = () => this.showCurves(true);
     this.curves.onBack = () => this.showCurves(false);
 
@@ -115,7 +118,7 @@ export class MotionUI {
       act(MI.text, 'Texto', () => s.addText()),
       act(MI.shape, 'Formas', () => this.shapeMenu(0, 0)),
       act(MI.edit, 'Editar', () => { if (!s.sel.size) { toast('Toca un clip en la línea de tiempo.'); return; } this.inspector.setTab('clip'); this.sheet('Propiedades', this.inspector.el); }),
-      act(MI.fx, 'Efectos', () => { if (!s.one) { toast('Toca un clip en la línea de tiempo.'); return; } this.inspector.setTab('fx'); this.sheet('Efectos', this.inspector.el); }),
+      act(MI.fx, 'Efectos', () => this.browse('filters')),
       act(MI.key, 'Animar', () => { if (!s.one) { toast('Toca un clip en la línea de tiempo.'); return; } this.inspector.setTab('anim'); this.sheet('Animar', this.inspector.el); }),
       act(MI.split, 'Dividir', () => s.split()),
       act(MI.trash, 'Borrar', () => s.remove()),
@@ -123,6 +126,7 @@ export class MotionUI {
     this.el = h('div', { class: 'mo-root', role: 'application', 'aria-label': 'YOSADRAW MOTION', hidden: true },
       top, main, split('b'), bottom, phoneBar);
     this.el.addEventListener('mo-edit-text', e => { this.inspector.setTab('clip'); s.select([(e as CustomEvent<string>).detail]); if (this.simple) this.sheet('Texto', this.inspector.el); setTimeout(() => this.inspector.el.dispatchEvent(new Event('mo-focus-text'))); });
+    this.el.addEventListener('mo-browse', e => this.browse((e as CustomEvent<'filters' | 'anims'>).detail));
     this.el.addEventListener('mo-curves', () => { if (!this.simple) this.showCurves(true); });
     this.renderLeft();
 
@@ -157,10 +161,18 @@ export class MotionUI {
 
   private renderLeft() {
     const s = this.s;
-    const tab = s.prefs.leftTab === 'history' ? 'history' : 'media';
-    this.leftTabs.replaceChildren(...([['media', 'Medios'], ['history', 'Historial']] as const).map(([id, l]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === id), on: { click: () => { s.prefs.leftTab = id; s.deps.persist(); this.renderLeft(); } } }, l)));
-    this.leftBody.replaceChildren(tab === 'media' ? this.library.el : this.history.el);
-    if (tab === 'media') this.library.render(); else this.history.render();
+    const tab = (['history', 'browser'] as string[]).includes(s.prefs.leftTab) ? s.prefs.leftTab as 'history' | 'browser' : 'media';
+    this.leftTabs.replaceChildren(...([['media', 'Medios'], ['browser', 'Efectos'], ['history', 'Historial']] as const).map(([id, l]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === id), on: { click: () => { s.prefs.leftTab = id; s.deps.persist(); this.renderLeft(); } } }, l)));
+    this.leftBody.replaceChildren(tab === 'media' ? this.library.el : tab === 'browser' ? this.browser.el : this.history.el);
+    if (tab === 'media') this.library.render(); else if (tab === 'browser') this.browser.show(); else this.history.render();
+  }
+
+  /** Abre el explorador de filtros, transiciones, efectos y animaciones. */
+  browse(tab: 'filters' | 'transitions' | 'effects' | 'anims' = 'filters') {
+    if (this.simple) { this.browser.show(tab); openSheet('Efectos y animaciones', () => [h('div', { class: 'mo-sheetbody' }, this.browser.el)]); return; }
+    this.s.prefs.leftTab = 'browser';
+    this.renderLeft();
+    this.browser.show(tab);
   }
 
   private showCurves(on: boolean) {

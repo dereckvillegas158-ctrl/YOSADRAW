@@ -42,7 +42,7 @@ export interface Cel {
   label: string;
 }
 
-export interface TrackGroup { id: string; name: string; visible: boolean; locked: boolean; opacity: number; collapsed: boolean }
+export interface TrackGroup { id: string; name: string; visible: boolean; locked: boolean; opacity: number; collapsed: boolean; blend?: import('../doc/items').LayerBlend }
 export interface Marker { id: string; frame: number; name: string; color: string }
 export interface OnionSettings {
   enabled: boolean;
@@ -126,7 +126,7 @@ export const playRange = (a: Animation): [number, number] => a.range ? [Math.max
 export const contentEnd = (doc: Document) => Math.max(0, ...doc.layers.flatMap(l => (l.cels ?? []).map(celEnd)));
 
 /** Grupo de una capa (si existe). */
-export const groupOf = (doc: Document, l: Layer) => (l.group && doc.anim ? doc.anim.groups.find(g => g.id === l.group) ?? null : null);
+export const groupOf = (doc: Document, l: Layer) => (l.group ? (doc.anim?.groups ?? doc.folders).find(g => g.id === l.group) ?? null : null);
 /** Visible teniendo en cuenta el grupo. */
 export const effectiveVisible = (doc: Document, l: Layer) => l.visible && (groupOf(doc, l)?.visible ?? true);
 export const effectiveLocked = (doc: Document, l: Layer) => l.locked || (groupOf(doc, l)?.locked ?? false);

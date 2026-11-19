@@ -2,6 +2,7 @@ const svg = (body: string) => `<svg viewBox="0 0 24 24" width="20" height="20" f
 
 /** Iconos de herramientas (trazo 1.6 sobre 24×24, reconocibles a 20 px). */
 export const TOOL_ICONS: Record<string, string> = {
+  'vector-edit': svg('<path d="M4 18C8 6 14 20 20 6"/><rect x="2.5" y="16.5" width="3" height="3" fill="currentColor"/><rect x="10.5" y="10.5" width="3" height="3" fill="currentColor"/><rect x="18.5" y="4.5" width="3" height="3" fill="currentColor"/>'),
   brush: svg('<path d="M4 20c2.5 0 4-1.2 4-3.4 0-1.2-.9-2.1-2-2.1s-2 .9-2 2.2V20z"/><path d="M8.6 14.6 19.2 4a1.6 1.6 0 0 1 2.3 2.3L10.9 16.9"/>'),
   pencil: svg('<path d="M4 20l1.2-4.4L16.6 4.2a1.8 1.8 0 0 1 2.6 0l.6.6a1.8 1.8 0 0 1 0 2.6L8.4 18.8z"/><path d="m14.8 6 3.2 3.2M4 20l4.4-1.2"/>'),
   pen: svg('<path d="M12 21v-4"/><path d="M8 17h8l-1.5-7L12 3 9.5 10z"/><circle cx="12" cy="11" r="1.2"/>'),

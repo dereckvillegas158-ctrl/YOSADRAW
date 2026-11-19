@@ -16,6 +16,9 @@ import type { Item } from '../doc/items';
 import type { Rect } from '../brush/StrokePainter';
 import * as anim from '../anim/model';
 import { ClipComposer, clipBaseOf, clipHidden, hasClipped, maskTo } from '../doc/clip';
+import { composeFolders, groupsOf } from '../doc/folders';
+import { itemTouchesPath } from '../doc/vector';
+import { clonePreset } from '../brush/BrushPreset';
 
 export type EngineMode = 'paint' | 'erase' | 'pan' | 'rotate' | 'custom';
 
@@ -388,9 +391,11 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.emit('doc', { structure: true, selection: false });
   }
 
-  addLayer(): boolean {
+  addLayer(o: { vector?: boolean } = {}): boolean {
     if (this.doc.layers.length >= MAX_LAYERS) { this.emit('notice', `Máximo ${MAX_LAYERS} capas`); return false; }
-    return this.exec(this.doc.cmdAddLayer(this.doc.activeId));
+    const l = this.doc.newLayer();
+    if (o.vector) { l.vector = true; l.name = l.name.replace('Capa', 'Vector'); }
+    return this.exec({ ...this.doc.cmdAddLayer(this.doc.activeId, l), label: o.vector ? 'Nueva capa vectorial' : 'Nueva capa' });
   }
 
   /** Vista previa de propiedades (sin historial) mientras se arrastra un control. */
@@ -432,8 +437,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   editableLayer(): Layer | null {
     const l = this.doc.active;
     if (this.playing) { this.emit('notice', 'Pausa la reproducción para dibujar'); return null; }
-    if (!anim.effectiveVisible(this.doc, l)) { this.emit('notice', l.visible ? 'El grupo de la capa activa está oculto' : 'La capa activa está oculta'); return null; }
-    if (anim.effectiveLocked(this.doc, l)) { this.emit('notice', l.locked ? 'La capa activa está bloqueada' : 'El grupo de la capa activa está bloqueado'); return null; }
+    if (!anim.effectiveVisible(this.doc, l)) { this.emit('notice', l.visible ? (this.doc.anim ? 'El grupo de la capa activa está oculto' : 'La carpeta de la capa activa está oculta') : 'La capa activa está oculta'); return null; }
+    if (anim.effectiveLocked(this.doc, l)) { this.emit('notice', l.locked ? 'La capa activa está bloqueada' : this.doc.anim ? 'El grupo de la capa activa está bloqueado' : 'La carpeta de la capa activa está bloqueada'); return null; }
     return l;
   }
 
@@ -584,6 +589,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (!layer) return;
     if (layer.alphaLock && this._mode === 'erase') { this.emit('notice', 'La capa tiene el alfa bloqueado: el borrador no puede cambiar su transparencia'); return; }
     this.nav.cancelAnimations();
+    // Capa vectorial: el borrador quita trazos enteros (siguen siendo editables).
+    if (layer.vector && this._mode === 'erase') { this.vErase = { layer: layer.id, pts: [this.view.toDoc(p.x, p.y)], screen: [{ x: p.x, y: p.y }] }; this.requestFrame(); return; }
     this.strokeStart = performance.now();
     // Capa aún repintándose (p. ej. justo después de un zoom) y cara de terminar: el trazo
     // espera sin bloquear. Se guardan los puntos y se muestra una línea provisional; si llega
@@ -601,10 +608,33 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   /** Trazos ya aplicados cuya capa aún se repinta: se siguen viendo como línea provisional. */
   private ghosts: { layer: string; points: StrokePoint[]; color: string; width: number; erase: boolean }[] = [];
 
+  /** Borrador vectorial en curso (puntos en documento y en pantalla). */
+  private vErase: { layer: string; pts: { x: number; y: number }[]; screen: { x: number; y: number }[] } | null = null;
+
+  /**
+   * Pincel efectivo: en una capa vectorial el trazo se guarda como línea lisa
+   * (vectorial, editable): mismo tamaño, color, presión y afilado; sin texturas ni mezcla.
+   */
+  private vectorCache = new WeakMap<BrushPreset, BrushPreset>();
+  effectivePreset(layer: Layer): BrushPreset {
+    const p = this.preset;
+    if (!layer.vector || this._mode === 'erase') return p;
+    let v = this.vectorCache.get(p);
+    if (!v) {
+      v = clonePreset(p);
+      v.render = { ...v.render, mode: 'smooth', edge: 'normal' };
+      v.mix = { ...v.mix, mode: 'none' };
+      v.grain = { ...v.grain, enabled: false };
+      v.color = { ...v.color, hue: 0, sat: 0, light: 0 };
+      this.vectorCache.set(p, v);
+    }
+    return v;
+  }
+
   private commitPendingOffline(): boolean {
     const pd = this.pending!;
     const layer = this.doc.layer(pd.layer);
-    const preset = this.preset;
+    const preset = layer ? this.effectivePreset(layer) : this.preset;
     if (!layer || !this.stale().includes(layer) || (preset.mix.mode !== 'none' && preset.render.mode === 'stamp')) return false;
     this.pending = null;
     this.stabilizer.apply(this.stabilizerFor(preset));
@@ -644,7 +674,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private startSession(layer: Layer, p: StrokePoint) {
     const view = this.layerViews.get(layer.id)!;
     const tool = this._mode === 'erase' ? 'eraser' : 'brush';
-    const preset = this.preset;
+    const preset = this.effectivePreset(layer);
     this.stabilizer.apply(this.stabilizerFor(preset));
     this.simulate = this.simulatesPressure(preset);
     this.sim = { x: p.x, y: p.y, t: 0, v: 0, p: 0.6 };
@@ -682,6 +712,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private moveStroke(points: StrokePoint[]) {
+    if (this.vErase) { for (const p of points) { this.vErase.pts.push(this.view.toDoc(p.x, p.y)); this.vErase.screen.push({ x: p.x, y: p.y }); } this.requestFrame(); return; }
     if (this.pending) { this.pending.points.push(...points); this.requestFrame(); return; }
     const s = this.session;
     if (!s) return;
@@ -695,6 +726,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   }
 
   private endStroke() {
+    if (this.vErase) { this.finishVectorErase(); return; }
     // Se levantó el dedo antes de que la capa estuviera lista: el trazo se calcula sin pintarlo,
     // se añade al documento y la capa sigue repintándose por partes (sin bloquear).
     if (this.pending && this.commitPendingOffline()) return;
@@ -713,8 +745,22 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     this.exec(this.doc.cmdAddItems(layer.id, [item], s.tool === 'eraser' ? 'Borrar' : 'Trazo'), true);
   }
 
+  /** Quita los trazos de la capa vectorial que tocó el borrador. */
+  private finishVectorErase() {
+    const ve = this.vErase!;
+    this.vErase = null;
+    this.requestOverlay();
+    const layer = this.doc.layer(ve.layer);
+    if (!layer) return;
+    const r = Math.max(1, this.preset.size.size / 2);
+    const keep = layer.items.filter(it => !itemTouchesPath(it, ve.pts, r));
+    if (keep.length === layer.items.length) return;
+    this.exec(this.doc.cmdSetItems(layer.id, keep, `Borrar ${layer.items.length - keep.length === 1 ? 'trazo' : `${layer.items.length - keep.length} trazos`}`));
+  }
+
   /** Descarta el trazo o gesto en curso (p. ej. al apoyar un segundo dedo). */
   private cancelStroke() {
+    if (this.vErase) { this.vErase = null; this.requestOverlay(); }
     if (this.toolPointer !== null) { this.handler?.cancel?.(); this.toolPointer = null; }
     if (this.pending) { this.pending = null; this.requestFrame(); }
     if (!this.session) return;
@@ -994,11 +1040,12 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const g = c.getContext('2d')!;
     if (this.doc.settings.background) { g.fillStyle = this.doc.settings.background; g.fillRect(0, 0, W, H); }
     g.imageSmoothingQuality = 'high';
-    for (const l of visible) {
-      g.globalAlpha = l.opacity;
-      g.globalCompositeOperation = blendOp(l.blend);
-      g.drawImage(this.layerViews.get(l.id)!.canvas, x0, y0, sw, sh, 0, 0, W, H);
-    }
+    composeFolders(this.doc, visible, g, (l, t) => {
+      t.globalAlpha = l.opacity;
+      t.globalCompositeOperation = blendOp(l.blend);
+      t.imageSmoothingQuality = 'high';
+      t.drawImage(this.layerViews.get(l.id)!.canvas, x0, y0, sw, sh, 0, 0, W, H);
+    }, blendOp);
     return c;
   }
 
@@ -1070,14 +1117,14 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     out.width = this.doc.width; out.height = this.doc.height;
     const g = out.getContext('2d')!;
     const clips = new ClipComposer(this.doc.layers);
-    for (const l of this.doc.layers) {
-      if (!l.visible || !l.items.length) continue;
+    composeFolders(this.doc, this.doc.layers.filter(l => l.visible), g, (l, t) => {
+      if (!l.items.length) return;
       const r = this.rasterize([l], 1);
-      if (!clips.prepare(l, r.getContext('2d')!)) continue;
-      g.globalAlpha = l.opacity;
-      g.globalCompositeOperation = blendOp(l.blend);
-      g.drawImage(r, 0, 0);
-    }
+      if (!clips.prepare(l, r.getContext('2d')!)) return;
+      t.globalAlpha = l.opacity;
+      t.globalCompositeOperation = blendOp(l.blend);
+      t.drawImage(r, 0, 0);
+    }, blendOp);
     return out;
   }
 
@@ -1098,7 +1145,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     const ids = new Set(list.map(l => l.id));
     for (const [id, v] of this.layerViews) if (!ids.has(id)) { v.canvas.remove(); this.layerViews.delete(id); }
     // Grupos de pistas: contenedor aislado con la opacidad y visibilidad del grupo (el navegador compone el grupo exacto).
-    const groups = new Map((this.doc.anim?.groups ?? []).map(g => [g.id, g]));
+    const groups = new Map(groupsOf(this.doc).map(g => [g.id, g]));
     for (const [id, el] of this.groupEls) if (!groups.has(id)) { el.remove(); this.groupEls.delete(id); }
     let prev: Element = this.stack.firstElementChild!; // papel
     const lastIn = new Map<string, Element>();
@@ -1124,6 +1171,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
           this.groupEls.set(g.id, el);
         }
         el.style.opacity = String(g.opacity);
+        el.style.mixBlendMode = g.blend ?? 'normal';
         el.style.visibility = g.visible ? '' : 'hidden';
         if (!lastIn.has(g.id)) {
           if (el.parentElement !== this.stack || prev.nextElementSibling !== el) prev.after(el);
@@ -1559,6 +1607,11 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     }
     this.drawSelection(ctx);
     this.drawAssists(ctx);
+    if (this.vErase && this.vErase.screen.length) {
+      // Camino del borrador vectorial (quitará los trazos que toque).
+      ctx.save(); ctx.strokeStyle = 'rgba(255, 107, 129, 0.75)'; ctx.lineWidth = Math.max(2, this.preset.size.size * this.view.scale); ctx.lineCap = ctx.lineJoin = 'round';
+      ctx.beginPath(); this.vErase.screen.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.stroke(); ctx.restore();
+    }
     if (this.handler?.overlay) { ctx.save(); this.handler.overlay(ctx); ctx.restore(); }
     for (const o of this.overlays) { ctx.save(); o(ctx); ctx.restore(); }
     if (this.picking) { this.drawLoupe(ctx); return; }

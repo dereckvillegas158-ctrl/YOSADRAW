@@ -4,6 +4,7 @@ import { selectionBounds, type Selection } from './Selection';
 import { transformAABB, type Mat } from '../engine/ViewTransform';
 import type { Animation, Cel } from '../anim/model';
 import type { Motion } from '../motion/model';
+import type { Folder } from './folders';
 
 export interface Layer {
   id: string;
@@ -25,6 +26,8 @@ export interface Layer {
   reference?: boolean;
   /** Máscara de recorte: sólo se ve sobre los píxeles de la capa base de debajo (doc/clip.ts). */
   clip?: boolean;
+  /** Capa vectorial: los trazos se guardan como líneas editables (nodos, color, grosor). */
+  vector?: boolean;
 }
 
 /** Cambio deshacible. `layers` = capas cuyo contenido cambia ('structure' = orden/altas/bajas). */
@@ -85,6 +88,8 @@ export class Document {
   anim: Animation | null = null;
   /** Proyecto de vídeo de YOSADRAW MOTION (null = dibujo o animación). */
   motion: Motion | null = null;
+  /** Carpetas de capas (dibujo; en una animación se usan los grupos de pistas). */
+  folders: Folder[] = [];
   private nextItem = 1;
   private nextLayer = 1;
 
@@ -168,9 +173,33 @@ export class Document {
     const prevActive = this.activeId;
     return {
       label: 'Nueva capa', layers: [layer.id], structure: true,
-      redo: () => { const i = above ? this.index(above) : this.layers.length - 1; this.layers.splice(i + 1, 0, layer); this.activeId = layer.id; },
+      redo: () => {
+        const i = above ? this.index(above) : this.layers.length - 1;
+        // Una capa nueva sobre otra de una carpeta entra en esa carpeta.
+        if (layer.group === undefined && above) layer.group = this.layer(above)?.group ?? null;
+        this.layers.splice(i + 1, 0, layer); this.activeId = layer.id;
+      },
       undo: () => { this.layers = this.layers.filter(l => l !== layer); this.activeId = prevActive; },
     };
+  }
+
+  /**
+   * Cambio de estructura con deshacer: orden de capas, carpetas y pertenencia. `fn`
+   * modifica el documento; si devuelve false, no hay cambio.
+   */
+  cmdStructure(label: string, fn: () => boolean | void): Command | null {
+    const snap = () => ({ layers: this.layers.slice(), groups: this.layers.map(l => l.group ?? null), folders: this.folders.map(f => ({ ...f })), groupsAnim: this.anim?.groups.map(g => ({ ...g })), activeId: this.activeId });
+    const before = snap();
+    if (fn() === false) return null;
+    const after = snap();
+    const apply = (s: ReturnType<typeof snap>) => {
+      this.layers = s.layers.slice();
+      s.layers.forEach((l, i) => { l.group = s.groups[i]; });
+      this.folders = s.folders.map(f => ({ ...f }));
+      if (this.anim && s.groupsAnim) this.anim.groups = s.groupsAnim.map(g => ({ ...g }));
+      this.activeId = s.activeId;
+    };
+    return { label, layers: [...new Set([...before.layers, ...after.layers].map(l => l.id))], structure: true, redo: () => apply(after), undo: () => apply(before) };
   }
 
   cmdDuplicateLayer(id: string): Command {

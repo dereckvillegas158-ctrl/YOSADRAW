@@ -379,6 +379,24 @@ En PC, FFmpeg (`desktop/video.cjs`) lee metadatos, convierte a H.264 lo que Chro
 reproduce, crea proxies y codifica la exportación al vuelo; en Android se usa WebCodecs.
 Pruebas: `tests/motion-model.test.ts` y `tests/motion-project.test.ts`.
 
+## Capas vectoriales y carpetas
+
+- **Capa vectorial** (`Layer.vector`): el motor convierte el pincel en línea lisa al pintar
+  (`CanvasEngine.effectivePreset`): mismos tamaño, color, presión y afilado, sin texturas.
+  `doc/vector.ts` tiene el toque de trazos, los nodos, la deformación con caída suave,
+  suavizar y simplificar; la herramienta está en `tools/handlers/vector.ts`. El borrador
+  vectorial quita los trazos enteros que toca.
+- **Carpetas** (`Document.folders` y `Layer.group`; en animaciones, los grupos de pistas):
+  `doc/folders.ts` compone cada carpeta aparte (opacidad y fusión propias) en pantalla,
+  exportación y miniaturas, y tiene los comandos con deshacer (`Document.cmdStructure`).
+
+## Borde del trazo y dinámica de color
+
+`render.edge` (`normal` · `soft` · `hard`) y `render.edgeAmount` en el preset. Suave: el trazo
+se compone sobre una copia desenfocada de sí mismo (en vivo, el halo se recalcula sólo
+alrededor de los sellos nuevos). Duro: se recorta con la silueta vectorial de los sellos.
+`color.hue/sat/light/perStroke`: colores por sello deterministas (dependen de la posición).
+
 ## Imágenes: importar y referencias
 - **Importar imagen como capa** (Ctrl+Mayús+O, menú del proyecto, «Más» en el teléfono, arrastrar
   al lienzo o pegar con Ctrl+V): crea una capa nueva encima de la activa con la imagen centrada (se

@@ -9,7 +9,7 @@ import { BLENDS } from '../LayersPanel';
 import { confirmDialog, promptText } from '../modal';
 import { MI } from './icons';
 import type { MotionStudio } from './MotionStudio';
-import { fmtTC } from './util';
+import { fmtTC, menu } from './util';
 
 type Sync = () => void;
 const FONTS = ['Outfit', 'Instrument Sans', 'JetBrains Mono', 'Arial', 'Georgia', 'Times New Roman', 'Courier New', 'Impact', 'Trebuchet MS', 'Verdana', 'Comic Sans MS', 'system-ui', 'serif', 'sans-serif', 'monospace'];
@@ -117,6 +117,18 @@ export class MInspector {
     const prev = h('button', { type: 'button', class: 'mo-keynav', title: 'Keyframe anterior', 'aria-label': 'Keyframe anterior', html: '‹' });
     const next = h('button', { type: 'button', class: 'mo-keynav', title: 'Keyframe siguiente', 'aria-label': 'Keyframe siguiente', html: '›' });
     b.addEventListener('click', () => s.edit(keyAt(p, lt()) ? `Quitar keyframe de ${label}` : `Keyframe de ${label}`, () => { toggleKey(p, lt()); }));
+    // Clic derecho (o mantener pulsado): copiar o pegar los keyframes de esta propiedad.
+    if (c) b.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      let path = '';
+      forEachProp(c, (q, n) => { if (q === p) path = n; });
+      if (!path) return;
+      menu(e.clientX, e.clientY, label, [
+        { label: `Copiar keyframes de ${label}`, disabled: !animated(p), run: () => { s.select([c.id]); s.copyKeyframes([path]); } },
+        { label: `Pegar keyframes aquí (en ${label})`, disabled: !s.hasKeyClip, run: () => { s.select([c.id]); s.pasteKeyframes(path); } },
+        { label: 'Pegar keyframes en sus propiedades', disabled: !s.hasKeyClip, run: () => { s.select([c.id]); s.pasteKeyframes(); } },
+      ]);
+    });
     prev.addEventListener('click', () => { const t = lt(); const k = [...(p.k ?? [])].reverse().find(x => x.t < t - 1e-4); if (k) s.seek(base + k.t); });
     next.addEventListener('click', () => { const t = lt(); const k = (p.k ?? []).find(x => x.t > t + 1e-4); if (k) s.seek(base + k.t); });
     const sync = () => {
@@ -440,7 +452,8 @@ export class MInspector {
     const presets = s.m.presets.filter(p => p.kind === 'fx');
     const pre = h('select', { class: 'mo-sel', 'aria-label': 'Aplicar preset de efectos' }, h('option', { value: '' }, presets.length ? 'Aplicar preset…' : 'Sin presets guardados'), ...presets.map(p => h('option', { value: p.id }, p.name)));
     pre.addEventListener('change', () => { const p = presets.find(x => x.id === pre.value); if (p) this.set(c, `Preset ${p.name}`, x => { x.fx.push(...clone(p.data as FxInst[]).map(f => ({ ...f, id: mid('fx') }))); }); });
-    this.section('Pila de efectos (de arriba abajo)', add,
+    const explore = h('button', { type: 'button', class: 'btn sm', on: { click: () => this.el.dispatchEvent(new CustomEvent('mo-browse', { bubbles: true, detail: 'filters' })) } }, 'Explorar filtros y efectos…');
+    this.section('Pila de efectos (de arriba abajo)', add, explore,
       h('div', { class: 'mo-btnrow' }, pre, h('button', { type: 'button', class: 'btn sm', disabled: !c.fx.length, on: { click: async () => {
         const n = await promptText('Nombre del preset de efectos', c.fx.map(f => EFFECTS.find(e => e.id === f.fx)?.label ?? f.fx).join(' + ').slice(0, 40));
         if (n) s.edit('Guardar preset', m => { m.presets.push({ id: mid('pr'), name: n.slice(0, 60), kind: 'fx', data: clone(c.fx) }); });
@@ -494,18 +507,24 @@ export class MInspector {
         t.type !== 'none' ? this.plainNum('Duración', t.dur, v => this.set(c, 'Transición', x => { x[side] = { type: x[side].type, dur: Math.max(1 / s.fps, Math.min(x.dur, v)) }; }), `${side}d`, { min: 0.04, step: 0.1, unit: 's' }) : null);
     };
     this.section('Transiciones', tr('tin'), tr('tout'), h('p', { class: 'ctl-help' }, 'Para un fundido cruzado, solapa dos clips en pistas distintas con entrada «Fundido» en el de arriba.'));
-    const groups = ['Entrada', 'Salida', 'Énfasis'] as const;
-    const len = h('input', { type: 'number', value: String(Math.min(0.8, +(c.dur / 2).toFixed(2))), min: '0.05', step: '0.05', class: 'mo-num', 'aria-label': 'Duración del movimiento' });
+    const groups = ['Entrada', 'Salida', 'Bucle'] as const;
+    const len = h('input', { type: 'number', value: String(Math.min(s.presetLen, +(c.dur / 2).toFixed(2))), min: '0.05', step: '0.05', class: 'mo-num', 'aria-label': 'Duración del movimiento' });
+    len.addEventListener('change', () => { const v = Number(len.value); if (v > 0) s.presetLen = v; });
     this.section('Presets de movimiento',
       h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Duración'), len, h('span', { class: 'mo-unit' }, 's')),
-      ...groups.map(g => h('div', { class: 'mo-presets' }, h('span', { class: 'mo-unit' }, g), ...MOTION_PRESETS.filter(p => p.group === g).map(p => h('button', { type: 'button', class: 'btn xs', on: { click: () => this.set(c, p.label, x => { applyPreset(x.tf, p.id, x.dur, Math.max(0.05, Number(len.value) || 0.8), s.comp.w, s.comp.h); }) } }, p.label)))),
-      this.animPresets(c));
+      ...groups.map(g => h('div', { class: 'mo-presets' }, h('span', { class: 'mo-unit' }, g), ...MOTION_PRESETS.filter(p => p.group === g).map(p => h('button', { type: 'button', class: 'btn xs', on: { click: () => this.set(c, p.label, x => { applyPreset(x.tf, p.id, x.dur, Math.max(0.05, Number(len.value) || s.presetLen), s.comp.w, s.comp.h); }) } }, p.label)))),
+      this.animPresets(c),
+      h('button', { type: 'button', class: 'btn sm', on: { click: () => this.el.dispatchEvent(new CustomEvent('mo-browse', { bubbles: true, detail: 'anims' })) } }, 'Ver todas con vista previa…'));
     // Keyframes del clip (todas las propiedades animadas).
     const rows = h('div', { class: 'mo-keys' });
     forEachProp(c, (p, path) => {
       if (!p.k?.length) return;
       const lab = propLabel(c, path);
       const head = h('button', { type: 'button', class: `mo-keyprop${s.focus?.path === path ? ' on' : ''}`, title: 'Ver en el editor de curvas', on: { click: () => { s.focus = { clip: c.id, path }; this.el.dispatchEvent(new CustomEvent('mo-curves', { bubbles: true })); this.render(); } } }, `${lab} · ${p.k.length}`);
+      head.addEventListener('contextmenu', e => { e.preventDefault(); menu(e.clientX, e.clientY, lab, [
+        { label: `Copiar keyframes de ${lab}`, run: () => s.copyKeyframes([path]) },
+        { label: `Pegar keyframes en ${lab}`, disabled: !s.hasKeyClip, run: () => s.pasteKeyframes(path) },
+      ]); });
       rows.append(head);
       p.k.forEach((k, i) => {
         const sk = (label: string, fn: (kk: NonNullable<typeof p.k>[number], pp: Prop<unknown>) => void) => this.set(c, label, x => { const pp = propByPath(x, path); const kk = pp?.k?.[i]; if (pp && kk) fn(kk, pp); });
@@ -521,6 +540,7 @@ export class MInspector {
       });
     });
     this.section('Keyframes', rows.childElementCount ? rows : h('p', { class: 'ctl-help' }, 'Sin keyframes. Pulsa un rombo ◇ junto a una propiedad (pestaña Clip) o la tecla K.'),
+      this.btns(['Copiar todos', () => s.copyKeyframes('all'), 'Copia todos los keyframes de este clip'], ['Pegar en el cabezal', () => s.pasteKeyframes(), 'Pega los keyframes copiados (de este u otro clip) desde el cabezal']),
       this.btns(['Quitar todos los keyframes', () => this.set(c, 'Quitar keyframes', x => forEachProp(x, (p, path) => { if (p.k?.length) { p.v = valueAt(p, s.time - c.start); delete p.k; } void path; }))]));
   }
 

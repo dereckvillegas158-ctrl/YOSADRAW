@@ -1,4 +1,5 @@
 import { ClipComposer } from '../doc/clip';
+import { folderOf, layerVisible, type Folder } from '../doc/folders';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
 import { drawSelectionMask, selectionBounds } from '../doc/Selection';
 import type { CanvasEngine } from '../engine';
@@ -70,8 +71,28 @@ export async function renderForExport(engine: CanvasEngine, o: ExportOptions, on
 
   const job: RasterJob = { width, height, composite: new Uint8ClampedArray(0), layers: [], individual: [] };
   const clips = new ClipComposer(doc.layers.filter(l => l.visible || psdLayers));
+  // Carpetas: sus capas se componen en un lienzo aparte que entra con la opacidad y fusión de la carpeta.
+  let folder: Folder | null = null, fctx: CanvasRenderingContext2D | null = null;
+  const flush = () => {
+    if (folder && fctx && folder.visible) {
+      cctx.globalAlpha = folder.opacity; cctx.globalCompositeOperation = blendOp(folder.blend ?? 'normal');
+      cctx.drawImage(fctx.canvas, 0, 0);
+      cctx.globalAlpha = 1; cctx.globalCompositeOperation = 'source-over';
+    }
+    folder = null;
+  };
   for (let i = 0; i < needed.length; i++) {
     const layer = needed[i];
+    const f = folderOf(doc, layer);
+    if (f !== folder) {
+      flush();
+      if (f) {
+        if (!fctx) { const fc = document.createElement('canvas'); fc.width = width; fc.height = height; fctx = fc.getContext('2d', { willReadFrequently: true })!; }
+        fctx.clearRect(0, 0, width, height);
+        folder = f;
+      }
+    }
+    const target = f ? fctx! : cctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
@@ -86,11 +107,11 @@ export async function renderForExport(engine: CanvasEngine, o: ExportOptions, on
     // Máscara de recorte: la capa queda recortada a su base (también en la capa del PSD).
     const showClip = clips.prepare(layer, ctx);
     if (layer.visible && showClip) {
-      cctx.globalAlpha = layer.opacity;
-      cctx.globalCompositeOperation = blendOp(layer.blend);
-      cctx.drawImage(canvas, 0, 0);
-      cctx.globalAlpha = 1;
-      cctx.globalCompositeOperation = 'source-over';
+      target.globalAlpha = layer.opacity;
+      target.globalCompositeOperation = blendOp(layer.blend);
+      target.drawImage(canvas, 0, 0);
+      target.globalAlpha = 1;
+      target.globalCompositeOperation = 'source-over';
     }
     if (psdLayers) {
       // Recorte al contenido para no guardar píxeles vacíos.
@@ -101,7 +122,8 @@ export async function renderForExport(engine: CanvasEngine, o: ExportOptions, on
       const empty = x1 <= x0 || y1 <= y0;
       const lw = empty ? 1 : x1 - x0, lh = empty ? 1 : y1 - y0;
       job.layers.push({
-        name: layer.name, opacity: layer.opacity, blend: layer.blend, hidden: !layer.visible, alphaLock: layer.alphaLock,
+        // PSD: las capas de una carpeta salen con el nombre «Carpeta / Capa», su visibilidad y la opacidad combinada.
+        name: f ? `${f.name} / ${layer.name}` : layer.name, opacity: layer.opacity * (f?.opacity ?? 1), blend: layer.blend, hidden: !layerVisible(doc, layer), alphaLock: layer.alphaLock,
         data: empty ? new Uint8ClampedArray(4) : ctx.getImageData(x0, y0, lw, lh).data, left: empty ? 0 : x0, top: empty ? 0 : y0, width: lw, height: lh,
       });
     } else if (o.layers === 'individual' && !maxSide && !tile && layer.visible) {
@@ -110,6 +132,7 @@ export async function renderForExport(engine: CanvasEngine, o: ExportOptions, on
     onProgress((i + 1) / needed.length);
     await nextFrame();
   }
+  flush();
   job.composite = cctx.getImageData(0, 0, width, height).data;
   return job;
 }

@@ -114,3 +114,39 @@ describe('MOTION: edición en la línea de tiempo', () => {
     expect(h.undoStack.map(c => c.label)).toEqual(['añadir', 'texto', 'pre', 'pegar']);
   });
 });
+
+import { copyKeys, pasteKeys, deleteKeysAt, newComposition as nc2, solidClip as sc2, textClip as tc2 } from '../src/yosadraw/motion/model';
+describe('portapapeles de keyframes', () => {
+  it('copia de un clip y pega en otro en el cabezal, conservando curvas', () => {
+    const comp = nc2(1920, 1080, 30, 10);
+    const a = tc2(comp, comp.tracks[0].id, 0, 'A'), b = sc2(comp, comp.tracks[1].id, 0, '#000000');
+    a.tf.x = { v: 0, k: [{ t: 1, v: 10, e: 'bounce' }, { t: 2, v: 50, e: 'linear' }] };
+    a.tf.opacity = { v: 1, k: [{ t: 1.5, v: 0.5, e: 'linear' }] };
+    const kc = copyKeys(a)!;
+    expect(kc.items.map(i => i.path).sort()).toEqual(['tf.opacity', 'tf.x']);
+    expect(kc.span).toBe(1);
+    expect(pasteKeys(b, kc, 3)).toBe(3);
+    expect(b.tf.x.k!.map(k => [k.t, k.v, k.e])).toEqual([[3, 10, 'bounce'], [4, 50, 'linear']]);
+    expect(b.tf.opacity.k!.map(k => k.t)).toEqual([3.5]);
+  });
+  it('sólo los tiempos elegidos, a otra propiedad del mismo tipo, y no a una de otro tipo', () => {
+    const comp = nc2(100, 100, 30, 10);
+    const a = sc2(comp, comp.tracks[0].id, 0);
+    a.tf.x = { v: 0, k: [{ t: 0, v: 1, e: 'linear' }, { t: 1, v: 2, e: 'linear' }] };
+    const kc = copyKeys(a, [1])!;
+    expect(kc.items[0].keys.map(k => [k.t, k.v])).toEqual([[0, 2]]);
+    expect(pasteKeys(a, kc, 2, 'tf.rot')).toBe(1);
+    expect(a.tf.rot.k![0]).toMatchObject({ t: 2, v: 2 });
+    expect(pasteKeys(a, kc, 2, 'color')).toBe(0);
+    expect(deleteKeysAt(a, [0, 1])).toBe(2);
+    expect(a.tf.x.k).toBeUndefined();
+  });
+  it('efectos con id distinto: se pega en el mismo tipo de efecto', () => {
+    const comp = nc2(100, 100, 30, 10);
+    const a = sc2(comp, comp.tracks[0].id, 0), b = sc2(comp, comp.tracks[0].id, 5);
+    a.fx.push({ id: 'f1', fx: 'gauss', on: true, p: { radius: { v: 1, k: [{ t: 0, v: 1, e: 'linear' }, { t: 1, v: 9, e: 'linear' }] } } });
+    b.fx.push({ id: 'zz', fx: 'gauss', on: true, p: { radius: { v: 3 } } });
+    expect(pasteKeys(b, copyKeys(a)!, 0)).toBe(2);
+    expect(b.fx[0].p.radius.k!.length).toBe(2);
+  });
+});

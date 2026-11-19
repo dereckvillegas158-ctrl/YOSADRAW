@@ -193,7 +193,7 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
     }
     layers.push({
       id: l.id, name: l.name, visible: l.visible, locked: l.locked, alphaLock: l.alphaLock, opacity: l.opacity, blend: l.blend, items: out,
-      ...(l.clip ? { clip: true } : {}),
+      ...(l.clip ? { clip: true } : {}), ...(l.vector ? { vector: true } : {}),
       ...(cels ? { cels: outCels } : {}), ...(l.group ? { group: l.group } : {}), ...(l.sync ? { sync: true } : {}), ...(l.reference ? { reference: true } : {}),
     });
   }
@@ -211,7 +211,7 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
   const project = {
     format: FORMAT_ID, version: FORMAT_VERSION,
     meta: { ...meta, width: doc.width, height: doc.height, dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, layers: doc.layers.length, anim: a ? { frames: a.length, fps: a.fps } : null, motion: doc.motion ? motionMeta(doc) : null },
-    document: { activeId, counters, layers, selection, ...(a ? { anim: animOut, pool } : {}), ...(doc.motion ? { motion: doc.motion } : {}) },
+    document: { activeId, counters, layers, selection, ...(doc.folders.length ? { folders: doc.folders } : {}), ...(a ? { anim: animOut, pool } : {}), ...(doc.motion ? { motion: doc.motion } : {}) },
     references: refs,
     presets: w.presetTable,
     view: o.view ?? null,
@@ -385,6 +385,11 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
   const settings: DocSettings = { background: meta.background, dpi: meta.dpi, profile: meta.profile };
   const doc = new Document(meta.width, meta.height, settings);
   const animIn = d.anim && typeof d.anim === 'object' ? d.anim as J : null;
+  // Carpetas de capas (dibujo).
+  const foldersIn = (Array.isArray(d.folders) ? d.folders as J[] : []).filter(f => typeof f.id === 'string').map((f, i) => ({
+    id: str(f.id, `f${i}`), name: str(f.name, 'Carpeta').slice(0, 80), visible: f.visible !== false, locked: f.locked === true,
+    opacity: Math.min(1, Math.max(0, num(f.opacity, 1))), collapsed: f.collapsed === true, blend: blend(f.blend),
+  }));
   const pool = animIn && Array.isArray(d.pool) ? (d.pool as J[]).map(it => readItem(r, it)) : [];
   const layers: Layer[] = (Array.isArray(d.layers) ? d.layers as J[] : []).map((l, i) => ({
     id: str(l.id, `L${i + 1}_r`), name: str(l.name, `Capa ${i + 1}`), visible: l.visible !== false, locked: l.locked === true, alphaLock: l.alphaLock === true,
@@ -392,7 +397,8 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
     items: (Array.isArray(l.items) ? l.items as J[] : []).map(it => readItem(r, it)),
     ...(l.clip === true ? { clip: true } : {}),
     ...(animIn && Array.isArray(l.cels) ? { cels: readCels(l.cels as J[], pool) } : {}),
-    ...(animIn && typeof l.group === 'string' ? { group: l.group } : {}),
+    ...((animIn || foldersIn.length) && typeof l.group === 'string' ? { group: l.group } : {}),
+    ...(l.vector === true ? { vector: true } : {}),
     ...(animIn && l.sync === true ? { sync: true } : {}), ...(animIn && l.reference === true ? { reference: true } : {}),
   }));
   const counters = (d.counters ?? {}) as J;
@@ -403,6 +409,8 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
     rect: quad(x.rect, [0.6, 0.12, 0.35, 0.35]) as [number, number, number, number], zoom: Math.max(0.01, num(x.zoom, 1)),
     pan: quad(x.pan, [0, 0]) as [number, number], opacity: Math.min(1, Math.max(0.1, num(x.opacity, 1))),
   }));
+  doc.folders = foldersIn;
+  for (const l of doc.layers) if (!animIn && l.group && !foldersIn.some(f => f.id === l.group)) l.group = null;
   if (animIn) doc.anim = readAnim(animIn, files, doc);
   if (d.motion) { doc.motion = normalizeMotion(d.motion); if (!doc.motion) throw new ProjectFormatError('El vídeo del proyecto está dañado'); }
   const media = new Map<string, Uint8Array>();

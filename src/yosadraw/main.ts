@@ -51,7 +51,7 @@ async function main() {
     void App.addListener('pause', () => { void lib.saveNow(); window.dispatchEvent(new Event('yosadraw:persist')); void app.session.flushRecovery(); });
   }
   // Sólo en desarrollo: acceso desde la consola y para las pruebas e2e.
-  if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE) Object.assign(window, { __yosadraw: { engine, lib, painter, ...app } });
+  if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE) Object.assign(window, { __yosadraw: new Proxy({ engine, lib, painter } as Record<string | symbol, unknown>, { get: (t, k) => (k in t ? t[k] : (app as unknown as Record<string | symbol, unknown>)[k]) }) });
 }
 
 main().catch(err => {
