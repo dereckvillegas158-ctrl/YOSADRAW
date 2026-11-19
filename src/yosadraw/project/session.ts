@@ -1,4 +1,5 @@
 import { ClipComposer } from '../doc/clip';
+import { folderOf, layerVisible } from '../doc/folders';
 import { newAnimation, newCel } from '../anim/model';
 import { newMotion } from '../motion/model';
 import { Document, type DocProfile } from '../doc/Document';
@@ -319,7 +320,9 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     let slice = performance.now();
     const clips = new ClipComposer(doc.layers);
     for (const l of doc.layers) {
-      if (!l.visible || !l.items.length) continue;
+      // Miniatura: la carpeta oculta esconde sus capas y su opacidad se multiplica (aproximación).
+      const f = folderOf(doc, l);
+      if (!layerVisible(doc, l) || !l.items.length) continue;
       t.setTransform(1, 0, 0, 1, 0, 0);
       t.clearRect(0, 0, W, H);
       for (const it of l.items) {
@@ -327,7 +330,7 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
         if (performance.now() - slice > 10) { await new Promise(r => setTimeout(r, 0)); slice = performance.now(); }
       }
       if (!clips.prepare(l, t)) continue;
-      g.globalAlpha = l.opacity;
+      g.globalAlpha = l.opacity * (f?.opacity ?? 1);
       g.globalCompositeOperation = blendOp(l.blend);
       g.drawImage(tmp, 0, 0);
     }

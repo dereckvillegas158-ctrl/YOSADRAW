@@ -524,3 +524,22 @@ kbd { font: 500 12px var(--font-mono); padding: 2px 7px; border-radius: 6px; bac
 /* Estilos rápidos del Brush Studio */
 .ctl-styles { display: flex; flex-wrap: wrap; gap: 6px; }
 .ctl-styles .btn { flex: 1 1 auto; }
+/* Carpetas de capas y capas vectoriales */
+.layer-row.in-folder { margin-left: 16px; border-left: 2px solid var(--accent-soft); }
+.layer-row.folder-row { background: rgba(157, 107, 255, 0.07); }
+.layer-row.folder-row .folder-icon { display: inline-flex; color: var(--accent-2); flex: none; }
+.layer-thumb { position: relative; }
+.layer-vbadge { position: absolute; right: -3px; bottom: -3px; display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 5px; background: var(--accent); color: #fff; }
+.layer-vbadge svg { width: 13px; height: 13px; }
+.layer-more { opacity: 0.6; }
+.layer-row:hover .layer-more, .layer-row:focus-within .layer-more { opacity: 1; }
+.menu.layers-menu { position: fixed; z-index: 60; width: 250px; }
+/* 7 columnas: + botón «más» de la capa; la cabecera de carpeta usa su propia rejilla. */
+.layer-row { grid-template-columns: auto 56px minmax(0, 1fr) auto auto auto auto; gap: 4px; }
+.layer-row .layer-more { width: 24px; }
+.layer-row.folder-row { grid-template-columns: auto auto auto minmax(0, 1fr) auto auto; }
+.layer-thumb { overflow: visible; }
+.layer-thumb canvas { border-radius: 6px; }
+.layers .lib-head { flex-wrap: wrap; row-gap: 4px; }
+.layers .lib-actions { flex-wrap: wrap; gap: 0; justify-content: flex-end; }
+.layers .lib-actions .icon.sm { width: 28px; height: 28px; }

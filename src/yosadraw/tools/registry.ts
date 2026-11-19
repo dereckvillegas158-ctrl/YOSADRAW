@@ -4,6 +4,7 @@ import { bucketHandler, gradientHandler, shapesHandler } from './handlers/paint'
 import { eyedropperHandler, rulerHandler, SYMMETRY_MODES, symmetryHandler } from './handlers/guides';
 import { lassoHandler, marqueeHandler, wandHandler } from './handlers/selection';
 import { transformHandler, type TransformTool } from './handlers/transform';
+import { vectorHandler, vectorProps, type VectorTool } from './handlers/vector';
 import { OPTION_ICONS, TOOL_ICONS } from './icons';
 import { selectionProps } from './selectionOps';
 import type { CategoryId, Prop, ToolContext, ToolDef } from './types';
@@ -54,6 +55,7 @@ const SAMPLE = [{ value: 'layer', label: 'Capa actual' }, { value: 'all', label:
 
 /** La herramienta Transformar se crea una vez para que el panel pueda llamar a sus acciones. */
 let transformTool: TransformTool | null = null;
+let vectorTool: VectorTool | null = null;
 
 export const TOOLS: ToolDef[] = [
   /* Dibujo */
@@ -92,6 +94,13 @@ export const TOOLS: ToolDef[] = [
   /* Edición */
   brushTool('eraser', 'Borrador', 'edit', ['E'], 'Borra con la forma de cualquier pincel', ['Borradores'], 'eraser'),
   brushTool('smudge', 'Difuminador', 'edit', ['S'], 'Arrastra y funde el color que ya hay en la capa', ['Difuminadores']),
+  {
+    id: 'vector-edit', label: 'Editar vector', category: 'edit', icon: TOOL_ICONS['vector-edit'], shortcut: ['Shift+V'], kind: 'custom',
+    hint: 'Capas vectoriales: toca un trazo, arrastra sus nodos (los vecinos siguen con suavidad) o el trazo entero · Supr elimina',
+    defaults: { falloff: 60 },
+    props: ctx => vectorProps(ctx, 'vector-edit', vectorTool),
+    create: ctx => (vectorTool = vectorHandler(ctx, 'vector-edit')),
+  },
 
   /* Selección */
   { id: 'select-rect', label: 'Selección rectangular', category: 'select', icon: TOOL_ICONS['select-rect'], shortcut: ['M'], kind: 'custom', hint: 'Arrastra · Mayús: añadir o cuadrado · Alt: restar o desde el centro', defaults: { mode: 'replace' }, props: ctx => selectionProps(ctx, 'select-rect'), create: ctx => marqueeHandler(ctx, 'select-rect', 'rect') },

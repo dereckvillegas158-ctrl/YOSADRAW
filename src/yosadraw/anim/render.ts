@@ -177,7 +177,7 @@ export class FrameRenderer {
         s.g.drawImage(c, ...(pos(img, c) as [number, number]));
       }
       g.globalAlpha = grp.opacity;
-      g.globalCompositeOperation = 'source-over';
+      g.globalCompositeOperation = blendOp(grp.blend ?? 'normal');
       g.drawImage(s.c, 0, 0);
     }
     g.globalAlpha = 1;
