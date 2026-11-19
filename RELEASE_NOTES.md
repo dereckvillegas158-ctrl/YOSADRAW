@@ -1,4 +1,28 @@
-## YOSADRAW 1.6.0 — YOSADRAW MOTION
+## YOSADRAW 1.7.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.7.0-x64.exe` (instalador), `YOSADRAW-1.7.0-x64-portable.exe` o `YOSADRAW-1.7.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.7.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Dibujo (PC y Android)
+- **Capas vectoriales** (botón de la curva en Capas): lo que dibujas en ellas se guarda como línea editable. Herramienta **Editar vector** (Mayús+V): toca un trazo, arrastra sus nodos (los vecinos siguen con suavidad según «Influencia») o el trazo entero; cambia grosor, opacidad y color; suaviza, simplifica, duplica o elimina. En una capa vectorial el **borrador quita trazos enteros**.
+- **Carpetas de capas** (botón de la carpeta): agrupan capas con su propia visibilidad, bloqueo, opacidad y modo de fusión (las capas se mezclan entre sí y el resultado entra con los de la carpeta). Subir y bajar una capa la mete o la saca de la carpeta; menú «⋯» para meter, sacar, desagrupar o eliminar. Se guardan, se exportan (PNG, JPEG, PDF…; en PSD, capas «Carpeta / Capa») y se ven igual en YOSADRAW MOTION.
+- **Pinceles más fáciles y personalizables:** sección **Básico** en el Brush Studio con lo esencial y **estilos rápidos** (Lápiz, Tinta, Rotulador, Pincel suave, Aerógrafo, Acuarela, Óleo, Carboncillo, Línea lisa, Confeti); nueva **dinámica de color** (variación de tono, saturación y luminosidad por sello o por trazo).
+- **Borde del trazo (antialiasing):** *Suave* — los bordes se suavizan; *Duro* — contorno limpio y nítido como un vector y, por dentro, los sellos con su textura. Se ve igual al pintar que al soltar, y se guarda con cada trazo.
+- 3 pinceles nuevos: Tinta limpia (borde duro), Rotulador suave y Confeti de color.
+
+### Vídeo — YOSADRAW MOTION
+- **Keyframes: copiar y pegar donde sea.** Elige rombos en la línea de tiempo (Mayús suma), arrástralos juntos, cópialos (Ctrl+C) y pégalos en el cabezal de cualquier clip (Ctrl+V); clic derecho en un rombo o en una propiedad para copiar/pegar sólo esa propiedad o en otra del mismo tipo; borrar y cambiar la curva de varios a la vez.
+- **Explorador de Filtros, Transiciones, Efectos y Animaciones** (pestaña Efectos, o botón Efectos en el teléfono) con miniaturas hechas por el propio motor; transiciones y animaciones se reproducen al pasar el ratón.
+- **20 filtros** (Cine, Vintage, Noir, Cálido, Frío, Vívido, VHS, Cómic, Duotono…), **11 transiciones nuevas** (zoom desde cerca, giro, pop, balanceo, barridos ↑↓, iris, persianas, destello, glitch) y **45 animaciones** de entrada, salida y bucle (rebotar, caer, elástico, latigazo, latido, gelatina, tadá, órbita…).
+
+### Rendimiento y correcciones
+- El editor de vídeo y los codificadores GIF/MP4 del teléfono se cargan sólo cuando se usan: el código que se carga al abrir la app baja de 285 KB a 211 KB comprimidos (arranque más rápido, sobre todo en Android).
+- El borde suave se calcula sólo alrededor de lo nuevo al pintar (antes, todo el trazo en cada fotograma: hasta 66 ms en trazos enormes).
+- Escritorio: la detección de medios que faltan no funcionaba con la carpeta de medios.
+- Biblioteca de medios: el buscador salía encogido.
+
+### Versión anterior: YOSADRAW 1.6.0 — YOSADRAW MOTION
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.6.0-x64.exe` (instalador), `YOSADRAW-1.6.0-x64-portable.exe` o `YOSADRAW-1.6.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

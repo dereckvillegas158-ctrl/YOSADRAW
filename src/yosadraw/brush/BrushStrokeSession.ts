@@ -14,7 +14,7 @@ export class SessionBuffers {
   readonly snapCtx = this.snap.getContext('2d')!;
   readonly bufCtx = this.buf.getContext('2d')!;
   readonly tmpCtx = this.tmp.getContext('2d')!;
-  /** Silueta del trazo para el borde duro (se crea sólo si hace falta). */
+  /** Silueta del trazo para el borde duro, o halo desenfocado para el suave (se crea sólo si hace falta). */
   private envCanvas: HTMLCanvasElement | null = null;
   envCtx(): CanvasRenderingContext2D {
     const e = this.envCanvas ??= document.createElement('canvas');
@@ -92,7 +92,7 @@ export class BrushStrokeSession {
     b.snapCtx.globalCompositeOperation = 'source-over';
     b.bufCtx.setTransform(1, 0, 0, 1, 0, 0);
     b.bufCtx.clearRect(0, 0, b.buf.width, b.buf.height);
-    if (this.preset.render.edge === 'hard' && this.painter.edged(this.preset)) { const e = b.envCtx(); e.setTransform(1, 0, 0, 1, 0, 0); e.clearRect(0, 0, e.canvas.width, e.canvas.height); }
+    if (this.painter.edged(this.preset)) { const e = b.envCtx(); e.setTransform(1, 0, 0, 1, 0, 0); e.clearRect(0, 0, e.canvas.width, e.canvas.height); }
     if (this.mixing) {
       // Lo que hay en la capa al empezar: de ahí recoge color el pincel.
       const img = b.snapCtx.getImageData(0, 0, b.snap.width, b.snap.height);
@@ -150,6 +150,8 @@ export class BrushStrokeSession {
         if (this.mixing) { this.colorize(i, g, from, this.mixers[i], this.tracks[i]); set = { dabs: d.data, count: d.count, colors: this.tracks[i].data }; }
         this.painter.drawDabs(buffers.bufCtx, this.preset, this.inkColor(), set, from, d.count, M, dpr, this.painter.contentAlpha(this.preset), this.tool === 'eraser');
         if (this.preset.render.edge === 'hard' && this.painter.edged(this.preset)) this.painter.drawEnvelope(buffers.envCtx(), this.preset, d.data, from, d.count, M, dpr);
+        // Borde suave: el halo se rehace sólo alrededor de los sellos nuevos (no todo el trazo cada fotograma).
+        if (this.preset.render.edge === 'soft' && this.painter.edged(this.preset)) this.painter.softHalo(buffers.envCtx(), buffers.buf, this.painter.dabsRect(d.data, from, d.count, M, dpr, emptyRect()), this.preset, dpr);
         this.painter.dabsRect(d.data, from, d.count, M, dpr, this.rect);
         this.drawn[i] = d.count;
       });
@@ -213,7 +215,7 @@ export class BrushStrokeSession {
       b.tmpCtx.globalCompositeOperation = 'copy';
       b.tmpCtx.drawImage(b.buf, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
       b.tmpCtx.globalCompositeOperation = 'source-over';
-      if (edged) this.painter.applyEdge(b.tmpCtx, p, r, this.surf.dpr, p.render.edge === 'hard' ? b.envCtx().canvas : null);
+      if (edged) this.painter.applyEdge(b.tmpCtx, p, r, this.surf.dpr, b.envCtx().canvas);
       if (fixedGrain) this.painter.applyFixedGrain(b.tmpCtx, p, this.surf.M, this.surf.dpr, r);
       if (clip) this.painter.applyClip(b.tmpCtx, clip, r);
       src = b.tmp;

@@ -13,27 +13,10 @@ import { Player } from '../../motion/player';
 import type { ProjectLibrary } from '../../project/library';
 import { toast } from '../dom';
 import { MotionKeys } from './shortcuts';
+import type { MotionPrefs } from './prefs';
 
-export interface MotionPrefs {
-  leftW: number; rightW: number; tlH: number;
-  quality: 'auto' | 1 | 0.5 | 0.25;
-  proxies: boolean; ripple: boolean; loop: boolean;
-  keys: Record<string, string>;
-  leftTab: string;
-  export: unknown;
-}
-export function normalizeMotionPrefs(v: unknown): MotionPrefs {
-  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
-  const n = (x: unknown, d: number, lo: number, hi: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d);
-  return {
-    leftW: n(o.leftW, 260, 180, 520), rightW: n(o.rightW, 320, 240, 560), tlH: n(o.tlH, 280, 150, 800),
-    quality: ([1, 0.5, 0.25] as unknown[]).includes(o.quality) ? o.quality as 1 : 'auto',
-    proxies: o.proxies !== false, ripple: o.ripple === true, loop: o.loop !== false,
-    keys: o.keys && typeof o.keys === 'object' ? { ...(o.keys as Record<string, string>) } : {},
-    leftTab: typeof o.leftTab === 'string' ? o.leftTab : 'media',
-    export: o.export,
-  };
-}
+export type { MotionPrefs } from './prefs';
+export { normalizeMotionPrefs } from './prefs';
 
 export type MotionTool = 'select' | 'razor' | 'text' | 'shape' | 'mask';
 

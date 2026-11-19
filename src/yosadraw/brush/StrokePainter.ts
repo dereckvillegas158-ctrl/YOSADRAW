@@ -308,6 +308,30 @@ export class StrokePainter {
     return t;
   }
 
+  /** Radio del desenfoque del borde suave (px de dispositivo). */
+  softSigma(p: BrushPreset, dpr: number) { return (0.5 + p.render.edgeAmount * 2.2) * Math.max(1, dpr * 0.75); }
+
+  /**
+   * Halo del borde suave por partes (trazo en vivo): vuelve a desenfocar sólo la zona
+   * `r` del trazo `src` en `dst` (se lee un margen extra para que el resultado sea
+   * idéntico al desenfoque del trazo entero).
+   */
+  softHalo(dst: CanvasRenderingContext2D, src: HTMLCanvasElement, r: Rect, p: BrushPreset, dpr: number) {
+    if (rectEmpty(r)) return;
+    const sg = this.softSigma(p, dpr), m = Math.ceil(sg * 3) + 2;
+    const W = src.width, H = src.height;
+    const R = clampRect({ x0: r.x0 - m, y0: r.y0 - m, x1: r.x1 + m, y1: r.y1 + m }, W, H);
+    const S = clampRect({ x0: R.x0 - m, y0: R.y0 - m, x1: R.x1 + m, y1: R.y1 + m }, W, H);
+    if (rectEmpty(R)) return;
+    dst.save();
+    dst.setTransform(1, 0, 0, 1, 0, 0); dst.globalAlpha = 1; dst.globalCompositeOperation = 'source-over';
+    dst.beginPath(); dst.rect(R.x0, R.y0, R.x1 - R.x0, R.y1 - R.y0); dst.clip();
+    dst.clearRect(R.x0, R.y0, R.x1 - R.x0, R.y1 - R.y0);
+    dst.filter = `blur(${sg}px)`;
+    dst.drawImage(src, S.x0, S.y0, S.x1 - S.x0, S.y1 - S.y0, S.x0, S.y0, S.x1 - S.x0, S.y1 - S.y0);
+    dst.restore();
+  }
+
   /**
    * Procesa el borde del trazo ya dibujado en `ctx` (rectángulo r). Suave: el trazo
    * se superpone a una copia desenfocada de sí mismo (el borde se suaviza hacia
@@ -317,10 +341,17 @@ export class StrokePainter {
   applyEdge(ctx: CanvasRenderingContext2D, p: BrushPreset, r: Rect, dpr: number, env?: HTMLCanvasElement | null, sets?: DabSet[], M?: Mat) {
     if (rectEmpty(r) || !this.edged(p)) return;
     const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    if (p.render.edge === 'soft' && env) {
+      // Halo ya calculado (trazo en vivo).
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'destination-over';
+      ctx.drawImage(env, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
+      ctx.restore();
+      return;
+    }
     if (p.render.edge === 'soft') {
       const t = this.edgeCtx(w, h);
       t.clearRect(0, 0, w, h);
-      t.filter = `blur(${(0.5 + p.render.edgeAmount * 2.2) * Math.max(1, dpr * 0.75)}px)`;
+      t.filter = `blur(${this.softSigma(p, dpr)}px)`;
       t.drawImage(ctx.canvas, r.x0, r.y0, w, h, 0, 0, w, h);
       t.filter = 'none';
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;

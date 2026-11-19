@@ -31,9 +31,7 @@ import type { PreviewQuality } from '../anim/player';
 import * as animModel from '../anim/model';
 import { Thumbnails } from './thumbnails';
 import { normalizeLayout, Toolbar } from './Toolbar';
-import { MotionStudio, normalizeMotionPrefs } from './motion/MotionStudio';
-import { MotionUI } from './motion/MotionUI';
-import { MExport, normalizeMotionExport } from './motion/MExport';
+import { normalizeMotionPrefs } from './motion/prefs';
 import { openNewProject } from './NewProjectDialog';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -357,7 +355,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
       ['Guardar', () => void projectAction('save')], ['Guardar como…', () => void projectAction('saveAs')],
       ['Renombrar…', () => void gallery.renameOpen()], ['Historial de versiones…', () => void gallery.versions(projects.get(e.id)!)],
       ['Información', () => void gallery.info(projects.get(e.id)!)],
-      ...(video ? [['Exportar vídeo…', () => void motionExport.show()]] as [string, () => void][] : [
+      ...(video ? [['Exportar vídeo…', () => void ensureMotion().then(m => m.exp.show())]] as [string, () => void][] : [
         ['Exportar imagen…', () => void exportDialog.show()],
         ['Importar imagen como capa…', () => void pickAndImport(engine, mgr)], ['Añadir imagen de referencia…', () => void refs.add()],
         ['Enviar a YOSADRAW MOTION…', () => void sendToMotion()],
@@ -431,20 +429,32 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   engine.on('doc', () => { if (engine.doc.anim && engine.doc.activeId !== lastActive) { lastActive = engine.doc.activeId; engine.refreshOnion(); } });
 
   // ---------- Vídeo: YOSADRAW MOTION ----------
-  const motion = new MotionStudio({ engine, projects, painter, prefs: motionPrefs, persist: save });
-  const motionExport = new MExport(motion, normalizeMotionExport(motionPrefs.export), p => { motionPrefs.export = p; save(); }, () => session.entry?.name ?? 'Vídeo');
-  const motionUI = new MotionUI(motion, {
-    save: () => void projectAction('save'), gallery: () => void toGallery(), projectMenu: a => projectMenu(a),
-    exportVideo: () => void motionExport.show(), name: () => session.entry?.name ?? 'Vídeo',
-  });
-  document.body.append(motionUI.el);
-  session.motionThumb = () => motion.thumbnail();
-  session.on('state', st => { if (motion.active) motionUI.setDirty(st.dirty, st.entry?.name ?? 'Vídeo'); });
+  // El editor se carga la primera vez que hace falta (no pesa al dibujar).
+  type MotionMod = ReturnType<typeof import('./motion/index').createMotion>;
+  let mo: MotionMod | null = null;
+  let moLoading: Promise<MotionMod> | null = null;
+  const ensureMotion = () => (moLoading ??= import('./motion/index').then(({ createMotion }) => {
+    const m = createMotion({
+      engine, projects, painter, prefs: motionPrefs, persist: save, name: () => session.entry?.name ?? 'Vídeo',
+      saveExportPrefs: p => { motionPrefs.export = p; save(); },
+      ui: { save: () => void projectAction('save'), gallery: () => void toGallery(), projectMenu: a => projectMenu(a), name: () => session.entry?.name ?? 'Vídeo' },
+    });
+    document.body.append(m.ui.el);
+    session.motionThumb = () => m.motion.thumbnail();
+    return (mo = m);
+  }));
+  session.on('state', st => { if (mo?.motion.active) mo.ui.setDirty(st.dirty, st.entry?.name ?? 'Vídeo'); });
+  /** Abre en el editor el proyecto de vídeo del documento actual (una sola vez aunque se pida varias). */
+  async function openMotion() {
+    const m = await ensureMotion();
+    if (engine.doc.motion && m.motion.doc !== engine.doc) await m.motion.open(engine.doc);
+    return m;
+  }
   function setMotionMode() {
     const on = !!engine.doc.motion;
     document.body.classList.toggle('motion-mode', on);
-    if (on && motion.doc !== engine.doc) void motion.open(engine.doc);
-    else if (!on && motion.active) motion.close();
+    if (on) void openMotion().catch(err => toast(`No se pudo abrir el editor de vídeo: ${err instanceof Error ? err.message : String(err)}`, 'error'));
+    else if (mo?.motion.active) mo.motion.close();
   }
   engine.on('document', setMotionMode);
   /**
@@ -473,6 +483,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
         await session.create(spec);
       }
       gallery.hide();
+      const { motion } = await openMotion();
       const item = await motion.media.fromProject(e.id, null, e.background !== null);
       motion.edit(`Importar ${item.name}`, (m, comp) => { m.media.push(item); motion.placeMedia(comp, [item], motion.time); });
       motion.mediaChanged();
@@ -489,12 +500,12 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     const t = e.target as HTMLElement;
     // Esc con el foco fuera de un diálogo (p. ej. tras pulsar un botón que desaparece): cierra lo de encima.
     if (e.key === 'Escape' && !studio.open && !t.closest('.dialog-backdrop, .studio-backdrop, .menu, .popover') && closeTopOverlay()) { e.preventDefault(); return; }
-    if (studio.open || exportDialog.open || motionExport.open || t.closest('.dialog-backdrop, .menu, .popover, .fx-panel')) return;
+    if (studio.open || exportDialog.open || mo?.exp.open || t.closest('.dialog-backdrop, .menu, .popover, .fx-panel')) return;
     if (gallery.visible) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault(); return; }
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'radio', 'color'].includes(t.type))) return;
     if (t instanceof HTMLSelectElement && e.key.startsWith('Arrow')) return;
     // Editor de vídeo: sus propios atajos (configurables).
-    if (motion.active) { if (!(t instanceof HTMLInputElement && t.type === 'range' && e.key.startsWith('Arrow')) && motionUI.handleKey(e)) { e.preventDefault(); e.stopPropagation(); } return; }
+    if (mo?.motion.active) { if (!(t instanceof HTMLInputElement && t.type === 'range' && e.key.startsWith('Arrow')) && mo.ui.handleKey(e)) { e.preventDefault(); e.stopPropagation(); } return; }
     if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(true); return; }
     if (t instanceof HTMLInputElement && t.type === 'range' && e.key.startsWith('Arrow')) return;
     if (mgr.handleKey(e)) { e.preventDefault(); e.stopPropagation(); }
@@ -511,5 +522,5 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { motion, motionUI, motionExport, mgr, anim, timeline, animExport, animPanel, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
+  return { get motion() { return mo?.motion; }, get motionUI() { return mo?.ui; }, get motionExport() { return mo?.exp; }, ensureMotion, mgr, anim, timeline, animExport, animPanel, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
 }
