@@ -195,7 +195,7 @@ export class EffectsPanel {
   }
 
   private items(): HTMLElement[] {
-    return EFFECTS.filter(e => (this.cat === 'all' || e.cat === this.cat) && (!this.query || e.label.toLowerCase().includes(this.query)))
+    return EFFECTS.filter(e => !e.motionOnly && (this.cat === 'all' || e.cat === this.cat) && (!this.query || e.label.toLowerCase().includes(this.query)))
       .map(e => h('button', {
         type: 'button', class: 'fx-item', role: 'option', 'aria-selected': String(e.id === this.effect.id),
         on: { click: () => this.select(e) },

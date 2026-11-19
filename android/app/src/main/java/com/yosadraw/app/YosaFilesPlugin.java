@@ -214,7 +214,7 @@ public class YosaFilesPlugin extends Plugin {
     // ---------------- Almacén de proyectos (galería) ----------------
     // Claves «carpeta/nombre» con caracteres seguros, dentro de files/projects.
 
-    private static final java.util.regex.Pattern STORE_KEY = java.util.regex.Pattern.compile("^(p|t|v|r|meta)/[A-Za-z0-9._~-]{1,140}$");
+    private static final java.util.regex.Pattern STORE_KEY = java.util.regex.Pattern.compile("^(p|t|v|r|meta|m)/[A-Za-z0-9._~-]{1,140}$");
 
     private File storeFile(String key) throws IOException {
         if (key == null || !STORE_KEY.matcher(key).matches() || key.contains("..")) throw new IOException("Clave no válida");
@@ -228,6 +228,19 @@ public class YosaFilesPlugin extends Plugin {
                 File f = storeFile(call.getString("key"));
                 JSObject r = new JSObject();
                 r.put("size", f.exists() ? f.length() : -1);
+                call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage()); }
+        });
+    }
+
+    /** Ruta del archivo de un bloque (medios de YOSADRAW MOTION: la app los sirve por streaming). */
+    @PluginMethod
+    public void storePath(PluginCall call) {
+        io.execute(() -> {
+            try {
+                File f = storeFile(call.getString("key"));
+                JSObject r = new JSObject();
+                r.put("path", f.exists() ? f.getAbsolutePath() : null);
                 call.resolve(r);
             } catch (Exception e) { call.reject(e.getMessage()); }
         });
@@ -292,7 +305,7 @@ public class YosaFilesPlugin extends Plugin {
             try {
                 String prefix = call.getString("prefix", "");
                 String dirName = prefix.split("/")[0];
-                if (!dirName.matches("p|t|v|r|meta")) throw new IOException("Prefijo no válido");
+                if (!dirName.matches("p|t|v|r|meta|m")) throw new IOException("Prefijo no válido");
                 File dir = new File(new File(getContext().getFilesDir(), "projects"), dirName);
                 com.getcapacitor.JSArray keys = new com.getcapacitor.JSArray();
                 String[] names = dir.list();

@@ -51,6 +51,31 @@ export async function patchProjectMeta(bytes: Uint8Array, patch: Partial<Project
 }
 
 /**
+ * Proyecto de vídeo portátil («recopilar medios»): añade al .yosa los archivos de
+ * todos sus medios (`media/m/…`), que al abrirlo en otro equipo pasan a su almacén.
+ * Los proxies no se incluyen (se pueden volver a crear).
+ */
+export async function collectMedia(bytes: Uint8Array, store: BlobStore): Promise<{ bytes: Uint8Array; count: number; missing: string[] }> {
+  let files: Record<string, Uint8Array>;
+  try { files = await unzipAsync(bytes); } catch { throw new ProjectFormatError('El proyecto está dañado'); }
+  const p = JSON.parse(strFromU8(files['project.json']));
+  const media = (p.document?.motion?.media ?? []) as { id: string; name: string; kind: string }[];
+  if (!media.length) return { bytes, count: 0, missing: [] };
+  const all = await store.list('m/');
+  const out: Zippable = { mimetype: [files.mimetype, { level: 0 }] };
+  for (const [name, data] of Object.entries(files)) if (name !== 'mimetype' && !name.startsWith('media/')) out[name] = [data, { level: name.endsWith('.png') || name.startsWith('audio/') ? 0 : 6 }];
+  let count = 0;
+  const missing: string[] = [];
+  for (const m of media) {
+    if (m.kind === 'drawing' || m.kind === 'anim') continue; // citan proyectos de la galería
+    const keys = all.filter(k => (k === `m/${m.id}` || k.startsWith(`m/${m.id}.`)) && !k.endsWith('.proxy'));
+    if (!keys.length) { missing.push(m.name); continue; }
+    for (const k of keys) { const d = await store.get(k); if (d) { out[`media/${k}`] = [d, { level: 0 }]; count++; } }
+  }
+  return { bytes: await zipAsync(out), count, missing };
+}
+
+/**
  * Galería de proyectos sobre un `BlobStore`.
  * - Guardar nunca escribe a medias (el almacén es atómico) y antes conserva lo
  *   anterior como versión (hasta MAX_VERSIONS por proyecto).
@@ -125,6 +150,8 @@ export class ProjectLibrary extends Emitter<{ change: void }> {
   list(): ProjectEntry[] { return [...this.projects.values()]; }
   get(id: string): ProjectEntry | undefined { return this.projects.get(id); }
   get storeKind() { return this.store.kind; }
+  /** Almacén de bloques (YOSADRAW MOTION guarda ahí sus medios, `m/<id>`). */
+  get blobStore() { return this.store; }
 
   // ---------------------------------------------------------------- lectura
 

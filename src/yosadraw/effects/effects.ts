@@ -39,6 +39,8 @@ export interface EffectDef {
   margin?(v: Values, unit: number): number;
   /** Necesita la imagen entera de una vez (centro, posición global de desplazamientos grandes). */
   global?: boolean;
+  /** Sólo en el editor de vídeo (necesita medios de su biblioteca, como el LUT). */
+  motionOnly?: boolean;
   run(ctx: FxCtx, input: Tex, v: Values): Tex;
 }
 
@@ -872,6 +874,101 @@ distort.push(
     run: (ctx, t, v) => ctx.pass(MIRROR, t, { u_mode: 5, u_n: 2, u_dx: num(v, 'dx') / 100, u_dy: num(v, 'dy') / 100 }),
   },
 );
+
+// ---------------------------------------------------------------- vídeo (YOSADRAW MOTION, 1.6)
+
+color.push(
+  {
+    id: 'chromakey', label: 'Croma (chroma key)', cat: 'color',
+    params: [{ key: 'key', label: 'Color clave', type: 'color', def: '#00ff00' }, pct('tol', 'Tolerancia', 25, 0, 100), pct('soft', 'Suavidad del borde', 10, 0, 100), pct('spill', 'Quitar reflejo del color', 50, 0, 100)],
+    run: (ctx, t, v) => ctx.pass(CHROMAKEY, t, { u_key: hexRgb(String(v.key)), u_tol: num(v, 'tol') / 100 * 0.5, u_soft: Math.max(0.001, num(v, 'soft') / 100 * 0.4), u_spill: num(v, 'spill') / 100 }),
+  },
+  point('curves', 'Curvas', [pct('c0', 'Negros (0 %)', 0, -50, 50), pct('c1', 'Sombras (25 %)', 0, -50, 50), pct('c2', 'Medios (50 %)', 0, -50, 50), pct('c3', 'Luces (75 %)', 0, -50, 50), pct('c4', 'Blancos (100 %)', 0, -50, 50),
+    { key: 'ch', label: 'Canal', type: 'select', def: 'rgb', options: [['rgb', 'RGB'], ['r', 'Rojo'], ['g', 'Verde'], ['b', 'Azul']] }],
+  'uniform float u_c[5]; uniform float u_ch;', `
+    // Curva suave (Catmull-Rom) por 5 puntos: entrada 0, .25, .5, .75, 1 → salida desplazada.
+    vec3 r = c;
+    for (int j = 0; j < 3; j++) {
+      float x = clamp(c[j], 0.0, 1.0) * 4.0; int i = int(min(3.0, floor(x))); float u = x - float(i);
+      float p0 = float(max(i - 1, 0)) * 0.25 + u_c[max(i - 1, 0)], p1 = float(i) * 0.25 + u_c[i], p2 = float(i + 1) * 0.25 + u_c[min(i + 1, 4)], p3 = float(min(i + 2, 4)) * 0.25 + u_c[min(i + 2, 4)];
+      float y = 0.5 * ((2.0 * p1) + (-p0 + p2) * u + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u * u + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u * u * u);
+      if (u_ch < 0.5 || abs(u_ch - float(j + 1)) < 0.5) r[j] = y;
+    }
+    c = r;`,
+  v => ({ u_c: [0, 1, 2, 3, 4].map(i => num(v, `c${i}`) / 100), u_ch: ['rgb', 'r', 'g', 'b'].indexOf(String(v.ch)) })),
+  {
+    id: 'lut', label: 'LUT 3D (.cube)', cat: 'color', motionOnly: true,
+    params: [{ key: 'lut', label: 'LUT', type: 'select', def: '', options: [['', '(importa un .cube en la biblioteca de vídeo)']] }, pct('amount', 'Intensidad', 100, 0, 100)],
+    run: (ctx, t, v) => {
+      const lut = LUTS.get(String(v.lut));
+      if (!lut) return ctx.pass(COPY, t);
+      const tex = ctx.gl.upload(lut.canvas, lut.canvas.width, lut.canvas.height);
+      const r = ctx.pass(LUT3D, t, { u_n: lut.size, u_amt: num(v, 'amount') / 100 }, { u_lut: tex });
+      ctx.gl.release(tex);
+      return r;
+    },
+  },
+);
+
+const CHROMAKEY = `${HEAD}
+uniform vec3 u_key; uniform float u_tol, u_soft, u_spill;
+vec2 cbcr(vec3 c) { return vec2(-0.168736 * c.r - 0.331264 * c.g + 0.5 * c.b, 0.5 * c.r - 0.418688 * c.g - 0.081312 * c.b); }
+void main() {
+  vec4 s = tx(inPos()); vec3 c = unpm(s);
+  float d = distance(cbcr(c), cbcr(u_key));
+  float a = smoothstep(u_tol, u_tol + u_soft, d);
+  // Reflejo del color clave: se quita la parte de ese color que sobresale.
+  vec3 k = normalize(u_key + 1e-4);
+  float spill = max(0.0, dot(c, k) - max(max(c.r * (1.0 - k.r), c.g * (1.0 - k.g)), c.b * (1.0 - k.b)));
+  c -= k * spill * u_spill * (1.0 - a * 0.5);
+  o = pm(c, s.a * a);
+}`;
+
+/** LUT 3D: N cortes de N×N en una franja horizontal (N·N × N), con interpolación trilineal. */
+const LUT3D = `${HEAD}
+uniform sampler2D u_lut; uniform float u_n, u_amt;
+vec3 lk(vec3 c) {
+  float n = u_n; float b = clamp(c.b, 0.0, 1.0) * (n - 1.0);
+  float b0 = floor(b), b1 = min(n - 1.0, b0 + 1.0), f = b - b0;
+  vec2 rg = clamp(c.rg, 0.0, 1.0) * (n - 1.0) + 0.5;
+  vec2 W = vec2(n * n, n);
+  vec3 c0 = texture(u_lut, vec2(b0 * n + rg.x, rg.y) / W).rgb, c1 = texture(u_lut, vec2(b1 * n + rg.x, rg.y) / W).rgb;
+  return mix(c0, c1, f);
+}
+void main() { vec4 s = tx(inPos()); vec3 c = unpm(s); o = pm(mix(c, lk(c), u_amt), s.a); }`;
+
+/** LUTs cargados (por id): los registra el editor de vídeo al leer un .cube. */
+export const LUTS = new Map<string, { size: number; canvas: HTMLCanvasElement }>();
+/** Lee un .cube (LUT_3D_SIZE N, N³ líneas «r g b», rojo el que varía más rápido). */
+export function parseCube(text: string): { size: number; data: Float32Array } {
+  let size = 0;
+  const vals: number[] = [];
+  let dmin = [0, 0, 0], dmax = [1, 1, 1];
+  for (const raw of text.split(/\r?\n/)) {
+    const l = raw.trim();
+    if (!l || l.startsWith('#')) continue;
+    const m = /^LUT_3D_SIZE\s+(\d+)/i.exec(l);
+    if (m) { size = Number(m[1]); continue; }
+    const dm = /^DOMAIN_MIN\s+(\S+)\s+(\S+)\s+(\S+)/i.exec(l); if (dm) { dmin = dm.slice(1).map(Number); continue; }
+    const dx = /^DOMAIN_MAX\s+(\S+)\s+(\S+)\s+(\S+)/i.exec(l); if (dx) { dmax = dx.slice(1).map(Number); continue; }
+    if (/^[A-Z_]/i.test(l)) continue;
+    const p = l.split(/\s+/).map(Number);
+    if (p.length >= 3 && p.every(Number.isFinite)) vals.push((p[0] - dmin[0]) / (dmax[0] - dmin[0]), (p[1] - dmin[1]) / (dmax[1] - dmin[1]), (p[2] - dmin[2]) / (dmax[2] - dmin[2]));
+  }
+  if (size < 2 || size > 128 || vals.length < size ** 3 * 3) throw new Error('LUT .cube no válido');
+  return { size, data: new Float32Array(vals.slice(0, size ** 3 * 3)) };
+}
+export function lutCanvas(size: number, data: Float32Array): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = size * size; c.height = size;
+  const g = c.getContext('2d')!, img = g.createImageData(c.width, c.height);
+  for (let b = 0; b < size; b++) for (let gg = 0; gg < size; gg++) for (let r = 0; r < size; r++) {
+    const i = (r + gg * size + b * size * size) * 3, o = ((gg * c.width) + b * size + r) * 4;
+    img.data[o] = data[i] * 255; img.data[o + 1] = data[i + 1] * 255; img.data[o + 2] = data[i + 2] * 255; img.data[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
 
 export const EFFECTS: EffectDef[] = [...color, ...blur, ...sharpen, ...stylize, ...distort, ...texture];
 export const effectById = (id: string) => EFFECTS.find(e => e.id === id);

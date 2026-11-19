@@ -3,6 +3,7 @@ import { localBounds, transformItem, type Item, type ItemData, type LayerBlend }
 import { selectionBounds, type Selection } from './Selection';
 import { transformAABB, type Mat } from '../engine/ViewTransform';
 import type { Animation, Cel } from '../anim/model';
+import type { Motion } from '../motion/model';
 
 export interface Layer {
   id: string;
@@ -82,6 +83,8 @@ export class Document {
   references: RefImage[] = [];
   /** Animación (null = proyecto de dibujo normal). */
   anim: Animation | null = null;
+  /** Proyecto de vídeo de YOSADRAW MOTION (null = dibujo o animación). */
+  motion: Motion | null = null;
   private nextItem = 1;
   private nextLayer = 1;
 

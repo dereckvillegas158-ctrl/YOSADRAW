@@ -1,15 +1,16 @@
 import { ClipComposer } from '../doc/clip';
 import { newAnimation, newCel } from '../anim/model';
+import { newMotion } from '../motion/model';
 import { Document, type DocProfile } from '../doc/Document';
 import type { CanvasEngine } from '../engine';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
 import type { Mat } from '../engine/ViewTransform';
 import { Emitter } from '../engine/Emitter';
-import { browserImageCodec, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SIDE, normalizeMeta, readProject, writeProject, type ImageCodec, type ProjectMeta } from './format';
+import { browserImageCodec, motionMeta, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SIDE, normalizeMeta, readProject, writeProject, type ImageCodec, type ProjectMeta } from './format';
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.6.0';
 
 export interface NewProjectSpec {
   name: string;
@@ -20,6 +21,8 @@ export interface NewProjectSpec {
   profile: DocProfile;
   /** Proyecto de animación (FPS y duración en fotogramas). */
   anim?: { fps: number; frames: number } | null;
+  /** Proyecto de vídeo (YOSADRAW MOTION): FPS y duración inicial en segundos. */
+  motion?: { fps: number; dur: number } | null;
 }
 
 export interface SessionState {
@@ -89,10 +92,18 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     const bytes = o.recovery ? await this.library.readRecovery(id) : await this.library.read(id);
     if (!bytes) throw new Error('No hay copia de recuperación');
     const file = await readProject(bytes, this.codec);
+    // Medios recopilados dentro del archivo (proyecto de vídeo importado): pasan al almacén.
+    if (file.media) await this.unpackMedia(file.media);
     this.load(file.doc, e);
     if (o.recovery) { this.savedRevision = -1; this.recoveryRevision = this.engine.revision; }
     await this.library.update(id, { opened: Date.now() });
     this.changed();
+  }
+
+  private async unpackMedia(media: Map<string, Uint8Array>) {
+    const store = this.library.blobStore;
+    const have = new Set(await store.list('m/'));
+    for (const [k, v] of media) if (!have.has(k)) await store.put(k, v);
   }
 
   /** Carga una versión anterior en el proyecto abierto (queda como cambios sin guardar). */
@@ -132,9 +143,13 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
       doc.anim = newAnimation(spec.anim.fps, spec.anim.frames);
       doc.layers[0].name = 'Animación 1';
       doc.layers[0].cels = [newCel(0, 1)];
+    } else if (spec.motion) {
+      // Vídeo: el documento lleva el proyecto de YOSADRAW MOTION (las capas de dibujo no se usan).
+      doc.motion = newMotion(doc.width, doc.height, spec.motion.fps, spec.motion.dur);
+      doc.layers[0].name = 'Vídeo';
     }
     const name = this.library.uniqueName(spec.name.trim() || 'Sin título');
-    const meta = normalizeMeta({ id: newId(), name, width: doc.width, height: doc.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, source: 'yosa', app: APP_VERSION, anim: spec.anim ? { frames: spec.anim.frames, fps: spec.anim.fps } : null });
+    const meta = normalizeMeta({ id: newId(), name, width: doc.width, height: doc.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, source: 'yosa', app: APP_VERSION, anim: spec.anim ? { frames: spec.anim.frames, fps: spec.anim.fps } : null, motion: doc.motion ? motionMeta(doc) : null });
     const e = await this.library.create(meta, m => this.serialize(doc, m), { folder });
     this.load(doc, e);
     this.changed();
@@ -170,17 +185,21 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
 
   // ---------------------------------------------------------------- guardar
 
+  /** Miniatura de un proyecto de vídeo (la pone el editor de vídeo: un fotograma de la composición). */
+  motionThumb: (() => Promise<Uint8Array | null>) | null = null;
+
   /** Cuánto tardó la última serialización (ms): sirve para espaciar las copias automáticas. */
   private lastSerializeMs = 0;
 
   private async serialize(doc: Document, meta: ProjectMeta, withThumb = true) {
     const t = performance.now();
     // La miniatura repinta todo el documento: sólo hace falta al guardar, no en la copia de recuperación.
-    const thumb = withThumb ? await this.thumbnail(doc) : null;
+    const thumb = withThumb ? (doc.motion && this.motionThumb ? await this.motionThumb().catch(() => null) : null) ?? await this.thumbnail(doc) : null;
     const animMeta = doc.anim ? { frames: doc.anim.length, fps: doc.anim.fps } : null;
-    const bytes = await writeProject(doc, { ...meta, width: doc.width, height: doc.height, layers: doc.layers.length, anim: animMeta }, { codec: this.codec, cache: this.imageCache, thumb });
+    const mMeta = doc.motion ? motionMeta(doc) : null;
+    const bytes = await writeProject(doc, { ...meta, width: doc.width, height: doc.height, layers: doc.layers.length, anim: animMeta, motion: mMeta }, { codec: this.codec, cache: this.imageCache, thumb });
     this.lastSerializeMs = performance.now() - t;
-    return { bytes, thumb, meta: { layers: doc.layers.length, anim: animMeta } };
+    return { bytes, thumb, meta: { layers: doc.layers.length, anim: animMeta, motion: mMeta } };
   }
 
   /** Guarda en el proyecto abierto. Si otra ventana lo guardó antes, lanza ConflictError (salvo `force`). */
@@ -218,6 +237,7 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     const meta = normalizeMeta({
       id: newId(), name: this.library.uniqueName(name.trim() || 'Sin título'), width: doc.width, height: doc.height,
       dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, source: cur?.source ?? 'yosa', app: APP_VERSION,
+      anim: doc.anim ? { frames: doc.anim.length, fps: doc.anim.fps } : null, motion: doc.motion ? motionMeta(doc) : null,
     });
     const e = await this.library.create(meta, m => this.serialize(doc, m), { folder: cur?.folder ?? null });
     // La recuperación pendiente era del original: ya no hace falta.

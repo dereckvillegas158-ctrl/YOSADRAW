@@ -33,8 +33,9 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     const spec: NewProjectSpec = {
       name: defaultName, width: last?.width ?? 2048, height: last?.height ?? 2048, dpi: last?.dpi ?? 300,
       background: last?.background === null ? null : '#ffffff', profile: last?.profile ?? 'srgb',
-      anim: last?.anim ?? null,
+      anim: last?.anim ?? null, motion: last?.motion ?? null,
     };
+    if (spec.motion) spec.anim = null;
     let animSpec = { fps: last?.anim?.fps ?? 12, frames: last?.anim?.frames ?? 48 };
     const prev = document.activeElement as HTMLElement | null;
     let done = false;
@@ -105,9 +106,19 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     fpsSel.addEventListener('change', syncAnim);
     durIn.addEventListener('input', syncAnim);
     const animBox = h('div', { class: 'np-dims np-anim', hidden: !spec.anim }, h('label', null, h('span', null, 'FPS'), fpsSel), h('label', null, h('span', null, 'Duración (fotogramas)'), durIn), durInfo);
-    const kindSeg = seg<string>('Tipo', spec.anim ? 'anim' : 'draw', [['draw', 'Dibujo'], ['anim', 'Animación']], v => {
+    // Vídeo (YOSADRAW MOTION): FPS y duración inicial (crece sola al añadir clips).
+    let motionSpec = { fps: last?.motion?.fps ?? 30, dur: last?.motion?.dur ?? 30 };
+    const mFps = h('select', { 'aria-label': 'Fotogramas por segundo del vídeo' }, ...[24, 25, 30, 48, 50, 60].map(f => h('option', { value: String(f), selected: f === motionSpec.fps }, `${f} fps`)));
+    const mDur = h('input', { type: 'number', min: '1', max: '36000', value: String(motionSpec.dur), inputmode: 'numeric', 'aria-label': 'Duración en segundos' });
+    const syncMotion = () => { motionSpec = { fps: Number(mFps.value), dur: Math.max(1, Math.min(36000, Number(mDur.value) || 30)) }; if (spec.motion) spec.motion = { ...motionSpec }; };
+    mFps.addEventListener('change', syncMotion); mDur.addEventListener('input', syncMotion);
+    const motionBox = h('div', { class: 'np-dims np-anim', hidden: !spec.motion }, h('label', null, h('span', null, 'FPS'), mFps), h('label', null, h('span', null, 'Duración (s)'), mDur));
+    const kindSeg = seg<string>('Tipo', spec.motion ? 'motion' : spec.anim ? 'anim' : 'draw', [['draw', 'Dibujo'], ['anim', 'Animación'], ['motion', 'Vídeo']], v => {
       spec.anim = v === 'anim' ? { ...animSpec } : null;
+      spec.motion = v === 'motion' ? { ...motionSpec } : null;
       animBox.hidden = !spec.anim;
+      motionBox.hidden = !spec.motion;
+      if (spec.motion && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === (document.documentElement.classList.contains('phone') ? 'phone' : 'hd'))!);
       // Una animación nueva propone Full HD si el tamaño era el de un dibujo por defecto.
       if (spec.anim && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === (document.documentElement.classList.contains('phone') ? 'phone' : 'hd'))!);
     });
@@ -120,7 +131,7 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     createBtn.addEventListener('click', () => { sync(); if (!createBtn.disabled) finish({ ...spec, name: spec.name.trim() || defaultName }); });
     const form = h('div', { class: 'np-form' },
       h('label', { class: 'np-field' }, h('span', { class: 'ex-label' }, 'Nombre'), nameIn),
-      kindSeg, animBox,
+      kindSeg, animBox, motionBox,
       h('div', { class: 'np-field' }, h('span', { class: 'ex-label' }, 'Tamaño (píxeles)'),
         h('div', { class: 'np-dims' }, h('label', null, h('span', null, 'Ancho'), wIn), swap, h('label', null, h('span', null, 'Alto'), hIn), h('label', null, h('span', null, 'Resolución (ppp)'), dpiIn))),
       h('div', { class: 'np-summary' }, preview, info),

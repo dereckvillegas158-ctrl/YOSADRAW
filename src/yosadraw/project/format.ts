@@ -8,6 +8,7 @@ import { Document, type DocProfile, type DocSettings, type Layer } from '../doc/
 import type { Item, LayerBlend } from '../doc/items';
 import type { SelShape, Selection } from '../doc/Selection';
 import type { AABB, Mat, ViewState } from '../engine/ViewTransform';
+import { normalizeMotion } from '../motion/model';
 import { capture, DEFAULT_ONION, FPS_OPTIONS, MAX_FRAMES, MOUTH_SHAPES, newAnimation, type Animation, type AudioClip, type Cel, type MouthShape } from '../anim/model';
 
 /**
@@ -20,6 +21,11 @@ import { capture, DEFAULT_ONION, FPS_OPTIONS, MAX_FRAMES, MOUTH_SHAPES, newAnima
  *   img/N.png           mapas de bits (relleno, selección levantada) y máscaras de selección
  *   thumb.png           miniatura para la galería
  *   audio/N.ext         (animación) archivos de audio originales
+ *   media/m/ID…         (vídeo, sólo al exportar con «recopilar medios») archivos de los medios
+ *
+ * Vídeo (`document.motion`): composiciones, pistas, clips, keyframes, efectos, máscaras,
+ * marcadores y la ficha de cada medio. Los archivos de los medios se guardan una vez
+ * en el almacén de la app (no dentro del .yosa) y el proyecto los cita por id.
  *
  * Animación (`document.anim`): cada pista animada guarda sus cels (inicio, duración,
  * clave, etiqueta) con índices a `document.pool`, donde cada dibujo se escribe una sola
@@ -55,6 +61,8 @@ export interface ProjectMeta {
   layers: number;
   /** Animación: fotogramas y FPS (null = dibujo). */
   anim: { frames: number; fps: number } | null;
+  /** Vídeo de YOSADRAW MOTION: FPS y duración en segundos (null = no es vídeo). */
+  motion?: { fps: number; dur: number } | null;
   /** Formato de origen (yosa, png, jpeg, webp) si se creó importando. */
   source: string;
   /** Guardados realizados (detecta que otra ventana guardó antes: no se sobrescribe sin preguntar). */
@@ -62,7 +70,11 @@ export interface ProjectMeta {
   app: string;
 }
 
-export interface ProjectFile { meta: ProjectMeta; doc: Document; view: ViewState | null; thumb: Uint8Array | null }
+export interface ProjectFile {
+  meta: ProjectMeta; doc: Document; view: ViewState | null; thumb: Uint8Array | null;
+  /** Medios recopilados dentro del archivo (clave del almacén → bytes). */
+  media?: Map<string, Uint8Array>;
+}
 
 /** Codifica y decodifica imágenes (en el navegador, PNG con canvas; en pruebas, uno falso). */
 export interface ImageCodec {
@@ -198,8 +210,8 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
   await w.done();
   const project = {
     format: FORMAT_ID, version: FORMAT_VERSION,
-    meta: { ...meta, width: doc.width, height: doc.height, dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, layers: doc.layers.length, anim: a ? { frames: a.length, fps: a.fps } : null },
-    document: { activeId, counters, layers, selection, ...(a ? { anim: animOut, pool } : {}) },
+    meta: { ...meta, width: doc.width, height: doc.height, dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, layers: doc.layers.length, anim: a ? { frames: a.length, fps: a.fps } : null, motion: doc.motion ? motionMeta(doc) : null },
+    document: { activeId, counters, layers, selection, ...(a ? { anim: animOut, pool } : {}), ...(doc.motion ? { motion: doc.motion } : {}) },
     references: refs,
     presets: w.presetTable,
     view: o.view ?? null,
@@ -213,6 +225,12 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
   for (const [k, v] of Object.entries(audioFiles)) files[k] = [v, { level: 0 }];
   if (o.thumb) files['thumb.png'] = [o.thumb, { level: 0 }];
   return zipAsync(files, w.owned);
+}
+
+/** Resumen del vídeo para la galería. */
+export function motionMeta(doc: Document) {
+  const m = doc.motion!, c = m.comps.find(x => x.id === m.main) ?? m.comps[0];
+  return { fps: c.fps, dur: Math.round(c.dur * 100) / 100 };
 }
 
 const AUDIO_EXT: Record<string, string> = { 'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/ogg': 'ogg', 'audio/flac': 'flac', 'audio/x-flac': 'flac', 'audio/aac': 'aac', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/webm': 'webm', 'audio/opus': 'opus' };
@@ -337,6 +355,7 @@ export function normalizeMeta(v: unknown, fallbackId = ''): ProjectMeta {
     created: num(o.created, now), modified: num(o.modified, now),
     layers: num(o.layers, 1),
     anim: o.anim && typeof o.anim === 'object' ? { frames: Math.max(1, Math.round(num((o.anim as J).frames, 1))), fps: Math.max(1, num((o.anim as J).fps, 12)) } : null,
+    motion: o.motion && typeof o.motion === 'object' ? { fps: Math.max(1, num((o.motion as J).fps, 30)), dur: Math.max(0, num((o.motion as J).dur, 0)) } : null,
     source: str(o.source, 'yosa'), rev: num(o.rev, 0), app: str(o.app, ''),
   };
 }
@@ -385,9 +404,12 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
     pan: quad(x.pan, [0, 0]) as [number, number], opacity: Math.min(1, Math.max(0.1, num(x.opacity, 1))),
   }));
   if (animIn) doc.anim = readAnim(animIn, files, doc);
+  if (d.motion) { doc.motion = normalizeMotion(d.motion); if (!doc.motion) throw new ProjectFormatError('El vídeo del proyecto está dañado'); }
+  const media = new Map<string, Uint8Array>();
+  for (const [k, v] of Object.entries(files)) if (k.startsWith('media/m/')) media.set(k.slice(6), v);
   const v = p.view as J | null;
   const view = v && num(v.scale) > 0 ? { scale: num(v.scale), rotation: num(v.rotation), x: num(v.x), y: num(v.y) } : null;
-  return { meta: { ...meta, layers: layers.length }, doc, view, thumb: files['thumb.png'] ?? null };
+  return { meta: { ...meta, layers: layers.length }, doc, view, thumb: files['thumb.png'] ?? null, ...(media.size ? { media } : {}) };
 }
 
 function readCels(list: J[], pool: Item[]): Cel[] {

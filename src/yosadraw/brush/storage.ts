@@ -50,6 +50,9 @@ export interface DesktopBridge {
   storeDelete?(key: string): Promise<void>;
   storeList?(prefix: string): Promise<string[]>;
   storeLocation?(): Promise<string>;
+  /** URL de un medio de YOSADRAW MOTION para leerlo por streaming. */
+  storeUrl?(key: string): Promise<string | null>;
+  storePutBlob?(key: string, blob: Blob): Promise<void>;
   importFiles(): Promise<{ name: string; content: string }[]>;
 }
 

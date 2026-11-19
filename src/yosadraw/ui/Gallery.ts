@@ -1,6 +1,6 @@
 import { desktopBridge } from '../brush/storage';
 import { PROJECT_EXT, ProjectFormatError, readProjectInfo } from '../project/format';
-import { ConflictError, TRASH_DAYS, type Folder, type ProjectEntry, type ProjectLibrary } from '../project/library';
+import { collectMedia, ConflictError, TRASH_DAYS, type Folder, type ProjectEntry, type ProjectLibrary } from '../project/library';
 import type { NewProjectSpec, ProjectSession } from '../project/session';
 import { h, IS_ARTIFACT, pickFiles, toast } from './dom';
 import { isPhone, openSheet } from './Mobile';
@@ -48,6 +48,7 @@ export function ago(t: number): string {
   return new Date(t).toLocaleDateString('es', { day: 'numeric', month: 'short', year: new Date(t).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
 }
 const fullDate = (t: number) => new Date(t).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' });
+const fmtDur = (s: number) => { const m = Math.floor(s / 60), x = Math.round(s % 60); return m ? `${m}:${String(x).padStart(2, '0')} min` : `${x} s`; };
 export const fmtSize = (b: number) => (b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1).replace('.', ',')} MB`);
 const PROFILE: Record<string, string> = { srgb: 'sRGB', p3: 'Display P3', gray: 'Escala de grises' };
 
@@ -253,7 +254,7 @@ export class Gallery {
       h('div', { class: 'g-info' },
         h('div', { class: 'g-name', title: e.name }, e.name),
         h('div', { class: 'g-meta' }, trashed ? `Se borrará en ${days} ${days === 1 ? 'día' : 'días'}` : `Modificado ${ago(e.modified)}`),
-        h('div', { class: 'g-meta g-specs' }, `${e.width} × ${e.height} · ${PROJECT_EXT.toUpperCase()}${e.source !== 'yosa' ? ` (de ${e.source.toUpperCase()})` : ''} · ${e.anim ? `animación · ${e.anim.frames} f · ${e.anim.fps} fps` : `${e.layers} ${e.layers === 1 ? 'capa' : 'capas'}`}`)),
+        h('div', { class: 'g-meta g-specs' }, `${e.width} × ${e.height} · ${PROJECT_EXT.toUpperCase()}${e.source !== 'yosa' ? ` (de ${e.source.toUpperCase()})` : ''} · ${e.motion ? `vídeo · ${fmtDur(e.motion.dur)} · ${e.motion.fps} fps` : e.anim ? `animación · ${e.anim.frames} f · ${e.anim.fps} fps` : `${e.layers} ${e.layers === 1 ? 'capa' : 'capas'}`}`)),
       h('button', { type: 'button', class: 'icon sm g-more', 'aria-label': `Opciones de ${e.name}`, title: 'Opciones', html: GI.more, on: { click: (ev: Event) => { ev.stopPropagation(); this.cardMenu(e, ev.currentTarget as HTMLElement); } } }));
     card.addEventListener('click', () => { if (trashed) this.cardMenu(e, card.querySelector('.g-more')!); else void this.open(e.id); });
     card.addEventListener('contextmenu', ev => { ev.preventDefault(); this.cardMenu(e, card.querySelector('.g-more')!); });
@@ -447,7 +448,7 @@ export class Gallery {
     await this.run('No se pudo crear el proyecto', async () => {
       this.busy(true, 'Creando…');
       try { await this.session.create(spec, this.section === 'folders' ? this.folder : null); } finally { this.busy(false); }
-      this.prefs.lastNew = { width: spec.width, height: spec.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, anim: spec.anim ?? null };
+      this.prefs.lastNew = { width: spec.width, height: spec.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, anim: spec.anim ?? null, motion: spec.motion ?? null };
       this.host.persist();
       this.host.showEditor();
     });
@@ -540,7 +541,13 @@ export class Gallery {
   async exportNative(e: ProjectEntry) {
     await this.run('No se pudo exportar', async () => {
       if (this.session.entry?.id === e.id && this.session.dirty) toast('Se exporta la última versión guardada. Guarda antes para incluir los cambios.');
-      const bytes = await this.lib.read(e.id);
+      let bytes = await this.lib.read(e.id);
+      // Vídeo: se recopilan los medios dentro del archivo (se puede abrir en otro equipo).
+      if (e.motion) {
+        const r = await collectMedia(bytes, this.lib.blobStore);
+        bytes = r.bytes;
+        if (r.missing.length) toast(`Faltan ${r.missing.length} medios (no se incluyen): ${r.missing.slice(0, 3).join(', ')}${r.missing.length > 3 ? '…' : ''}`, 'error');
+      }
       const name = `${e.name.replace(/[\\/:*?"<>|]+/g, '_')}.${PROJECT_EXT}`;
       const b = desktopBridge();
       if (b?.writeExport && b.exportFolder) {

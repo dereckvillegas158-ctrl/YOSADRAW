@@ -8,6 +8,7 @@ import { desktopBridge } from '../brush/storage';
  *   v/<id>~<ms>.yosa   versión anterior (historial)
  *   r/<id>.yosa        copia de recuperación (guardado temporal)
  *   meta/index.json    índice de la galería (se puede reconstruir desde p/)
+ *   m/<id>             medios de YOSADRAW MOTION (vídeo, audio, imágenes…), guardados una vez
  */
 export interface BlobStore {
   readonly kind: 'desktop' | 'android' | 'browser' | 'memory';
@@ -17,14 +18,25 @@ export interface BlobStore {
   list(prefix: string): Promise<string[]>;
   /** Dónde están los datos (para mostrarlo en Información). */
   location(): Promise<string>;
+  /**
+   * URL para leer un bloque por streaming (vídeo y audio sin cargarlos enteros en memoria):
+   * escritorio, protocolo app:// con rangos; Android, archivo local servido por la app;
+   * navegador, un Blob. Se revoca con `releaseUrl`.
+   */
+  url?(key: string): Promise<string | null>;
+  releaseUrl?(url: string): void;
+  /** Guarda un archivo grande por trozos, sin cargarlo entero en memoria (vídeos en Android). */
+  putBlob?(key: string, blob: Blob): Promise<void>;
 }
 
-export const KEY_RE = /^(p|t|v|r|meta)\/[A-Za-z0-9._~-]{1,140}$/;
+export const KEY_RE = /^(p|t|v|r|meta|m)\/[A-Za-z0-9._~-]{1,140}$/;
 function check(key: string) { if (!KEY_RE.test(key) || key.includes('..')) throw new Error(`Clave no válida: ${key}`); }
 
 /** Escritorio (Electron) y Android: el puente nativo escribe en archivos con fsync + renombrado. */
 class BridgeStore implements BlobStore {
-  constructor(readonly kind: 'desktop' | 'android', private b: Required<Pick<NonNullable<ReturnType<typeof desktopBridge>>, 'storeGet' | 'storePut' | 'storeDelete' | 'storeList'>> & { storeLocation?: () => Promise<string> }) {}
+  constructor(readonly kind: 'desktop' | 'android', private b: Required<Pick<NonNullable<ReturnType<typeof desktopBridge>>, 'storeGet' | 'storePut' | 'storeDelete' | 'storeList'>> & { storeLocation?: () => Promise<string>; storeUrl?: (key: string) => Promise<string | null>; storePutBlob?: (key: string, blob: Blob) => Promise<void> }) {}
+  async putBlob(key: string, blob: Blob) { check(key); if (this.b.storePutBlob) return this.b.storePutBlob(key, blob); return this.b.storePut(key, new Uint8Array(await blob.arrayBuffer())); }
+  async url(key: string) { check(key); return this.b.storeUrl ? this.b.storeUrl(key) : null; }
   get(key: string) { check(key); return this.b.storeGet(key); }
   put(key: string, data: Uint8Array) { check(key); return this.b.storePut(key, data); }
   delete(key: string) { check(key); return this.b.storeDelete(key); }
@@ -58,9 +70,12 @@ class IdbStore implements BlobStore {
   }
   async get(key: string) { check(key); const v = await this.tx('readonly', s => s.get(key)); return v instanceof Uint8Array ? v : v ? new Uint8Array(v as ArrayBuffer) : null; }
   async put(key: string, data: Uint8Array) { check(key); await this.tx('readwrite', s => s.put(data, key)); }
+  async putBlob(key: string, blob: Blob) { await this.put(key, new Uint8Array(await blob.arrayBuffer())); }
   async delete(key: string) { check(key); await this.tx('readwrite', s => s.delete(key)); }
   async list(prefix: string) { return (await this.tx('readonly', s => s.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)))).map(String); }
   async location() { return 'almacenamiento del navegador (IndexedDB)'; }
+  async url(key: string) { const d = await this.get(key); return d ? URL.createObjectURL(new Blob([d as Uint8Array<ArrayBuffer>])) : null; }
+  releaseUrl(u: string) { if (u.startsWith('blob:')) URL.revokeObjectURL(u); }
 }
 
 /** En memoria (pruebas, o si el navegador bloquea el almacenamiento). */
@@ -72,12 +87,14 @@ export class MemoryBlobStore implements BlobStore {
   async delete(key: string) { this.map.delete(key); }
   async list(prefix: string) { return [...this.map.keys()].filter(k => k.startsWith(prefix)).sort(); }
   async location() { return 'memoria (no se conserva al cerrar)'; }
+  async url(key: string) { const d = this.map.get(key); return d ? URL.createObjectURL(new Blob([d as Uint8Array<ArrayBuffer>])) : null; }
+  releaseUrl(u: string) { if (u.startsWith('blob:')) URL.revokeObjectURL(u); }
 }
 
 export async function defaultBlobStore(): Promise<BlobStore> {
   const b = desktopBridge();
   if (b?.storeGet && b.storePut && b.storeDelete && b.storeList) {
-    return new BridgeStore(b.platform === 'android' ? 'android' : 'desktop', { storeGet: b.storeGet, storePut: b.storePut, storeDelete: b.storeDelete, storeList: b.storeList, storeLocation: b.storeLocation });
+    return new BridgeStore(b.platform === 'android' ? 'android' : 'desktop', { storeGet: b.storeGet, storePut: b.storePut, storeDelete: b.storeDelete, storeList: b.storeList, storeLocation: b.storeLocation, storeUrl: b.storeUrl });
   }
   try {
     const s = new IdbStore();
