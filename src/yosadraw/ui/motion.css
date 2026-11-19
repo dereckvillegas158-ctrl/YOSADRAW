@@ -237,3 +237,17 @@ body.motion-mode #app { visibility: hidden; }
 .mo-root > .mo-bottom { grid-row: 4; }
 .mo-root > .mo-phonebar { grid-row: 5; }
 .mo-root > * { min-width: 0; }
+
+/* ---------- explorador de filtros, transiciones, efectos y animaciones ---------- */
+.mo-browser { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 0 8px 8px; }
+.mo-btabs { padding: 6px 0 0; }
+.mo-btabs button { font-size: 11.5px; padding: 7px 2px; }
+.mo-bgrid { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; align-content: start; padding-bottom: 10px; }
+.mo-span { grid-column: 1 / -1; margin: 4px 0 0; }
+.mo-bgrid h4 { font: 700 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent-2); }
+.mo-bcard { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); cursor: pointer; text-align: left; font-size: 11.5px; }
+.mo-bcard:hover, .mo-bcard:focus-visible { border-color: var(--accent); }
+.mo-bcard span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 2px 2px; }
+.mo-bthumb { width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; background: #14111d; display: block; }
+.mo-sheetbody .mo-browser { max-height: 62vh; }
+.mo-sheetbody .mo-bgrid { max-height: 48vh; }

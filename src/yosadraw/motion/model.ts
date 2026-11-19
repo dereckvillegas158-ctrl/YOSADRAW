@@ -1,5 +1,5 @@
 import type { LayerBlend } from '../doc/items';
-import { applyPreset, cutKeys, prop, valueAt, type MotionPreset, type Prop } from './keys';
+import { applyPreset, cutKeys, prop, valueAt, type Key, type MotionPreset, type Prop } from './keys';
 
 /**
  * YOSADRAW MOTION — modelo del editor de vídeo y motion graphics.
@@ -49,11 +49,13 @@ export interface Track {
 export interface Transform { x: Prop; y: Prop; sx: Prop; sy: Prop; rot: Prop; opacity: Prop; ax: Prop; ay: Prop; skx: Prop; sky: Prop }
 export interface FxInst { id: string; fx: string; on: boolean; p: Record<string, Prop<number | string | boolean>> }
 export interface Mask { id: string; type: 'rect' | 'ellipse'; x: Prop; y: Prop; w: Prop; h: Prop; feather: Prop; invert: boolean; mode: 'add' | 'subtract' }
-export type TransitionType = 'none' | 'fade' | 'slide-l' | 'slide-r' | 'slide-u' | 'slide-d' | 'zoom' | 'wipe-l' | 'wipe-r' | 'blur';
+export type TransitionType = 'none' | 'fade' | 'slide-l' | 'slide-r' | 'slide-u' | 'slide-d' | 'zoom' | 'zoom-out' | 'spin' | 'pop' | 'swing' | 'wipe-l' | 'wipe-r' | 'wipe-u' | 'wipe-d' | 'iris' | 'blinds' | 'flash' | 'glitch' | 'blur';
 export interface Transition { type: TransitionType; dur: number }
 export const TRANSITIONS: [TransitionType, string][] = [
   ['none', 'Ninguna'], ['fade', 'Fundido'], ['slide-l', 'Deslizar ←'], ['slide-r', 'Deslizar →'], ['slide-u', 'Deslizar ↑'], ['slide-d', 'Deslizar ↓'],
-  ['zoom', 'Zoom'], ['wipe-l', 'Barrido ←'], ['wipe-r', 'Barrido →'], ['blur', 'Desenfoque'],
+  ['zoom', 'Zoom'], ['zoom-out', 'Zoom desde cerca'], ['spin', 'Giro'], ['pop', 'Rebote (pop)'], ['swing', 'Balanceo'],
+  ['wipe-l', 'Barrido ←'], ['wipe-r', 'Barrido →'], ['wipe-u', 'Barrido ↑'], ['wipe-d', 'Barrido ↓'], ['iris', 'Iris (círculo)'],
+  ['blinds', 'Persianas'], ['flash', 'Destello'], ['glitch', 'Glitch'], ['blur', 'Desenfoque'],
 ];
 
 interface ClipBase {
@@ -553,4 +555,95 @@ export function normalizeMotion(v: unknown): Motion | null {
   m.time = isNum(m.time) ? Math.max(0, m.time) : 0;
   m.snap = m.snap !== false;
   return m;
+}
+
+// ---------------------------------------------------------------- portapapeles de keyframes
+
+/** Keyframes copiados: por propiedad, con tiempos relativos al primero copiado. */
+export interface KeyClipboard {
+  items: { path: string; kind: 'number' | 'color' | 'other'; fx?: string; keys: Key<unknown>[] }[];
+  span: number;
+}
+const kindOfValue = (v: unknown): KeyClipboard['items'][number]['kind'] => (typeof v === 'number' ? 'number' : typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? 'color' : 'other');
+
+/**
+ * Copia keyframes de un clip. `times` = sólo los de esos tiempos (s del clip);
+ * `paths` = sólo esas propiedades. Sin filtros, todos.
+ */
+export function copyKeys(c: Clip, times?: number[] | null, paths?: string[] | null): KeyClipboard | null {
+  const near = (t: number) => !times || times.some(x => Math.abs(x - t) < 1e-3);
+  const items: KeyClipboard['items'] = [];
+  forEachProp(c, (p, path) => {
+    if (!p.k?.length || (paths && !paths.includes(path))) return;
+    const keys = p.k.filter(k => near(k.t));
+    if (!keys.length) return;
+    const fx = path.startsWith('fx.') ? c.fx.find(f => f.id === path.split('.')[1])?.fx : undefined;
+    items.push({ path, kind: kindOfValue(keys[0].v), fx, keys: clone(keys) });
+  });
+  if (!items.length) return null;
+  const t0 = Math.min(...items.flatMap(i => i.keys.map(k => k.t)));
+  for (const i of items) for (const k of i.keys) k.t -= t0;
+  return { items, span: Math.max(...items.flatMap(i => i.keys.map(k => k.t))) };
+}
+
+/** Ruta equivalente en otro clip (efectos y máscaras tienen ids distintos en cada clip). */
+function mapPath(c: Clip, item: KeyClipboard['items'][number], src: string[]): string | null {
+  if (propByPath(c, item.path)) return item.path;
+  const [kind, id, key] = item.path.split('.');
+  if (kind === 'fx' && item.fx) {
+    // El n-ésimo efecto del mismo tipo (en el orden en que aparecían).
+    const idx = src.filter(p => p.startsWith('fx.')).map(p => p.split('.')[1]).filter((x, i, a) => a.indexOf(x) === i).indexOf(id);
+    const same = c.fx.filter(f => f.fx === item.fx);
+    const f = same[Math.max(0, Math.min(same.length - 1, idx))];
+    return f && f.p[key] ? `fx.${f.id}.${key}` : null;
+  }
+  if (kind === 'mask') {
+    const ids = src.filter(p => p.startsWith('mask.')).map(p => p.split('.')[1]).filter((x, i, a) => a.indexOf(x) === i);
+    const mk = c.masks[Math.max(0, ids.indexOf(id))];
+    return mk ? `mask.${mk.id}.${key}` : null;
+  }
+  return null;
+}
+
+/**
+ * Pega keyframes en `c` a partir de `at` (s del clip). Con `onto`, todos van a esa
+ * propiedad (sólo si se copió una y es del mismo tipo). Devuelve cuántos se pegaron.
+ */
+export function pasteKeys(c: Clip, kc: KeyClipboard, at: number, onto?: string): number {
+  let n = 0;
+  const src = kc.items.map(i => i.path);
+  for (const item of kc.items) {
+    const path = onto ?? mapPath(c, item, src);
+    if (!path) continue;
+    const p = propByPath(c, path);
+    if (!p || kindOfValue(p.v) !== item.kind) continue;
+    p.k ??= [];
+    for (const k of item.keys) {
+      const t = Math.max(0, Math.min(c.dur, at + k.t));
+      p.k = p.k.filter(x => Math.abs(x.t - t) > 1e-4);
+      p.k.push({ ...clone(k), t });
+      n++;
+    }
+    p.k.sort((a, b) => a.t - b.t);
+    p.v = valueAt(p, 0);
+  }
+  return n;
+}
+
+/** Quita los keyframes de esos tiempos (todas las propiedades). Devuelve cuántos. */
+export function deleteKeysAt(c: Clip, times: number[]): number {
+  let n = 0;
+  forEachProp(c, p => {
+    if (!p.k) return;
+    const keep = p.k.filter(k => !times.some(t => Math.abs(t - k.t) < 1e-3));
+    n += p.k.length - keep.length;
+    if (keep.length === p.k.length) return;
+    if (!keep.length) { p.v = valueAt(p, times[0]); delete p.k; } else { p.k = keep; p.v = valueAt(p, 0); }
+  });
+  return n;
+}
+
+/** Cambia la curva de los keyframes de esos tiempos (hacia el siguiente). */
+export function easeKeysAt(c: Clip, times: number[], e: Key['e']) {
+  forEachProp(c, p => { for (const k of p.k ?? []) if (times.some(t => Math.abs(t - k.t) < 1e-3)) { k.e = e; if (e === 'bezier' && !k.b) k.b = [0.42, 0, 0.58, 1]; } });
 }

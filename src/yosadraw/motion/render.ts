@@ -107,15 +107,10 @@ export class Compositor {
         if (def.id === 'lut') await this.ensureLut(m, String(vals.lut));
         img = await applyEffect(img, def, vals, { unit: o.scale, doc: [0, 0, W, H], into: img === L ? this.canvas(1, W, H).c : L });
       }
-      // Barrido: sólo una parte de la imagen.
-      for (const tr2 of [tin, tout]) if (tr2 && (tr2.type === 'wipe-l' || tr2.type === 'wipe-r')) {
-        const ig = img.getContext('2d')!, k = tr2.p;
-        ig.save(); ig.setTransform(1, 0, 0, 1, 0, 0); ig.globalCompositeOperation = 'destination-in'; ig.fillStyle = '#000';
-        if (tr2.type === 'wipe-r') ig.fillRect(0, 0, W * k, H); else ig.fillRect(W * (1 - k), 0, W * k, H);
-        ig.restore();
-      }
+      // Barridos, iris y persianas: sólo se ve una parte de la imagen.
+      for (const tr2 of [tin, tout]) if (tr2 && ['wipe-l', 'wipe-r', 'wipe-u', 'wipe-d', 'iris', 'blinds', 'flash', 'glitch'].includes(tr2.type)) this.transitionPixels(img, tr2, W, H);
       let alpha = Math.max(0, Math.min(1, tv(tf.opacity, lt)));
-      for (const tr2 of [tin, tout]) if (tr2 && (tr2.type === 'fade' || tr2.type === 'zoom')) alpha *= tr2.p;
+      for (const tr2 of [tin, tout]) if (tr2 && ['fade', 'zoom', 'zoom-out', 'spin'].includes(tr2.type)) alpha *= tr2.p;
       g.save();
       g.globalAlpha = alpha;
       g.globalCompositeOperation = blendOp(c.blend);
@@ -147,6 +142,41 @@ export class Compositor {
   parentMatrix(comp: Composition, t: number, scale: number, parallax: number): M6 {
     const M: M6 = S(scale, scale);
     return comp.camera.on ? mul(M, this.camera(comp, t, parallax)) : M;
+  }
+
+  /** Transiciones que actúan sobre los píxeles del clip ya dibujado. */
+  private transitionPixels(img: HTMLCanvasElement, t: NonNullable<ReturnType<typeof trans>>, W: number, H: number) {
+    const ig = img.getContext('2d')!, k = t.p;
+    ig.save(); ig.setTransform(1, 0, 0, 1, 0, 0);
+    if (t.type === 'flash') {
+      // Destello blanco que se apaga (sólo sobre lo que hay del clip).
+      ig.globalCompositeOperation = 'source-atop';
+      ig.globalAlpha = (1 - k) * 0.95; ig.fillStyle = '#ffffff'; ig.fillRect(0, 0, W, H);
+    } else if (t.type === 'glitch') {
+      // Franjas desplazadas al azar (determinista por fotograma) que se calman al terminar.
+      const { c: tmp, g } = this.canvas(4, W, H);
+      g.drawImage(img, 0, 0);
+      ig.clearRect(0, 0, W, H);
+      const q = 1 - k, n = 14;
+      let seed = Math.floor(q * 97) * 7919 + 13;
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      for (let i = 0; i < n; i++) {
+        const y0 = (i / n) * H, hh = H / n + 1, dx = (rnd() - 0.5) * W * 0.25 * q;
+        ig.drawImage(tmp, 0, y0, W, hh, dx, y0, W, hh);
+      }
+      if (q > 0.05) { ig.globalCompositeOperation = 'lighter'; ig.globalAlpha = q * 0.5; ig.drawImage(tmp, W * 0.015 * q, 0); }
+    } else {
+      ig.globalCompositeOperation = 'destination-in'; ig.fillStyle = '#000';
+      ig.beginPath();
+      if (t.type === 'wipe-r') ig.rect(0, 0, W * k, H);
+      else if (t.type === 'wipe-l') ig.rect(W * (1 - k), 0, W * k, H);
+      else if (t.type === 'wipe-d') ig.rect(0, 0, W, H * k);
+      else if (t.type === 'wipe-u') ig.rect(0, H * (1 - k), W, H * k);
+      else if (t.type === 'iris') ig.arc(W / 2, H / 2, Math.hypot(W, H) / 2 * k, 0, Math.PI * 2);
+      else if (t.type === 'blinds') { const n = 10, bh = H / n; for (let i = 0; i < n; i++) ig.rect(0, i * bh, W, bh * k); }
+      ig.fill();
+    }
+    ig.restore();
   }
 
   private camera(comp: Composition, t: number, parallax: number): M6 {
@@ -375,13 +405,13 @@ function natural(src: CanvasImageSource, fw: number, fh: number) {
 }
 
 /** Estado de una transición en el tiempo de clip `lt` (p = 0 → empieza, 1 → completa). */
-function trans(tr: Transition, lt: number, dur: number, side: 'in' | 'out'): { type: Transition['type']; p: number; side: 'in' | 'out' } | null {
+function trans(tr: Transition, lt: number, dur: number, side: 'in' | 'out'): { type: Transition['type']; p: number; u: number; side: 'in' | 'out' } | null {
   if (tr.type === 'none' || tr.dur <= 0) return null;
   const d = Math.min(tr.dur, dur);
   const u = side === 'in' ? lt / d : (dur - lt) / d;
   if (u >= 1) return null;
   const p = Math.max(0, Math.min(1, u));
-  return { type: tr.type, p: 1 - (1 - p) ** 2, side };
+  return { type: tr.type, p: 1 - (1 - p) ** 2, u: p, side };
 }
 
 function transitionMatrix(t: ReturnType<typeof trans>, comp: Composition): M6 {
@@ -396,6 +426,14 @@ function transitionMatrix(t: ReturnType<typeof trans>, comp: Composition): M6 {
     case 'slide-u': return T(0, -dir * H * q);
     case 'slide-d': return T(0, dir * H * q);
     case 'zoom': { const s = 0.6 + 0.4 * t.p; return mul(mul(T(W / 2, H / 2), S(s, s)), T(-W / 2, -H / 2)); }
+    case 'zoom-out': { const s = 1 + 0.8 * q; return mul(mul(T(W / 2, H / 2), S(s, s)), T(-W / 2, -H / 2)); }
+    case 'spin': { const s = 0.2 + 0.8 * t.p; return mul(mul(mul(T(W / 2, H / 2), R(dir * -180 * q)), S(s, s)), T(-W / 2, -H / 2)); }
+    case 'pop': {
+      // Rebote al aparecer (o al irse): sobrepasa el tamaño y vuelve.
+      const u = t.u, c1 = 1.70158, c3 = c1 + 1, s = Math.max(0, 1 + c3 * (u - 1) ** 3 + c1 * (u - 1) ** 2);
+      return mul(mul(T(W / 2, H / 2), S(s, s)), T(-W / 2, -H / 2));
+    }
+    case 'swing': return mul(mul(T(W / 2, 0), R(dir * 75 * q)), T(-W / 2, 0));
     default: return [1, 0, 0, 1, 0, 0];
   }
 }
