@@ -16,7 +16,7 @@ import type { Item } from '../doc/items';
 import type { Rect } from '../brush/StrokePainter';
 import * as anim from '../anim/model';
 import { ClipComposer, clipBaseOf, clipHidden, hasClipped, maskTo } from '../doc/clip';
-import { composeFolders, groupsOf } from '../doc/folders';
+import { composeFolders, groupsOf, layerVisible } from '../doc/folders';
 import { itemTouchesPath } from '../doc/vector';
 import { clonePreset } from '../brush/BrushPreset';
 
@@ -1197,7 +1197,8 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (!v) return;
     v.canvas.style.opacity = String(l.opacity);
     v.canvas.style.mixBlendMode = l.blend;
-    v.canvas.style.visibility = l.visible && !clipHidden(this.doc.layers, l) && !this.flatIds.has(l.id) ? 'visible' : 'hidden';
+    // Visible sólo si la capa y su carpeta lo están (un «visible» explícito anularía el «oculto» de la carpeta).
+    v.canvas.style.visibility = layerVisible(this.doc, 'track' in l ? this.doc.layer((l as OnionGhost).track) ?? l : l) && l.visible && !clipHidden(this.doc.layers, l) && !this.flatIds.has(l.id) ? 'visible' : 'hidden';
     if ('track' in l) {
       const g = l as OnionGhost;
       v.canvas.style.filter = this.doc.anim?.onion.tint ? `url(#${this.onionFilterId}-${g.side})` : '';

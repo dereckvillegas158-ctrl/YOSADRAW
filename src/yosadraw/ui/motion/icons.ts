@@ -39,6 +39,8 @@ export const MI = {
   edit: svg('<path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/>'),
   fit: svg('<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/>', 16),
   more: svg('<circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/>'),
+  keyCopy: svg('<path d="m9 3 5 5-5 5-5-5 5-5Z"/><rect x="12" y="12" width="9" height="9" rx="2"/>'),
+  keyPaste: svg('<path d="m9 3 5 5-5 5-5-5 5-5Z" fill="currentColor"/><path d="M16 13v8M12 17h8"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   close: svg('<path d="M6 6l12 12M18 6 6 18"/>', 16),
   solo: svg('<circle cx="12" cy="12" r="8"/><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.4 0-2.5.8-2.5 2s1.2 1.6 2.5 2 2.5.8 2.5 2-1.1 2-2.5 2c-1 0-2-.5-2.5-1.5"/>', 15),

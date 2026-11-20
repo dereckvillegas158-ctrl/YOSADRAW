@@ -246,24 +246,53 @@ export class MLibrary {
     this.render();
   }
 
-  /** Elegir un dibujo o animación de la galería (y una capa) como medio. */
+  /**
+   * Elegir un dibujo o animación de la galería: entero (todas las capas juntas) o
+   * varias capas a la vez, cada una como medio propio (con su transparencia), y
+   * opcionalmente colocarlas en la línea de tiempo en pistas separadas y alineadas.
+   */
   private async fromGallery() {
     const s = this.s;
     const list = s.deps.projects.list().filter(e => !e.trashed && !e.motion).sort((a, b) => b.modified - a.modified);
     if (!list.length) { toast('No hay dibujos ni animaciones en la galería.'); return; }
     let chosen = list[0].id;
+    let layers: { id: string; name: string; visible: boolean; folder: string }[] = [];
+    let separate = false;
     const urls: string[] = [];
     const grid = h('div', { class: 'mo-gallerypick', role: 'radiogroup', 'aria-label': 'Proyectos' });
-    const layerSel = h('select', { 'aria-label': 'Capa' }, h('option', { value: '' }, 'Todas las capas'));
+    const layerBox = h('div', { class: 'mo-layerpick' });
     const paper = h('input', { type: 'checkbox', checked: true });
+    const place = h('input', { type: 'checkbox', checked: true });
+    const modeSeg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Cómo importar' });
+    const renderMode = () => {
+      modeSeg.replaceChildren(...([[false, 'Dibujo completo'], [true, 'Capas por separado']] as const).map(([v, l]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(separate === v), on: { click: () => { separate = v; renderMode(); renderLayers(); } } }, l)));
+    };
+    const checks = new Map<string, HTMLInputElement>();
+    const renderLayers = () => {
+      layerBox.hidden = !separate;
+      if (!separate) return;
+      checks.clear();
+      const all = h('button', { type: 'button', class: 'btn xs', on: { click: () => checks.forEach(c => { c.checked = true; }) } }, 'Todas');
+      const none = h('button', { type: 'button', class: 'btn xs', on: { click: () => checks.forEach(c => { c.checked = false; }) } }, 'Ninguna');
+      const vis = h('button', { type: 'button', class: 'btn xs', on: { click: () => layers.forEach(l => { checks.get(l.id)!.checked = l.visible; }) } }, 'Sólo las visibles');
+      layerBox.replaceChildren(h('div', { class: 'mo-row' }, h('strong', null, `${layers.length} capas`), all, none, vis),
+        h('div', { class: 'mo-layerlist' }, ...[...layers].reverse().map(l => {
+          const c = h('input', { type: 'checkbox', checked: true });
+          checks.set(l.id, c);
+          return h('label', { class: 'mo-check' }, c, ` ${l.name}`, l.folder ? h('span', { class: 'mo-unit' }, ` · ${l.folder}`) : null, !l.visible ? h('span', { class: 'mo-unit' }, ' (oculta)') : null);
+        })),
+        h('label', { class: 'mo-check' }, place, ' Ponerlas en la línea de tiempo en el cabezal, una pista por capa (alineadas, en el mismo orden)'));
+    };
     const loadLayers = async (id: string) => {
-      layerSel.replaceChildren(h('option', { value: '' }, 'Todas las capas'));
+      layers = [];
       try {
         const bytes = await s.deps.projects.read(id);
         const files = unzipSync(bytes, { filter: f => f.name === 'project.json' });
         const p = JSON.parse(strFromU8(files['project.json']));
-        for (const l of (p.document?.layers ?? []) as { id: string; name: string }[]) layerSel.append(h('option', { value: l.id }, l.name));
-      } catch { /* sin capas: todas */ }
+        const folders = new Map(((p.document?.folders ?? []) as { id: string; name: string }[]).map(f => [f.id, f.name]));
+        layers = ((p.document?.layers ?? []) as { id: string; name: string; visible?: boolean; group?: string }[]).map(l => ({ id: l.id, name: l.name, visible: l.visible !== false, folder: (l.group && folders.get(l.group)) || '' }));
+      } catch { /* sin capas legibles: sólo el dibujo completo */ }
+      renderLayers();
     };
     for (const e of list) {
       const img = h('img', { alt: '', loading: 'lazy' });
@@ -272,22 +301,43 @@ export class MLibrary {
       b.addEventListener('click', () => { chosen = e.id; grid.querySelectorAll('button').forEach(x => x.setAttribute('aria-checked', String(x === b))); void loadLayers(e.id); });
       grid.append(b);
     }
+    renderMode();
     void loadLayers(chosen);
     const ok = await modal({
       title: 'Usar un dibujo de YOSADRAW', wide: true,
       body: [h('p', { class: 'ctl-help' }, 'Se usa el proyecto tal como está en la galería (con su transparencia). Si después lo editas en YOSADRAW, aquí aparece «actualizar»: el original nunca cambia.'), grid,
-        h('div', { class: 'mo-row' }, h('label', null, 'Capa ', layerSel), h('label', { class: 'mo-check' }, paper, ' Incluir el papel (fondo)'))],
-      actions: [{ label: 'Cancelar', value: false, kind: 'ghost' }, { label: 'Añadir a la biblioteca', value: true, kind: 'primary' }],
+        modeSeg, layerBox, h('label', { class: 'mo-check' }, paper, ' Incluir el papel (fondo)')],
+      actions: [{ label: 'Cancelar', value: false, kind: 'ghost' }, { label: 'Añadir', value: true, kind: 'primary' }],
     });
     for (const u of urls) URL.revokeObjectURL(u);
     if (!ok) return;
     try {
-      const item = await s.media.fromProject(chosen, layerSel.value || null, paper.checked);
-      if (layerSel.value) item.name = `${item.name} · ${layerSel.selectedOptions[0].textContent}`;
-      s.edit(`Importar ${item.name}`, mm => { mm.media.push(item); });
+      const e = s.deps.projects.get(chosen)!;
+      if (!separate) {
+        const item = await s.media.fromProject(chosen, null, paper.checked);
+        s.edit(`Importar ${item.name}`, mm => { mm.media.push(item); });
+        s.mediaChanged();
+        toast(`«${item.name}» en la biblioteca: arrástralo a la línea de tiempo`, 'ok');
+        return;
+      }
+      // Capas elegidas, de abajo arriba; el papel va con la de más abajo.
+      const pick = layers.filter(l => checks.get(l.id)?.checked);
+      if (!pick.length) { toast('Elige al menos una capa.'); return; }
+      const items: MediaItem[] = [];
+      for (let i = 0; i < pick.length; i++) {
+        const it = await s.media.fromProject(chosen, pick[i].id, paper.checked && i === 0);
+        it.name = `${e.name} · ${pick[i].name}`;
+        it.folder = e.name.slice(0, 60);
+        items.push(it);
+      }
+      s.edit(`Importar ${items.length} capas de ${e.name}`, (mm, comp) => {
+        mm.media.push(...items);
+        if (!mm.folders.includes(e.name.slice(0, 60))) mm.folders.push(e.name.slice(0, 60));
+        if (place.checked) s.placeStack(comp, items, s.time);
+      });
       s.mediaChanged();
-      toast(`«${item.name}» en la biblioteca: arrástralo a la línea de tiempo`, 'ok');
-    } catch (e) { toast(e instanceof Error ? e.message : String(e), 'error'); }
+      toast(`${items.length} capas de «${e.name}» importadas${place.checked ? ' y colocadas en pistas separadas' : ''} (carpeta «${e.name}» de la biblioteca)`, 'ok');
+    } catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }
   }
 }
 

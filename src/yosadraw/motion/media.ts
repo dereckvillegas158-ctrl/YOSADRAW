@@ -64,6 +64,7 @@ export class MediaManager {
   private peakCache = new Map<string, Float32Array>();
   private gifs = new Map<string, { dec: ImageDecoder; times: number[]; total: number; cache: Map<number, VideoFrame> }>();
   private drawings = new Map<string, Promise<{ fr: FrameRenderer; rev: number }>>();
+  private projectDocs = new Map<string, Promise<import('../doc/Document').Document>>();
   private thumbs = new Map<string, Promise<HTMLCanvasElement | null>>();
   /** Medios cuyo archivo no está en el almacén (proyecto importado sin sus medios, borrado…). */
   missing = new Set<string>();
@@ -244,7 +245,7 @@ export class MediaManager {
     for (const v of this.videos.values()) { v.pause(); v.removeAttribute('src'); v.load(); }
     this.videos.clear();
     for (const u of this.urls.values()) this.store.releaseUrl?.(u);
-    this.urls.clear(); this.images.clear(); this.audio.clear(); this.thumbs.clear(); this.drawings.clear(); this.peakCache.clear();
+    this.urls.clear(); this.images.clear(); this.audio.clear(); this.thumbs.clear(); this.drawings.clear(); this.projectDocs.clear(); this.peakCache.clear();
     for (const g of this.gifs.values()) { for (const f of g.cache.values()) f.close(); g.dec.close(); }
     this.gifs.clear();
   }
@@ -363,10 +364,18 @@ export class MediaManager {
     if (!p) {
       p = (async () => {
         if (!this.projects || !m.project) throw new Error('Proyecto no disponible');
-        const doc = (await readProject(await this.projects.read(m.project.id), browserImageCodec)).doc;
-        // Una capa concreta: sólo esa (conservando transparencias).
-        if (m.project.layer) { const l = doc.layers.find(x => x.id === m.project!.layer); if (l) doc.layers = [l]; }
-        return { fr: new FrameRenderer(this.painter, doc, 256 * 1024 * 1024), rev: this.projects.get(m.project.id)?.rev ?? 0 };
+        const rev = this.projects.get(m.project.id)?.rev ?? 0;
+        // El proyecto se lee una sola vez aunque se usen varias de sus capas por separado.
+        const key = `${m.project.id}@${rev}`;
+        let docP = this.projectDocs.get(key);
+        if (!docP) { docP = readProject(await this.projects.read(m.project.id), browserImageCodec).then(f => f.doc); this.projectDocs.set(key, docP); docP.catch(() => this.projectDocs.delete(key)); }
+        let doc = await docP;
+        // Una capa concreta: sólo esa, visible y fuera de su carpeta (se eligió a propósito), sin tocar el documento compartido.
+        if (m.project.layer) {
+          const l = doc.layers.find(x => x.id === m.project!.layer);
+          if (l) doc = Object.assign(Object.create(Object.getPrototypeOf(doc)), doc, { layers: [{ ...l, visible: true, group: null, clip: false }] });
+        }
+        return { fr: new FrameRenderer(this.painter, doc, 128 * 1024 * 1024), rev };
       })();
       this.drawings.set(m.id, p);
       p.catch(() => { this.drawings.delete(m.id); this.missing.add(m.id); });

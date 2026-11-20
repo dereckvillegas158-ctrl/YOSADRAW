@@ -143,7 +143,10 @@ export type MotionPreset =
   | 'rise-in' | 'flip-x-in' | 'flip-y-in' | 'elastic-in' | 'stretch-in' | 'skew-in' | 'whip-in' | 'swing-in' | 'grow-in'
   | 'fade-out' | 'slide-left-out' | 'slide-right-out' | 'slide-up-out' | 'slide-down-out' | 'zoom-out' | 'pop-out' | 'spin-out' | 'drop-out'
   | 'flip-x-out' | 'shrink-out' | 'fly-out' | 'skew-out'
-  | 'pulse' | 'shake' | 'float' | 'heartbeat' | 'wiggle' | 'swing' | 'blink' | 'rubber' | 'jello' | 'tada' | 'spin-loop' | 'bounce-loop' | 'orbit' | 'breathe';
+  | 'pulse' | 'shake' | 'float' | 'heartbeat' | 'wiggle' | 'swing' | 'blink' | 'rubber' | 'jello' | 'tada' | 'spin-loop' | 'bounce-loop' | 'orbit' | 'breathe'
+  | 'fold-in' | 'roll-in' | 'swirl-in' | 'blur-zoom-in' | 'unfold-in' | 'squash-in' | 'glitch-in' | 'typewriter-in'
+  | 'bounce-out' | 'roll-out' | 'swirl-out' | 'squash-out' | 'fold-out' | 'glitch-out' | 'sink-out'
+  | 'wave' | 'flicker' | 'pendulum' | 'zoom-pulse' | 'ken-burns' | 'drift' | 'glitch-jump' | 'wobble' | 'hover-tilt';
 export const MOTION_PRESETS: { id: MotionPreset; label: string; group: PresetGroup }[] = [
   { id: 'fade-in', label: 'Aparecer', group: 'Entrada' }, { id: 'slide-left-in', label: 'Desde la izquierda', group: 'Entrada' },
   { id: 'slide-right-in', label: 'Desde la derecha', group: 'Entrada' }, { id: 'slide-up-in', label: 'Desde abajo', group: 'Entrada' },
@@ -169,6 +172,20 @@ export const MOTION_PRESETS: { id: MotionPreset; label: string; group: PresetGro
   { id: 'jello', label: 'Gelatina', group: 'Bucle' }, { id: 'tada', label: 'Tadá', group: 'Bucle' },
   { id: 'spin-loop', label: 'Girar sin parar', group: 'Bucle' }, { id: 'bounce-loop', label: 'Saltar', group: 'Bucle' },
   { id: 'orbit', label: 'Órbita', group: 'Bucle' }, { id: 'breathe', label: 'Respirar', group: 'Bucle' },
+  // 1.9.0
+  { id: 'fold-in', label: 'Desplegar', group: 'Entrada' }, { id: 'roll-in', label: 'Rodar', group: 'Entrada' },
+  { id: 'swirl-in', label: 'Remolino', group: 'Entrada' }, { id: 'blur-zoom-in', label: 'Zoom desde lejos', group: 'Entrada' },
+  { id: 'unfold-in', label: 'Abrir', group: 'Entrada' }, { id: 'squash-in', label: 'Aplastar y saltar', group: 'Entrada' },
+  { id: 'glitch-in', label: 'Glitch', group: 'Entrada' }, { id: 'typewriter-in', label: 'Golpe seco', group: 'Entrada' },
+  { id: 'bounce-out', label: 'Rebotar', group: 'Salida' }, { id: 'roll-out', label: 'Rodar', group: 'Salida' },
+  { id: 'swirl-out', label: 'Remolino', group: 'Salida' }, { id: 'squash-out', label: 'Aplastar', group: 'Salida' },
+  { id: 'fold-out', label: 'Plegar', group: 'Salida' }, { id: 'glitch-out', label: 'Glitch', group: 'Salida' },
+  { id: 'sink-out', label: 'Hundirse', group: 'Salida' },
+  { id: 'wave', label: 'Ola', group: 'Bucle' }, { id: 'flicker', label: 'Parpadeo de luz', group: 'Bucle' },
+  { id: 'pendulum', label: 'Péndulo', group: 'Bucle' }, { id: 'zoom-pulse', label: 'Zoom lento', group: 'Bucle' },
+  { id: 'ken-burns', label: 'Ken Burns', group: 'Bucle' }, { id: 'drift', label: 'Deriva', group: 'Bucle' },
+  { id: 'glitch-jump', label: 'Saltos glitch', group: 'Bucle' }, { id: 'wobble', label: 'Bamboleo', group: 'Bucle' },
+  { id: 'hover-tilt', label: 'Levitar inclinado', group: 'Bucle' },
 ];
 
 /**
@@ -236,5 +253,32 @@ export function applyPreset(tf: TfLike, id: MotionPreset, dur: number, len: numb
     case 'bounce-loop': loop(L, t => { key(tf.y, t, y, 'out'); key(tf.y, t + L / 2, y - H * 0.08, 'in'); }); break;
     case 'orbit': loop(L / 8, (t, i) => { const a = (i / 8) * Math.PI * 2, rad = Math.min(W, H) * 0.04; key(tf.x, t, x + Math.cos(a) * rad, 'linear'); key(tf.y, t, y + Math.sin(a) * rad, 'linear'); }); break;
     case 'breathe': loop(L, (t, i) => { both(t, i % 2 ? 1.05 : 1, i % 2 ? 1.05 : 1, 'inout'); key(tf.opacity, t, i % 2 ? o : o * 0.8, 'inout'); }); break;
+    // ---- 1.9.0: entradas
+    case 'fold-in': key(tf.sx, s0, 0, 'out'); key(tf.sx, L * 0.5, sx); key(tf.sy, s0, sy * 0.05, 'linear'); key(tf.sy, L * 0.5, sy * 0.05, 'out'); key(tf.sy, L, sy); break;
+    case 'roll-in': key(tf.x, s0, x - W, 'out'); key(tf.x, L, x); key(tf.rot, s0, r - 540, 'out'); key(tf.rot, L, r); break;
+    case 'swirl-in': key(tf.rot, s0, r + 720, 'out'); key(tf.rot, L, r); both(s0, 0, 0, 'out'); both(L, 1, 1); key(tf.opacity, s0, 0, 'out'); key(tf.opacity, L * 0.5, o); break;
+    case 'blur-zoom-in': both(s0, 3, 3, 'out'); both(L, 1, 1); key(tf.opacity, s0, 0, 'out'); key(tf.opacity, L, o); break;
+    case 'unfold-in': key(tf.sy, s0, 0, 'overshoot'); key(tf.sy, L, sy); key(tf.skx, s0, skx + 20, 'out'); key(tf.skx, L, skx); break;
+    case 'squash-in': key(tf.y, s0, y - H * 0.5, 'in'); key(tf.y, L * 0.5, y, 'out'); key(tf.y, L, y); both(s0, 0.8, 1.2, 'in'); both(L * 0.5, 1.3, 0.7, 'elastic'); both(L, 1, 1); break;
+    case 'glitch-in': { const n = 8; for (let i = 0; i < n; i++) { const t = (i / n) * L, j = ((i * 7919) % 13) / 13 - 0.5; key(tf.x, t, x + j * W * 0.08, 'hold'); key(tf.opacity, t, i % 2 ? o : o * 0.3, 'hold'); } key(tf.x, L, x, 'hold'); key(tf.opacity, L, o, 'hold'); break; }
+    case 'typewriter-in': both(s0, 1.6, 1.6, 'in'); both(L * 0.6, 0.94, 0.94, 'out'); both(L, 1, 1); key(tf.opacity, s0, 0, 'linear'); key(tf.opacity, L * 0.3, o); break;
+    // ---- 1.9.0: salidas
+    case 'bounce-out': both(e0, 1, 1, 'out'); both(e0 + L * 0.3, 1.2, 1.2, 'in'); both(dur, 0, 0); key(tf.opacity, e0 + L * 0.5, o, 'in'); key(tf.opacity, dur, 0); break;
+    case 'roll-out': key(tf.x, e0, x, 'in'); key(tf.x, dur, x + W); key(tf.rot, e0, r, 'in'); key(tf.rot, dur, r + 540); break;
+    case 'swirl-out': key(tf.rot, e0, r, 'in'); key(tf.rot, dur, r - 720); both(e0, 1, 1, 'in'); both(dur, 0, 0); key(tf.opacity, e0 + L * 0.5, o, 'in'); key(tf.opacity, dur, 0); break;
+    case 'squash-out': both(e0, 1, 1, 'out'); both(e0 + L * 0.4, 1.3, 0.7, 'in'); both(dur, 2, 0); break;
+    case 'fold-out': key(tf.sy, e0, sy, 'in'); key(tf.sy, e0 + L * 0.5, sy * 0.05, 'linear'); key(tf.sy, dur, sy * 0.05); key(tf.sx, e0 + L * 0.5, sx, 'in'); key(tf.sx, dur, 0); break;
+    case 'glitch-out': { const n = 8; for (let i = 0; i <= n; i++) { const t = e0 + (i / n) * L, j = i ? ((i * 7919) % 13) / 13 - 0.5 : 0; key(tf.x, t, x + j * W * 0.08, 'hold'); key(tf.opacity, t, i === n ? 0 : i % 2 ? o * 0.3 : o, 'hold'); } break; }
+    case 'sink-out': key(tf.y, e0, y, 'in'); key(tf.y, dur, y + H * 0.08); both(e0, 1, 1, 'in'); both(dur, 0.9, 0.9); key(tf.opacity, e0, o, 'in'); key(tf.opacity, dur, 0); break;
+    // ---- 1.9.0: bucles
+    case 'wave': loop(L / 4, (t, i) => { key(tf.y, t, y + [0, -1, 0, 1][i % 4] * H * 0.02, 'inout'); key(tf.rot, t, r + [0, 4, 0, -4][i % 4], 'inout'); }); break;
+    case 'flicker': { let seed = 3; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647; loop(L / 10, t => key(tf.opacity, t, o * (rnd() < 0.25 ? 0.35 : 1), 'hold')); break; }
+    case 'pendulum': loop(L / 2, (t, i) => key(tf.rot, t, r + (i % 2 ? 25 : -25), 'inout')); break;
+    case 'zoom-pulse': loop(L, (t, i) => both(t, i % 2 ? 1.06 : 1, i % 2 ? 1.06 : 1, 'inout')); break;
+    case 'ken-burns': both(0, 1, 1, 'linear'); both(dur, 1.18, 1.18); key(tf.x, 0, x, 'linear'); key(tf.x, dur, x - W * 0.04); key(tf.y, 0, y, 'linear'); key(tf.y, dur, y - H * 0.03); break;
+    case 'drift': loop(L, (t, i) => { const a = (i * Math.PI) / 2; key(tf.x, t, x + Math.sin(a) * W * 0.015, 'inout'); key(tf.y, t, y + Math.cos(a) * H * 0.015 - H * 0.015, 'inout'); }); break;
+    case 'glitch-jump': { let seed = 11; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) - 0.5; loop(L / 8, (t, i) => { const g = i % 8 === 3 || i % 8 === 4; key(tf.x, t, x + (g ? rnd() * W * 0.05 : 0), 'hold'); key(tf.skx, t, skx + (g ? rnd() * 20 : 0), 'hold'); }); break; }
+    case 'wobble': loop(L / 4, (t, i) => { key(tf.rot, t, r + [0, -5, 0, 5][i % 4], 'inout'); key(tf.x, t, x + [0, -1, 0, 1][i % 4] * W * 0.01, 'inout'); }); break;
+    case 'hover-tilt': loop(L, (t, i) => { key(tf.y, t, i % 2 ? y - H * 0.025 : y, 'inout'); key(tf.rot, t, i % 2 ? r + 3 : r - 3, 'inout'); }); break;
   }
 }
