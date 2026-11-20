@@ -1,4 +1,21 @@
-## YOSADRAW 1.7.0
+## YOSADRAW 1.8.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.8.0-x64.exe` (instalador), `YOSADRAW-1.8.0-x64-portable.exe` o `YOSADRAW-1.8.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.8.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Rendimiento con muchas capas, colores y efectos
+- **Pila de capas compactada:** mientras dibujas, las capas de debajo de la activa (y los tramos de capas normales de encima) se muestran combinadas en una sola imagen, idéntica a la original (también con Multiplicar, Trama, Superponer o Luz suave). La pantalla compone 2–3 imágenes en lugar de una por capa. Se rehace sólo cuando cambia otra capa.
+- **Imágenes grandes a la escala justa:** al alejar el zoom, los rellenos, imágenes y capas con efectos se dibujan desde una versión reducida preparada una vez, en lugar de reducir la imagen entera en cada repintado.
+- **Efectos recortados a su contenido:** un efecto aplicado a una capa ya no deja una imagen del tamaño de todo el documento, sólo de la zona dibujada (menos memoria, repintado más rápido).
+- En una prueba con 12 capas con trazos, rellenos, modos de fusión y efectos, los parones al pintar bajaron de ~1,9 s a ~30 ms y al hacer zoom de ~1,6 s a ~30 ms.
+
+### Armonías de color mejoradas
+- Elige el esquema (complementario, divididos, análogos, tríada, tétrada, monocromático, luces y sombras) con la rueda de **pintor (RYB)** o de **luz (RGB)**.
+- Cada color con su **papel y proporción** (regla 60-30-10: dominante, secundario, acento), barra de proporciones y **consejos de uso** del esquema.
+- **Colorear con capas de fusión:** para el color actual, el color exacto que hay que usar en una capa **Multiplicar** (sombras frías), **Trama** (luces cálidas), **Superponer** (ambiente), **Luz suave** (luz rebotada) y **Sobreexponer color** (brillos), con la cuenta a la vista (color de debajo + color de la capa = resultado) y un botón que crea la capa con su modo y el color listos.
+
+### Versión anterior: YOSADRAW 1.7.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.7.0-x64.exe` (instalador), `YOSADRAW-1.7.0-x64-portable.exe` o `YOSADRAW-1.7.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
