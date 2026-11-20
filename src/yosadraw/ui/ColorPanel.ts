@@ -1,6 +1,8 @@
 import { desktopBridge } from '../brush/storage';
 import type { ToolManager } from '../tools/ToolManager';
-import { fromHex, harmonies, hsvToRgb, isHex, rgbToHsv, toHex, WHEELS, mix, type WheelModel } from './color';
+import { fromHex, hsvToRgb, isHex, rgbToHsv, toHex, WHEELS, mix, type WheelModel } from './color';
+import { layerTips, scheme, SCHEMES, type SchemeId } from './colorplan';
+import { BLENDS } from './LayersPanel';
 import { h, pickFiles, toast } from './dom';
 import { confirmDialog, promptText } from './modal';
 import { BUILTIN_PALETTES, MAX_COLORS, MAX_PALETTES, paletteId, parsePalette, toGpl, type Palette, type PalettePrefs } from './palettes';
@@ -241,12 +243,58 @@ export class ColorPanel {
       slider('Azul', b, 255, '', at(t => toHex(r, g, Math.round(t * 255))), x => this.apply(toHex(r, g, x))));
   }
 
+  /**
+   * Armonías: esquema elegido a partir del color actual (rueda de pintor o de luz),
+   * cada color con su papel y la proporción de la imagen que conviene darle, consejos
+   * de uso, y colores calculados para colorear con capas de fusión (sombras con
+   * Multiplicar, luces con Trama, ambiente con Superponer…).
+   */
   private renderHarmony() {
     const cur = this.current();
-    this.harmonyBox.replaceChildren(...harmonies(cur).map(hm => h('div', { class: 'cp-harm' },
-      h('div', { class: 'cp-harm-head' }, h('span', { class: 'mini-label' }, hm.name),
-        h('button', { type: 'button', class: 'link', title: 'Guardar estos colores como paleta', on: { click: () => void this.newPalette(`${hm.name} ${cur}`, hm.colors) } }, 'Guardar')),
-      h('div', { class: 'cp-harm-row' }, ...hm.colors.map(c => this.swatch(c))))));
+    const id = (SCHEMES.some(s => s.id === this.prefs.scheme) ? this.prefs.scheme : 'comp') as SchemeId;
+    const model = this.prefs.wheel;
+    const sc = scheme(cur, id, model);
+    const chips = h('div', { class: 'cp-schemes', role: 'radiogroup', 'aria-label': 'Esquema de armonía' },
+      ...SCHEMES.map(s => h('button', { type: 'button', role: 'radio', class: 'cp-scheme', 'aria-checked': String(s.id === id), on: { click: () => { this.prefs.scheme = s.id; this.save(); this.renderHarmony(); } } }, s.name)));
+    const wheel = h('div', { class: 'segmented compact', role: 'radiogroup', 'aria-label': 'Rueda para calcular' },
+      ...([['ryb', 'Pintura (RYB)'], ['rgb', 'Luz (RGB)']] as [WheelModel, string][]).map(([w, label]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(model === w), title: w === 'ryb' ? 'Rueda de pintor: complementario del rojo = verde (la tradicional en ilustración)' : 'Rueda de luz: complementario del rojo = cian', on: { click: () => { this.prefs.wheel = w; this.save(); this.renderHarmony(); } } }, label)));
+    // Colores del esquema con su papel y proporción.
+    const bar = h('div', { class: 'cp-share', 'aria-hidden': 'true' }, ...sc.colors.map(c => h('span', { style: { background: c.hex, flex: String(c.share) }, title: `${c.role}: ${c.share} %` })));
+    const rows = h('div', { class: 'cp-roles-list' }, ...sc.colors.map(c => h('div', { class: 'cp-role-row' },
+      this.swatch(c.hex, `${c.role} ${c.hex}`), h('span', { class: 'cp-role-name' }, c.role), h('span', { class: 'cp-role-share' }, `${c.share} %`), h('code', null, c.hex))));
+    const tips = h('ul', { class: 'cp-tips' }, ...sc.tips.map(t => h('li', null, t)));
+    // Capas de fusión calculadas sobre el color actual.
+    const tipsLayers = layerTips(cur, sc).map(t => {
+      const label = BLENDS.find(b => b.value === t.mode)?.label ?? t.name;
+      return h('div', { class: 'cp-layer-tip' },
+        h('div', { class: 'cp-lt-head' }, h('strong', null, t.use), h('span', { class: 'cp-lt-mode' }, `capa ${label}`)),
+        h('div', { class: 'cp-lt-math', title: 'Color de debajo → color para la capa → resultado' },
+          this.swatch(cur, `Color de debajo ${cur}`), h('span', null, '+'), this.swatch(t.layer, `Pinta con ${t.layer}`), h('span', null, '='), this.swatch(t.result, `Resultado ${t.result}`),
+          h('code', null, t.layer)),
+        h('p', { class: 'ctl-help' }, t.how),
+        h('div', { class: 'cp-lt-actions' },
+          h('button', { type: 'button', class: 'btn sm', on: { click: () => { this.mgr.setColors(t.layer, this.mgr.colors.secondary); toast(`Color para la capa ${label}: ${t.layer}`, 'ok'); } } }, 'Usar este color'),
+          h('button', { type: 'button', class: 'btn sm primary', title: `Nueva capa «${t.layerName}» en modo ${label} encima de la activa, con este color listo`, on: { click: () => this.makeLayer(t.layerName, t.mode, t.layer) } }, `Crear capa ${label}`)));
+    });
+    this.harmonyBox.replaceChildren(
+      h('div', { class: 'cp-harm-top' }, wheel), chips,
+      h('div', { class: 'cp-harm' }, h('div', { class: 'cp-harm-head' }, h('span', { class: 'mini-label' }, `${sc.name} · proporciones sugeridas`),
+        h('button', { type: 'button', class: 'link', title: 'Guardar estos colores como paleta', on: { click: () => void this.newPalette(`${sc.name} ${cur}`, sc.colors.map(c => c.hex)) } }, 'Guardar paleta')),
+        bar, rows, tips),
+      h('details', { class: 'cp-layers-help', open: true }, h('summary', null, 'Colorear con capas de fusión'),
+        h('p', { class: 'ctl-help' }, `Calculado para el color actual (${cur}) como color de debajo: el color de la capa da exactamente el resultado mostrado.`),
+        ...tipsLayers));
+  }
+
+  /** Nueva capa con ese modo de fusión encima de la activa y el color elegido. */
+  private makeLayer(name: string, mode: string, color: string) {
+    const e = this.mgr.engine, d = e.doc;
+    if (d.motion) { toast('Las capas de fusión son para dibujos y animaciones.'); return; }
+    const l = d.newLayer(name);
+    l.blend = mode as typeof l.blend;
+    if (!e.exec({ ...d.cmdAddLayer(d.activeId, l), label: `Capa ${name}` })) return;
+    this.mgr.setColors(color, this.mgr.colors.secondary);
+    toast(`Capa «${name}» creada; pinta con ${color}`, 'ok');
   }
 
   // ---------------------------------------------------------------- paletas

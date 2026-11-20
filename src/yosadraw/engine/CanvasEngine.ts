@@ -75,7 +75,7 @@ export interface CanvasEngineOptions {
   doc?: Document;
 }
 
-interface LayerView { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; crisp: ViewTransform | null; dirty: boolean; clipped: boolean; ms: number; src?: Item[] }
+interface LayerView { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; crisp: ViewTransform | null; dirty: boolean; clipped: boolean; ms: number; src?: Item[]; /** Cambia cada vez que se repinta su contenido. */ ver?: number }
 /** Capa fantasma del papel cebolla: dibujo de otro fotograma de una pista. */
 interface OnionGhost extends Layer { track: string; side: 'before' | 'after' }
 
@@ -1086,11 +1086,13 @@ export class CanvasEngine extends Emitter<EngineEvents> {
 
   /** Muestra (o quita, con null) el resultado de la vista previa en lugar de la capa o de todas. */
   showEffectPreview(result: HTMLCanvasElement | null, target: { layer: string } | 'all' = 'all') {
+    this.unflatten();
     for (const c of this.fxHidden) c.style.visibility = '';
     this.fxHidden = [];
     this.fxCanvas?.remove();
     this.fxCanvas = null;
     for (const l of this.doc.layers) this.applyLayerStyle(l);
+    this.requestFrame();
     if (!result) return;
     const c = result;
     Object.assign(c.style, { position: 'absolute', left: '0', top: '0', width: `${this.vw}px`, height: `${this.vh}px`, pointerEvents: 'none' });
@@ -1195,7 +1197,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (!v) return;
     v.canvas.style.opacity = String(l.opacity);
     v.canvas.style.mixBlendMode = l.blend;
-    v.canvas.style.visibility = l.visible && !clipHidden(this.doc.layers, l) ? 'visible' : 'hidden';
+    v.canvas.style.visibility = l.visible && !clipHidden(this.doc.layers, l) && !this.flatIds.has(l.id) ? 'visible' : 'hidden';
     if ('track' in l) {
       const g = l as OnionGhost;
       v.canvas.style.filter = this.doc.anim?.onion.tint ? `url(#${this.onionFilterId}-${g.side})` : '';
@@ -1432,6 +1434,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       v.ctx.drawImage(this.back, 0, 0);
       v.ctx.globalCompositeOperation = 'source-over';
       v.crisp = pl.view.clone();
+      v.ver = (v.ver ?? 0) + 1;
       this.applyClip(v);
       v.dirty = false;
       v.ms = work;
@@ -1465,7 +1468,110 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     }
     if (this.pending) { this.flushPending(false); if (this.pending) this.requestFrame(); }
     if (this.ghosts.length) { const st = new Set(this.stale().map(l => l.id)); this.ghosts = this.ghosts.filter(g => st.has(g.layer)); }
+    this.syncFlat();
     this.drawLive();
+  }
+
+  // =================== Pila compactada ===================
+  //
+  // Con muchas capas (y modos de fusión), el navegador compone en cada fotograma
+  // todos sus lienzos a pantalla completa: al pintar, todo se ralentiza aunque sólo
+  // cambie la capa activa. Aquí las capas de debajo de la activa se combinan en un
+  // solo lienzo (con su opacidad y fusión, igual que el navegador) y las de encima,
+  // en tramos de capas «Normal» (exacto: la composición normal es asociativa). Sólo se
+  // rehace cuando cambia algo que no es la capa activa. Con carpetas, animación, la
+  // vista previa de efectos o capas a medio repintar se vuelve a la pila normal.
+
+  /** Compactar la pila de capas (se puede desactivar para comparar). */
+  flatten = true;
+  private flatCanvases: HTMLCanvasElement[] = [];
+  private flatIds = new Set<string>();
+  private flatSig = '';
+  /** Lienzos compactados en uso y su vista (para la transformación CSS durante el zoom). */
+  private flatUsed: { canvas: HTMLCanvasElement; crisp: ViewTransform }[] = [];
+
+  private flatCanvas(i: number) {
+    let c = this.flatCanvases[i];
+    if (!c) { c = this.makeCanvas('flat'); this.flatCanvases[i] = c; }
+    const W = this.back.width, H = this.back.height;
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; c.style.width = `${this.vw}px`; c.style.height = `${this.vh}px`; }
+    return c;
+  }
+
+  private unflatten() {
+    if (!this.flatIds.size && !this.flatUsed.length) return;
+    const ids = [...this.flatIds];
+    this.flatIds.clear();
+    for (const f of this.flatUsed) f.canvas.remove();
+    this.flatUsed = [];
+    this.flatSig = '';
+    for (const id of ids) { const l = this.doc.layer(id); if (l) this.applyLayerStyle(l); }
+  }
+
+  private syncFlat() {
+    const d = this.doc;
+    const vis = d.layers.filter(l => l.visible && !clipHidden(d.layers, l));
+    const activeIdx = vis.findIndex(l => l.id === d.activeId);
+    const can = this.flatten && !d.anim && !this.fxCanvas && !this.playing && vis.length >= 4 && activeIdx >= 0 && !vis[activeIdx].group;
+    const views = vis.map(l => this.layerViews.get(l.id));
+    const crisp = views[0]?.crisp ?? null;
+    const ready = can && crisp && views.every(v => v && !v.dirty && v.crisp && v.crisp.equals(crisp));
+    if (!ready) { this.unflatten(); return; }
+    // Tramos: todo lo de debajo (si no hay carpetas) y, encima, tramos de capas normales sin carpeta.
+    const below = vis.slice(0, activeIdx);
+    const runs: Layer[][] = [];
+    if (below.length >= 2 && below.every(l => !l.group)) runs.push(below);
+    let run: Layer[] = [];
+    for (const l of vis.slice(activeIdx + 1)) {
+      if (l.blend === 'normal' && !l.group) run.push(l);
+      else { if (run.length >= 2) runs.push(run); run = []; }
+    }
+    if (run.length >= 2) runs.push(run);
+    if (!runs.length) { this.unflatten(); return; }
+    const sig = `${crisp!.scale},${crisp!.rotation},${crisp!.x},${crisp!.y}|${this.back.width}x${this.back.height}|` + runs.map(r => r.map(l => { const v = this.layerViews.get(l.id)!; return `${l.id}:${v.ver ?? 0}:${v.canvas.style.opacity}:${v.canvas.style.mixBlendMode}`; }).join(',')).join('/');
+    if (sig === this.flatSig) { for (const f of this.flatUsed) this.flatTransform(f); return; }
+    // Rehacer sólo con la vista quieta (el papel está dibujado con la vista actual).
+    if (!crisp!.equals(this.view)) { this.unflatten(); return; }
+    // Se rehace la composición.
+    const prevIds = this.flatIds;
+    this.flatIds = new Set(runs.flat().map(l => l.id));
+    for (const f of this.flatUsed) f.canvas.remove();
+    this.flatUsed = [];
+    runs.forEach((r, i) => {
+      const c = this.flatCanvas(i);
+      const g = c.getContext('2d')!;
+      g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+      g.clearRect(0, 0, c.width, c.height);
+      if (r === below) {
+        // Lo de debajo se mezcla con el papel (multiplicar, trama… dependen de él): se copia el
+        // papel ya dibujado, recortado al documento (el borde sale idéntico al del lienzo del papel).
+        const m = crisp!.matrix(), k = this.dpr;
+        g.save();
+        g.setTransform(k * m[0], k * m[1], k * m[2], k * m[3], k * m[4], k * m[5]);
+        g.beginPath(); g.rect(0, 0, d.width, d.height); g.clip();
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.drawImage(this.paper.canvas, 0, 0);
+        g.restore();
+      }
+      for (const l of r) {
+        const v = this.layerViews.get(l.id)!;
+        g.globalAlpha = Number(v.canvas.style.opacity || l.opacity);
+        g.globalCompositeOperation = blendOp((v.canvas.style.mixBlendMode || l.blend) as Layer['blend']);
+        g.drawImage(v.canvas, 0, 0);
+      }
+      g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+      // En el DOM, en el sitio de la última capa del tramo.
+      this.layerViews.get(r[r.length - 1].id)!.canvas.after(c);
+      const f = { canvas: c, crisp: crisp!.clone() };
+      this.flatUsed.push(f);
+      this.flatTransform(f);
+    });
+    for (const id of new Set([...prevIds, ...this.flatIds])) { const l = d.layer(id); if (l) this.applyLayerStyle(l); }
+    this.flatSig = sig;
+  }
+
+  private flatTransform(f: { canvas: HTMLCanvasElement; crisp: ViewTransform }) {
+    f.canvas.style.transform = f.crisp.equals(this.view) ? '' : `matrix(${multiply(this.V, invert(f.crisp.matrix())).join(',')})`;
   }
 
   private checkerPattern: CanvasPattern | null = null;
