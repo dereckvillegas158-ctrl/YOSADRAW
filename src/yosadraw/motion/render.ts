@@ -56,6 +56,9 @@ export class Compositor {
     return { c, g };
   }
 
+  private pooled(i: number) { let c = this.pool[i]; if (!c) { c = document.createElement('canvas'); this.pool[i] = c; } return c; }
+  private fxDefs = new Map(EFFECTS.map(e => [e.id, e]));
+
   /** Dibuja la composición en `t` (s) en `out` (que se redimensiona a comp × scale). */
   async render(m: Motion, comp: Composition, t: number, out: HTMLCanvasElement, o: RenderOpts, depth = 0): Promise<HTMLCanvasElement> {
     const W = Math.max(1, Math.round(comp.w * o.scale)), H = Math.max(1, Math.round(comp.h * o.scale));
@@ -66,7 +69,7 @@ export class Compositor {
       // Desenfoque de movimiento: media de sub-fotogramas dentro de la obturación.
       g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
       g.clearRect(0, 0, W, H);
-      const tmp = document.createElement('canvas');
+      const tmp = this.canvas(9, W, H).c;
       for (let i = 0; i < mb.samples; i++) {
         const ti = t + ((i + 0.5) / mb.samples - 0.5) * mb.shutter / comp.fps;
         await this.render(m, comp, Math.max(0, ti), tmp, { ...o, motionBlur: null }, 1);
@@ -76,9 +79,9 @@ export class Compositor {
       g.globalAlpha = 1;
       return out;
     }
-    const layer = depth === 0 ? this.canvas(0, W, H) : { c: document.createElement('canvas'), g: null as unknown as CanvasRenderingContext2D };
+    // Lienzos reutilizados por nivel de anidamiento (sin crear canvas en cada fotograma).
+    const layer = this.canvas(depth === 0 ? 0 : 40 + depth, W, H);
     const L = layer.c;
-    if (depth > 0) { L.width = W; L.height = H; }
     const lg = L.getContext('2d')!;
     g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; g.filter = 'none';
     g.clearRect(0, 0, W, H);
@@ -100,7 +103,7 @@ export class Compositor {
       let img: HTMLCanvasElement = L;
       if (!o.noFx) for (const f of c.fx) {
         if (!f.on) continue;
-        const def = EFFECTS.find(e => e.id === f.fx);
+        const def = this.fxDefs.get(f.fx);
         if (!def) continue;
         const vals: Values = {};
         for (const [k, p] of Object.entries(f.p)) vals[k] = valueAt(p as Prop<number | string | boolean>, lt);
@@ -199,7 +202,7 @@ export class Compositor {
       if (!sub || depth > 8) return false;
       const st = sourceTime(c, lt, sub.dur);
       const k = Math.min(2, o.scale * Math.hypot(M[0], M[1]) / o.scale || 1);
-      src = await this.render(m, sub, st, document.createElement('canvas'), { ...o, scale: Math.max(0.05, Math.min(2, k)) }, depth + 1);
+      src = await this.render(m, sub, st, this.pooled(20 + depth), { ...o, scale: Math.max(0.05, Math.min(2, k)) }, depth + 1);
     } else {
       const md = m.media.find(x => x.id === c.media);
       if (!md) return false;

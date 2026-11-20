@@ -251,3 +251,6 @@ body.motion-mode #app { visibility: hidden; }
 .mo-bthumb { width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; background: #14111d; display: block; }
 .mo-sheetbody .mo-browser { max-height: 62vh; }
 .mo-sheetbody .mo-bgrid { max-height: 48vh; }
+.mo-layerpick { margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.mo-layerpick[hidden] { display: none; }
+.mo-layerlist { max-height: 30vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }

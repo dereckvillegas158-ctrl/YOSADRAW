@@ -4,7 +4,7 @@ import { ItemRenderer } from '../doc/ItemRenderer';
 import type { Mat } from '../engine/ViewTransform';
 import type { CanvasEngine } from '../engine';
 import { h, toast } from './dom';
-import { cmdDeleteFolder, cmdFolderProps, cmdLayerToFolder, cmdMoveLayerFolders, cmdNewFolder, folderOf, groupsOf, membersOf, type Folder } from '../doc/folders';
+import { cmdDeleteFolder, cmdFolderProps, cmdLayerToFolder, cmdMoveLayerFolders, cmdNewFolder, folderOf, groupsOf, layerVisible, membersOf, type Folder } from '../doc/folders';
 
 export const BLENDS: { value: LayerBlend; label: string }[] = [
   { value: 'normal', label: 'Normal' }, { value: 'multiply', label: 'Multiplicar' }, { value: 'screen', label: 'Trama' },
@@ -223,7 +223,7 @@ export class LayersPanel {
     });
     const lock = h('button', { type: 'button', class: 'icon sm', 'aria-pressed': String(l.locked), title: l.locked ? 'Desbloquear capa' : 'Bloquear capa', 'aria-label': l.locked ? `Desbloquear ${l.name}` : `Bloquear ${l.name}`, html: l.locked ? I.lock : I.unlock, on: { click: (ev: Event) => { ev.stopPropagation(); e.setLayerProps(l.id, { locked: !l.locked }); } } });
     return h('li', {
-      class: `layer-row${l.visible ? '' : ' hidden-layer'}${l.clip ? ' clipped' : ''}`, role: 'option', tabindex: '0', 'aria-selected': String(active),
+      class: `layer-row${layerVisible(d, l) ? '' : ' hidden-layer'}${l.clip ? ' clipped' : ''}`, title: l.visible && !layerVisible(d, l) ? 'Oculta porque su carpeta está oculta' : undefined, role: 'option', tabindex: '0', 'aria-selected': String(active),
       on: {
         click: () => { this.folderSel = null; e.setActiveLayer(l.id); },
         contextmenu: (ev: Event) => { ev.preventDefault(); this.layerMenu(l, ev as MouseEvent); },

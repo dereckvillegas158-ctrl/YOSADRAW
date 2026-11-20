@@ -1,4 +1,21 @@
-## YOSADRAW 1.8.0
+## YOSADRAW 1.9.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.9.0-x64.exe` (instalador), `YOSADRAW-1.9.0-x64-portable.exe` o `YOSADRAW-1.9.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.9.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### YOSADRAW MOTION (editor de vídeo)
+- **Importar las capas de un dibujo de una vez:** en «De YOSADRAW» elige *Capas por separado*, marca las que quieras (Todas / Ninguna / Sólo las visibles; se indica su carpeta) y se añaden todas juntas a la biblioteca y, si quieres, a la línea de tiempo en el cabezal: una pista por capa, alineadas y en el mismo orden que en el dibujo. El papel va con la capa de más abajo.
+- **Copiar y pegar keyframes con botones:** en la barra de la línea de tiempo (copiar los rombos elegidos o todos los del clip, y pegarlos en el cabezal en otro clip). En el teléfono, botón **Keyframes** con copiar, pegar, borrar, transformar e ir al anterior/siguiente.
+- **24 animaciones nuevas:** entradas (Desplegar, Rodar, Remolino, Zoom desde lejos, Abrir, Aplastar y saltar, Glitch, Golpe seco), salidas (Rebotar, Rodar, Remolino, Aplastar, Plegar, Glitch, Hundirse) y bucles (Ola, Parpadeo de luz, Péndulo, Zoom lento, Ken Burns, Deriva, Saltos glitch, Bamboleo, Levitar inclinado). Ya son 70.
+- **16 filtros nuevos:** Teal y naranja, Bleach bypass, Cyberpunk, Mate, Hora dorada, Luz de luna, Retro años 70, Lomo, Infrarrojo, Pop art, Cámara térmica, Hielo, Fuego, Sueño, Tinta china y Película antigua. Ya son 36.
+- **6 efectos nuevos** (también en el dibujo): Ondas en el agua, Ojo de pez, Fuga de luz, Boceto a lápiz, Bordes de neón y Rayos de luz.
+- **Más fluido:** el compositor reutiliza sus lienzos (composiciones anidadas y desenfoque de movimiento ya no crean imágenes nuevas en cada fotograma) y los dibujos importados por capas comparten la lectura del proyecto.
+
+### Carpetas de capas
+- **Ocultar una carpeta oculta de verdad sus capas** en el lienzo (antes podían seguir viéndose). En el panel, las capas de una carpeta oculta se ven atenuadas.
+
+### Versión anterior: YOSADRAW 1.8.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.8.0-x64.exe` (instalador), `YOSADRAW-1.8.0-x64-portable.exe` o `YOSADRAW-1.8.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

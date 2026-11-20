@@ -120,6 +120,7 @@ export class MotionUI {
       act(MI.edit, 'Editar', () => { if (!s.sel.size) { toast('Toca un clip en la línea de tiempo.'); return; } this.inspector.setTab('clip'); this.sheet('Propiedades', this.inspector.el); }),
       act(MI.fx, 'Efectos', () => this.browse('filters')),
       act(MI.key, 'Animar', () => { if (!s.one) { toast('Toca un clip en la línea de tiempo.'); return; } this.inspector.setTab('anim'); this.sheet('Animar', this.inspector.el); }),
+      act(MI.keyCopy, 'Keyframes', () => this.keyframesMenu()),
       act(MI.split, 'Dividir', () => s.split()),
       act(MI.trash, 'Borrar', () => s.remove()),
       act(MI.more, 'Más', () => this.phoneMore()));
@@ -193,6 +194,20 @@ export class MotionUI {
       { label: 'Rectángulo', run: pick('rect') }, { label: 'Elipse', run: pick('ellipse') }, { label: 'Polígono', run: pick('polygon') },
       { label: 'Estrella', run: pick('star') }, { label: 'Línea', run: pick('line') }, { label: 'Flecha', run: pick('arrow') },
       { label: 'Sólido de color (pantalla completa)', run: () => s.addSolid() },
+    ]);
+  }
+
+  /** Copiar, pegar y editar keyframes sin teclado (teléfono). */
+  private keyframesMenu() {
+    const s = this.s;
+    const n = [...s.keySel.values()].reduce((a, v) => a + v.length, 0);
+    menu(0, 0, 'Keyframes', [
+      { label: n ? `Copiar los ${n} keyframes elegidos` : 'Copiar todos los keyframes del clip', disabled: !s.one && !n, run: () => s.copyKeyframes(n ? undefined : 'all') },
+      { label: 'Pegar keyframes en el cabezal', disabled: !s.hasKeyClip || !s.sel.size, run: () => s.pasteKeyframes() },
+      { label: 'Borrar los keyframes elegidos', danger: true, disabled: !n, run: () => s.deleteKeyframes() },
+      { label: 'Keyframe de transformación en el cabezal', disabled: !s.sel.size, run: () => s.keyTransform() },
+      { label: 'Ir al keyframe anterior', run: () => s.jumpKey(-1) },
+      { label: 'Ir al keyframe siguiente', run: () => s.jumpKey(1) },
     ]);
   }
 

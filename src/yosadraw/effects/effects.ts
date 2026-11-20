@@ -970,6 +970,109 @@ export function lutCanvas(size: number, data: Float32Array): HTMLCanvasElement {
   return c;
 }
 
-export const EFFECTS: EffectDef[] = [...color, ...blur, ...sharpen, ...stylize, ...distort, ...texture];
+// ---------------------------------------------------------------- 1.9.0: más efectos (vídeo y dibujo)
+
+const RIPPLE = `${HEAD}
+uniform float u_amp, u_len, u_phase, u_rad; uniform vec2 u_ctr;
+void main() {
+  vec2 g = gpos(), d = g - u_ctr; float r = length(d);
+  float k = u_rad > 0.0 ? max(0.0, 1.0 - r / u_rad) : 1.0;
+  vec2 q = g + (r > 1e-3 ? d / r : vec2(0.0)) * sin(r / u_len * 6.2831853 - u_phase) * u_amp * k;
+  o = tx(q - u_offset);
+}`;
+const FISHEYE = `${HEAD}
+uniform float u_k; uniform vec2 u_ctr; uniform float u_rad;
+void main() {
+  vec2 g = gpos(), d = (g - u_ctr) / u_rad; float r2 = dot(d, d);
+  vec2 q = u_ctr + d * (1.0 + u_k * r2) / (1.0 + max(0.0, u_k)) * u_rad;
+  o = tx(q - u_offset);
+}`;
+const LEAK = `${HEAD}
+uniform vec3 u_col; uniform float u_k, u_rad; uniform vec2 u_ctr;
+void main() {
+  vec4 s = tx(inPos()); vec3 c = unpm(s);
+  float r = length((gpos() - u_ctr) / max(1.0, length(u_doc.zw))) / max(0.01, u_rad);
+  float l = u_k * exp(-r * r * 3.0);
+  c = 1.0 - (1.0 - c) * (1.0 - u_col * l);   // trama (screen)
+  o = pm(c, s.a);
+}`;
+const SKETCH = `${HEAD}
+uniform float u_k, u_shade, u_col;
+void main() {
+  vec2 p = inPos();
+  float tl = luma(unpm(tx(p + vec2(-1, -1)))), t = luma(unpm(tx(p + vec2(0, -1)))), tr = luma(unpm(tx(p + vec2(1, -1))));
+  float l = luma(unpm(tx(p + vec2(-1, 0)))), r = luma(unpm(tx(p + vec2(1, 0))));
+  float bl = luma(unpm(tx(p + vec2(-1, 1)))), b = luma(unpm(tx(p + vec2(0, 1)))), br = luma(unpm(tx(p + vec2(1, 1))));
+  float gx = -tl - 2.0 * l - bl + tr + 2.0 * r + br, gy = -tl - 2.0 * t - tr + bl + 2.0 * b + br;
+  vec4 s = tx(p); vec3 c = unpm(s);
+  float e = clamp(length(vec2(gx, gy)) * u_k, 0.0, 1.0);
+  float v = (1.0 - e) * mix(1.0, 0.55 + 0.45 * luma(c), u_shade);
+  vec3 paper = mix(vec3(v), c * (0.6 + 0.4 * v) + (1.0 - e) * 0.25, u_col);
+  o = pm(paper, s.a);
+}`;
+const NEON = `${HEAD}
+uniform float u_k; uniform vec3 u_col; uniform float u_dark;
+void main() {
+  vec2 p = inPos();
+  float tl = luma(unpm(tx(p + vec2(-1, -1)))), t = luma(unpm(tx(p + vec2(0, -1)))), tr = luma(unpm(tx(p + vec2(1, -1))));
+  float l = luma(unpm(tx(p + vec2(-1, 0)))), r = luma(unpm(tx(p + vec2(1, 0))));
+  float bl = luma(unpm(tx(p + vec2(-1, 1)))), b = luma(unpm(tx(p + vec2(0, 1)))), br = luma(unpm(tx(p + vec2(1, 1))));
+  float gx = -tl - 2.0 * l - bl + tr + 2.0 * r + br, gy = -tl - 2.0 * t - tr + bl + 2.0 * b + br;
+  float a0 = tx(p).a;
+  float ea = abs(tx(p + vec2(1, 0)).a - tx(p + vec2(-1, 0)).a) + abs(tx(p + vec2(0, 1)).a - tx(p + vec2(0, -1)).a);
+  float e = clamp((length(vec2(gx, gy)) + ea) * u_k, 0.0, 1.0);
+  vec3 c = unpm(tx(p)) * (1.0 - u_dark) + u_col * e;
+  o = pm(c, max(a0, e));
+}`;
+const RAYS = `${HEAD}
+uniform vec2 u_ctr; uniform float u_len, u_k, u_thr;
+void main() {
+  vec2 g = gpos(); vec4 s = tx(inPos());
+  vec3 acc = vec3(0.0); float n = 40.0;
+  for (float i = 0.0; i < 40.0; i += 1.0) {
+    vec2 q = mix(g, u_ctr, (i / n) * u_len);
+    vec3 c = unpm(tx(q - u_offset)); float a = tx(q - u_offset).a;
+    acc += max(vec3(0.0), c - u_thr) * a * (1.0 - i / n);
+  }
+  vec3 c = unpm(s) + acc / n * u_k * 4.0;
+  o = pm(c, max(s.a, min(1.0, luma(acc / n * u_k * 4.0))));
+}`;
+
+const extra: EffectDef[] = [
+  {
+    id: 'ripple', label: 'Ondas de agua (concéntricas)', cat: 'distort', global: true,
+    params: [{ key: 'amp', label: 'Altura', type: 'range', min: 0, max: 80, def: 12, unit: ' px', spatial: true }, { key: 'len', label: 'Separación', type: 'range', min: 4, max: 400, def: 50, unit: ' px', spatial: true }, { key: 'phase', label: 'Fase (anímala)', type: 'range', min: 0, max: 360, def: 0, unit: '°' }, pct('radius', 'Alcance', 70, 0, 150), pct('cx', 'Centro X', 50, 0, 100), pct('cy', 'Centro Y', 50, 0, 100)],
+    run: (ctx, t, v) => { const d = ctx.base.u_doc as number[]; return ctx.pass(RIPPLE, t, { u_amp: num(v, 'amp') * ctx.unit, u_len: Math.max(1, num(v, 'len') * ctx.unit), u_phase: (num(v, 'phase') * Math.PI) / 180, u_rad: (num(v, 'radius') / 100) * Math.max(d[2], d[3]), u_ctr: [d[0] + d[2] * num(v, 'cx') / 100, d[1] + d[3] * num(v, 'cy') / 100] }); },
+  },
+  {
+    id: 'fisheye', label: 'Ojo de pez / lente', cat: 'distort', global: true,
+    params: [pct('amount', 'Curvatura (− cojín)', 50, -80, 150), pct('cx', 'Centro X', 50, 0, 100), pct('cy', 'Centro Y', 50, 0, 100)],
+    run: (ctx, t, v) => { const d = ctx.base.u_doc as number[]; return ctx.pass(FISHEYE, t, { u_k: -num(v, 'amount') / 100, u_ctr: [d[0] + d[2] * num(v, 'cx') / 100, d[1] + d[3] * num(v, 'cy') / 100], u_rad: Math.max(1, Math.hypot(d[2], d[3]) / 2) }); },
+  },
+  {
+    id: 'lightleak', label: 'Fuga de luz (light leak)', cat: 'stylize', global: true,
+    params: [{ key: 'color', label: 'Color', type: 'color', def: '#ff7a3d' }, pct('amount', 'Intensidad', 70, 0, 150), pct('size', 'Tamaño', 45, 5, 200), pct('cx', 'Posición X', 10, -20, 120), pct('cy', 'Posición Y', 15, -20, 120)],
+    run: (ctx, t, v) => { const d = ctx.base.u_doc as number[]; return ctx.pass(LEAK, t, { u_col: hexRgb(String(v.color)), u_k: num(v, 'amount') / 100, u_rad: num(v, 'size') / 100, u_ctr: [d[0] + d[2] * num(v, 'cx') / 100, d[1] + d[3] * num(v, 'cy') / 100] }); },
+  },
+  {
+    id: 'sketch', label: 'Boceto a lápiz', cat: 'stylize',
+    params: [pct('amount', 'Trazo', 150, 20, 400), pct('shade', 'Sombreado', 50, 0, 100), pct('color', 'Conservar color', 0, 0, 100)],
+    margin: () => 3,
+    run: (ctx, t, v) => ctx.pass(SKETCH, t, { u_k: num(v, 'amount') / 100, u_shade: num(v, 'shade') / 100, u_col: num(v, 'color') / 100 }),
+  },
+  {
+    id: 'neon', label: 'Bordes de neón', cat: 'stylize',
+    params: [{ key: 'color', label: 'Color', type: 'color', def: '#5ff2ff' }, pct('amount', 'Intensidad', 200, 20, 600), pct('dark', 'Oscurecer el resto', 70, 0, 100)],
+    margin: () => 3,
+    run: (ctx, t, v) => ctx.pass(NEON, t, { u_k: num(v, 'amount') / 100, u_col: hexRgb(String(v.color)), u_dark: num(v, 'dark') / 100 }),
+  },
+  {
+    id: 'rays', label: 'Rayos de luz', cat: 'stylize', global: true,
+    params: [pct('amount', 'Intensidad', 60, 0, 200), pct('len', 'Longitud', 50, 5, 100), pct('thr', 'Umbral', 55, 0, 100), pct('cx', 'Origen X', 50, -50, 150), pct('cy', 'Origen Y', 20, -50, 150)],
+    run: (ctx, t, v) => { const d = ctx.base.u_doc as number[]; return ctx.pass(RAYS, t, { u_k: num(v, 'amount') / 100, u_len: num(v, 'len') / 100, u_thr: num(v, 'thr') / 100, u_ctr: [d[0] + d[2] * num(v, 'cx') / 100, d[1] + d[3] * num(v, 'cy') / 100] }); },
+  },
+];
+
+export const EFFECTS: EffectDef[] = [...color, ...blur, ...sharpen, ...stylize, ...distort, ...texture, ...extra];
 export const effectById = (id: string) => EFFECTS.find(e => e.id === id);
 export function defaults(e: EffectDef): Values { return Object.fromEntries(e.params.map(p => [p.key, p.def])); }

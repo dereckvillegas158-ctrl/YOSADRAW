@@ -228,6 +228,24 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
     return out;
   }
 
+  /**
+   * Varias capas de un dibujo a la vez: cada una en su pista (nuevas, encima de las
+   * que hay), en el mismo instante y con la misma transformación, así se ven alineadas
+   * como en el dibujo (la primera, abajo).
+   */
+  placeStack(comp: Composition, items: MediaItem[], at: number): Clip[] {
+    const out: Clip[] = [];
+    for (const md of items) {
+      const tr = newTrack('visual', md.name.split(' · ').pop()!.slice(0, 30) || 'Capa');
+      comp.tracks.unshift(tr);
+      const c = mediaClip(comp, md, tr.id, at);
+      comp.clips.push(c);
+      out.push(c);
+    }
+    this.sel = new Set(out.map(c => c.id));
+    return out;
+  }
+
   addMediaToTimeline(ids: string[], at = this.time, track?: string) {
     const items = this.m.media.filter(x => ids.includes(x.id));
     if (!items.length) return;
