@@ -145,7 +145,9 @@ export class ItemRenderer {
       iso.imageSmoothingEnabled = this.smoothBitmaps;
       iso.imageSmoothingQuality = 'high';
       iso.setTransform(D[0], D[1], D[2], D[3], D[4], D[5]);
-      iso.drawImage(it.image, it.x, it.y, it.w, it.h);
+      // Alejado: se usa una versión reducida ya preparada (no se reduce la imagen entera cada vez).
+      const src = this.smoothBitmaps ? reducedFor(it.image, Math.hypot(D[0], D[1]) * it.w / Math.max(1, sizeOf(it.image).w)) : it.image;
+      iso.drawImage(src, it.x, it.y, it.w, it.h);
     } else if (it.kind === 'group') {
       this.renderItems(iso, it.items, M, dpr, undefined, depth + 1);
       alpha = it.opacity;
@@ -173,4 +175,39 @@ export class ItemRenderer {
     ctx.drawImage(iso.canvas, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
     ctx.restore();
   }
+}
+
+// ---------------------------------------------------------------- pirámide de mapas de bits
+
+const sizeOf = (im: CanvasImageSource) => {
+  const o = im as { width: number; height: number; naturalWidth?: number; naturalHeight?: number; videoWidth?: number; videoHeight?: number };
+  return { w: o.naturalWidth || o.videoWidth || o.width || 1, h: o.naturalHeight || o.videoHeight || o.height || 1 };
+};
+const pyramids = new WeakMap<object, HTMLCanvasElement[]>();
+
+/**
+ * Versión reducida de una imagen grande para dibujarla a escala `s` (px de destino por
+ * px de imagen): cada nivel mide la mitad que el anterior y se calcula una sola vez
+ * (reducción de calidad alta paso a paso). Con s ≥ 0,5 se usa la original.
+ */
+export function reducedFor(image: CanvasImageSource, s: number): CanvasImageSource {
+  if (!(s < 0.5)) return image;
+  const { w, h } = sizeOf(image);
+  if (w * h < 512 * 512) return image;
+  const level = Math.min(8, Math.floor(Math.log2(1 / s)));
+  let levels = pyramids.get(image as object);
+  if (!levels) { levels = []; pyramids.set(image as object, levels); }
+  let prev: CanvasImageSource = levels.length ? levels[levels.length - 1] : image;
+  while (levels.length < level) {
+    const pw = Math.max(1, Math.ceil(sizeOf(prev).w / 2)), ph = Math.max(1, Math.ceil(sizeOf(prev).h / 2));
+    if (pw < 16 || ph < 16) break;
+    const c = document.createElement('canvas');
+    c.width = pw; c.height = ph;
+    const g = c.getContext('2d')!;
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(prev, 0, 0, pw, ph);
+    levels.push(c);
+    prev = c;
+  }
+  return levels[Math.min(level, levels.length) - 1] ?? image;
 }

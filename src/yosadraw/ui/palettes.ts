@@ -17,7 +17,7 @@ export const BUILTIN_PALETTES: Palette[] = [
   { id: 'pastel', name: 'Pastel', builtin: true, colors: ['#ffb3ba', '#ffdfba', '#ffffba', '#baffc9', '#bae1ff', '#d5baff', '#ffc6e8', '#c9f2ef'] },
 ];
 
-export interface PalettePrefs { palettes: Palette[]; active: string; mode: 'square' | 'wheel' | 'values' | 'harmony'; wheel: 'ryb' | 'rgb' }
+export interface PalettePrefs { palettes: Palette[]; active: string; mode: 'square' | 'wheel' | 'values' | 'harmony'; wheel: 'ryb' | 'rgb'; /** Esquema de armonía elegido. */ scheme?: string }
 export const DEFAULT_PALETTE_PREFS: PalettePrefs = { palettes: [], active: 'yosadraw', mode: 'square', wheel: 'ryb' };
 
 let n = 0;
@@ -33,6 +33,7 @@ export function normalizePalettePrefs(v: unknown): PalettePrefs {
     active: typeof o.active === 'string' && all.some(p => p.id === o.active) ? o.active : 'yosadraw',
     mode: o.mode === 'wheel' || o.mode === 'values' || o.mode === 'harmony' ? o.mode : 'square',
     wheel: o.wheel === 'rgb' ? 'rgb' : 'ryb',
+    scheme: typeof o.scheme === 'string' ? o.scheme : 'comp',
   };
 }
 
