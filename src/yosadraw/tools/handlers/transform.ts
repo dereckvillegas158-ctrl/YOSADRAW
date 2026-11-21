@@ -1,4 +1,5 @@
 import { Document } from '../../doc/Document';
+import type { Item } from '../../doc/items';
 import { drawSelectionMask, selectionBounds, transformSelection, type Selection } from '../../doc/Selection';
 import type { ToolEvent } from '../../engine';
 import { applyMat, IDENTITY, invert, multiply, rotateMat, scaleMat, translateMat, type AABB, type Mat } from '../../engine/ViewTransform';
@@ -11,6 +12,7 @@ interface Session {
   T: Mat;
   patch?: { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number };
   sel?: Selection;
+  items?: Item[];
 }
 
 type Drag =
@@ -80,8 +82,10 @@ export function transformHandler(ctx: ToolContext, tool: string): TransformTool 
       let any = false;
       for (let i = 3; i < px.length; i += 4) if (px[i]) { any = true; break; }
       if (!any) { ctx.notify('No hay nada seleccionado en esta capa'); return false; }
+      // Elementos de la capa que tocan la selección (en orden: los borrados también cuentan).
+      const items = layer.items.filter(it => !(it.bounds.maxX < b.minX || it.bounds.minX > b.maxX || it.bounds.maxY < b.minY || it.bounds.minY > b.maxY));
       engine.exec(doc.cmdAddItems(layer.id, [doc.item({ kind: 'clear' }, { clip: sel })], 'Levantar selección'));
-      s = { layerId: layer.id, mode: 'selection', box: { minX: x, minY: y, maxX: x + w, maxY: y + h }, T: IDENTITY, patch: { canvas: patch, x, y, w, h }, sel };
+      s = { layerId: layer.id, mode: 'selection', box: { minX: x, minY: y, maxX: x + w, maxY: y + h }, T: IDENTITY, patch: { canvas: patch, x, y, w, h }, sel, items };
     } else {
       const b = doc.contentBounds(layer.id);
       if (!b) { ctx.notify('La capa activa está vacía'); return false; }
@@ -198,11 +202,15 @@ export function transformHandler(ctx: ToolContext, tool: string): TransformTool 
         if (isIdentity(cur.T)) engine.previewLayerTransform(cur.layerId, null);
         else engine.exec(doc.cmdTransformLayer(cur.layerId, cur.T));
       } else if (cur.patch && cur.sel) {
-        const p = cur.patch;
-        const item = doc.item({ kind: 'bitmap', image: p.canvas, x: p.x, y: p.y, w: p.w, h: p.h }, { m: isIdentity(cur.T) ? null : cur.T });
+        // Sin cambios: se deshace «Levantar selección» (no queda ninguna marca en el borde).
+        if (isIdentity(cur.T)) { engine.undo(); ctx.refreshProps(); engine.requestOverlay(); return; }
+        // Lo levantado sigue siendo lo que era (trazos, formas, imágenes a su resolución),
+        // recortado por la selección y transformado: no pierde calidad al escalar o girar.
+        const inner = doc.item({ kind: 'group', items: cur.items ?? [], opacity: 1, blend: 'normal' }, { clip: cur.sel });
+        const item = doc.item({ kind: 'group', items: [inner], opacity: 1, blend: 'normal' }, { m: cur.T });
         engine.exec(Document.group('Transformar selección', [
           doc.cmdAddItems(cur.layerId, [item], 'Pegar'),
-          isIdentity(cur.T) ? null : doc.cmdSelection(transformSelection(cur.sel, cur.T)),
+          doc.cmdSelection(transformSelection(cur.sel, cur.T)),
         ]));
       }
       ctx.refreshProps();
