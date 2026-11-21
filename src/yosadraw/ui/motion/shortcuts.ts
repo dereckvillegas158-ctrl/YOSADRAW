@@ -13,7 +13,7 @@ export const MOTION_ACTIONS: { id: string; label: string; key: string; group: st
   { id: 'home', label: 'Ir al principio', key: 'Home', group: 'Reproducción' },
   { id: 'end', label: 'Ir al final', key: 'End', group: 'Reproducción' },
   { id: 'loop', label: 'Repetir (bucle)', key: 'L', group: 'Reproducción' },
-  { id: 'range-in', label: 'Inicio del intervalo', key: 'I', group: 'Reproducción' },
+  { id: 'range-in', label: 'Inicio del intervalo', key: 'Shift+I', group: 'Reproducción' },
   { id: 'range-out', label: 'Fin del intervalo', key: 'O', group: 'Reproducción' },
   { id: 'range-clear', label: 'Quitar intervalo', key: 'Alt+X', group: 'Reproducción' },
   { id: 'tool-select', label: 'Herramienta: seleccionar', key: 'V', group: 'Herramientas' },
@@ -30,7 +30,7 @@ export const MOTION_ACTIONS: { id: string; label: string; key: string; group: st
   { id: 'paste', label: 'Pegar en el cabezal', key: 'Ctrl+V', group: 'Edición' },
   { id: 'copy-attrs', label: 'Copiar atributos', key: 'Ctrl+Alt+C', group: 'Edición' },
   { id: 'paste-attrs', label: 'Pegar atributos', key: 'Ctrl+Alt+V', group: 'Edición' },
-  { id: 'select-all', label: 'Seleccionar todo', key: 'Ctrl+A', group: 'Edición' },
+  { id: 'select-all', label: 'Seleccionar todo (los keyframes de los clips elegidos si estás editando keyframes)', key: 'Ctrl+A', group: 'Edición' },
   { id: 'deselect', label: 'Deseleccionar', key: 'Escape', group: 'Edición' },
   { id: 'group', label: 'Agrupar / desagrupar', key: 'Ctrl+G', group: 'Edición' },
   { id: 'precompose', label: 'Precomponer', key: 'Ctrl+Shift+C', group: 'Edición' },
@@ -38,9 +38,30 @@ export const MOTION_ACTIONS: { id: string; label: string; key: string; group: st
   { id: 'nudge-r', label: 'Mover clip (o keyframes elegidos) 1 fotograma →', key: 'Alt+ArrowRight', group: 'Edición' },
   { id: 'trim-start', label: 'Recortar inicio hasta el cabezal', key: 'Q', group: 'Edición' },
   { id: 'trim-end', label: 'Recortar final hasta el cabezal', key: 'W', group: 'Edición' },
-  { id: 'keyframe', label: 'Keyframe de posición, escala, giro y opacidad', key: 'K', group: 'Animación' },
-  { id: 'prev-key', label: 'Keyframe anterior', key: 'Shift+J', group: 'Animación' },
-  { id: 'next-key', label: 'Keyframe siguiente', key: 'J', group: 'Animación' },
+  { id: 'keyframe', label: 'Crear keyframe (propiedad elegida o las animadas de cada clip elegido)', key: 'I', group: 'Animación' },
+  { id: 'key-remove', label: 'Eliminar los keyframes del cabezal', key: 'Alt+I', group: 'Animación' },
+  { id: 'key-transform', label: 'Keyframe de posición, escala, giro y opacidad (activar / quitar)', key: 'Shift+K', group: 'Animación' },
+  { id: 'prev-key', label: 'Keyframe anterior', key: 'J', group: 'Animación' },
+  { id: 'next-key', label: 'Keyframe siguiente', key: 'K', group: 'Animación' },
+  { id: 'auto-key', label: 'Auto Keyframe (activar / desactivar)', key: 'Shift+A', group: 'Animación' },
+  { id: 'key-sync', label: 'Sincronizar keyframes en los clips elegidos (activar / desactivar)', key: 'Shift+Y', group: 'Animación' },
+  { id: 'paste-preview', label: 'Pegar keyframes con vista previa', key: 'Ctrl+Shift+V', group: 'Animación' },
+  { id: 'paste-orig', label: 'Pegar keyframes en sus tiempos originales', key: '', group: 'Animación' },
+  { id: 'ease-inout', label: 'Curva Ease In-Out en los keyframes elegidos', key: 'F9', group: 'Animación' },
+  { id: 'ease-in', label: 'Curva Ease In', key: 'Shift+F9', group: 'Animación' },
+  { id: 'ease-out', label: 'Curva Ease Out', key: 'Ctrl+Shift+F9', group: 'Animación' },
+  { id: 'ease-linear', label: 'Curva lineal', key: '', group: 'Animación' },
+  { id: 'ease-hold', label: 'Curva constante (mantener)', key: '', group: 'Animación' },
+  { id: 'key-smooth', label: 'Suavizar automáticamente', key: 'Alt+S', group: 'Animación' },
+  { id: 'key-invert-ease', label: 'Invertir la curva', key: '', group: 'Animación' },
+  { id: 'key-copy-ease', label: 'Copiar la curva', key: '', group: 'Animación' },
+  { id: 'key-paste-ease', label: 'Pegar la curva', key: '', group: 'Animación' },
+  { id: 'key-repeat', label: 'Duplicar la animación hacia delante', key: '', group: 'Animación' },
+  { id: 'key-repeat-back', label: 'Duplicar la animación hacia atrás', key: '', group: 'Animación' },
+  { id: 'key-loop', label: 'Bucle hasta el final del clip', key: '', group: 'Animación' },
+  { id: 'key-pingpong', label: 'Bucle ida y vuelta', key: '', group: 'Animación' },
+  { id: 'key-align', label: 'Alinear la animación de cada capa al cabezal', key: '', group: 'Animación' },
+  { id: 'key-freeze', label: 'Congelar la animación en el cabezal', key: '', group: 'Animación' },
   { id: 'key-all', label: 'Elegir todos los keyframes del clip', key: 'Ctrl+Shift+A', group: 'Animación' },
   { id: 'key-playhead', label: 'Elegir los keyframes del cabezal', key: 'Alt+K', group: 'Animación' },
   { id: 'key-multi', label: 'Selección múltiple de keyframes (activar / desactivar)', key: 'Shift+M', group: 'Animación' },
@@ -55,11 +76,20 @@ export const MOTION_ACTIONS: { id: string; label: string; key: string; group: st
   { id: 'zoom-in', label: 'Acercar línea de tiempo', key: '=', group: 'Línea de tiempo' },
   { id: 'zoom-out', label: 'Alejar línea de tiempo', key: '-', group: 'Línea de tiempo' },
   { id: 'zoom-fit', label: 'Ver toda la línea de tiempo', key: 'Shift+Z', group: 'Línea de tiempo' },
+  { id: 'center-playhead', label: 'Centrar la vista en el cabezal', key: 'Shift+C', group: 'Línea de tiempo' },
+  { id: 'expand-all', label: 'Desplegar las propiedades animadas', key: 'Shift+E', group: 'Línea de tiempo' },
+  { id: 'collapse-all', label: 'Plegar las propiedades', key: 'Alt+E', group: 'Línea de tiempo' },
+  { id: 'find-layer', label: 'Buscar capa por nombre', key: 'Ctrl+F', group: 'Línea de tiempo' },
   { id: 'curves', label: 'Línea de tiempo / curvas', key: 'Shift+G', group: 'Línea de tiempo' },
   { id: 'undo', label: 'Deshacer', key: 'Ctrl+Z', group: 'Proyecto' },
   { id: 'redo', label: 'Rehacer', key: 'Ctrl+Shift+Z', group: 'Proyecto' },
   { id: 'redo2', label: 'Rehacer (alternativo)', key: 'Ctrl+Y', group: 'Proyecto' },
   { id: 'save', label: 'Guardar', key: 'Ctrl+S', group: 'Proyecto' },
+  { id: 'palette', label: 'Buscar herramientas y acciones', key: 'Ctrl+P', group: 'Proyecto' },
+  { id: 'toggle-left', label: 'Mostrar / ocultar la biblioteca', key: 'Alt+1', group: 'Proyecto' },
+  { id: 'toggle-right', label: 'Mostrar / ocultar las propiedades', key: 'Alt+2', group: 'Proyecto' },
+  { id: 'add-adjust', label: 'Añadir capa de ajuste', key: '', group: 'Edición' },
+  { id: 'toggle-guide', label: 'Capa guía (no se exporta)', key: '', group: 'Edición' },
   { id: 'import', label: 'Importar medios', key: 'Ctrl+I', group: 'Proyecto' },
   { id: 'export', label: 'Exportar vídeo', key: 'Ctrl+E', group: 'Proyecto' },
 ];
@@ -79,6 +109,12 @@ export const keyLabel = (k: string) => k.replace('Ctrl+', 'Ctrl + ').replace('Al
 export class MotionKeys {
   constructor(public custom: Record<string, string>) {}
   key(id: string) { return this.custom[id] ?? MOTION_ACTIONS.find(a => a.id === id)?.key ?? ''; }
+  /** Acciones que comparten combinación (si el usuario reasignó a mano). */
+  conflicts(): string[][] {
+    const by = new Map<string, string[]>();
+    for (const a of MOTION_ACTIONS) { const k = this.key(a.id); if (k) by.set(k, [...(by.get(k) ?? []), a.id]); }
+    return [...by.values()].filter(v => v.length > 1);
+  }
   /** Acción de una combinación (o null). */
   action(combo: string): string | null {
     if (!combo) return null;

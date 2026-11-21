@@ -275,7 +275,7 @@ export class MViewer {
     const p = this.pt(e);
     if (!d) { this.overlay.style.cursor = this.cursorAt(p); return; }
     if (d.kind === 'draw') { d.cur = p; this.drawOverlay(); return; }
-    const set = (c: Clip, pr: { v: number; k?: unknown[] }, v: number) => setValue(pr as never, Math.max(0, Math.min(c.dur, s.time - c.start)), v as never);
+    const set = (c: Clip, pr: { v: number; k?: unknown[] }, v: number) => setValue(pr as never, s.localT(c), v as never, s.autoKey);
     s.live(() => {
       if (d.kind === 'move') {
         const a = ap(d.inv, d.start.x, d.start.y), b = ap(d.inv, p.x, p.y);
@@ -306,8 +306,9 @@ export class MViewer {
         const tr = s.comp.tracks.find(t => t.id === c.track);
         const pinv = inv(s.player.comp.parentMatrix(s.comp, s.time, s.fit, tr?.parallax ?? 1));
         const q = ap(pinv, P.x, P.y), q0 = ap(pinv, P0.x, P0.y);
-        setValue(c.tf.ax, lt, Math.round(ax * 1000) / 1000); setValue(c.tf.ay, lt, Math.round(ay * 1000) / 1000);
-        setValue(c.tf.x, lt, valueAt(c.tf.x, lt) + q.x - q0.x); setValue(c.tf.y, lt, valueAt(c.tf.y, lt) + q.y - q0.y);
+        const ak = s.autoKey;
+        setValue(c.tf.ax, lt, Math.round(ax * 1000) / 1000, ak); setValue(c.tf.ay, lt, Math.round(ay * 1000) / 1000, ak);
+        setValue(c.tf.x, lt, valueAt(c.tf.x, lt) + q.x - q0.x, ak); setValue(c.tf.y, lt, valueAt(c.tf.y, lt) + q.y - q0.y, ak);
         d.M = this.matrixOf(c).M;
       }
     });

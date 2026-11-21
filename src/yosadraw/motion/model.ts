@@ -13,7 +13,8 @@ import { applyPreset, cutKeys, prop, valueAt, type Key, type MotionPreset, type 
  * sin medios), así deshacer/rehacer es exacto y el historial se puede listar.
  */
 
-export const MOTION_VERSION = 1;
+/** 2 (1.11.0): altura y propiedades desplegadas por pista; capas guía, de ajuste y propiedades vinculadas. */
+export const MOTION_VERSION = 2;
 export const FPS_PRESETS = [23.976, 24, 25, 30, 50, 60];
 
 export type MediaKind = 'video' | 'audio' | 'image' | 'gif' | 'svg' | 'seq' | 'font' | 'drawing' | 'anim' | 'lut';
@@ -44,6 +45,10 @@ export interface Track {
   hidden: boolean; locked: boolean; muted: boolean; solo: boolean;
   /** Paralaje respecto a la cámara 2D (1 = normal, 0 = fija, >1 = más cerca). */
   parallax: number;
+  /** Altura de la fila en la línea de tiempo (px; por defecto según el tipo). */
+  h?: number;
+  /** Propiedades animadas desplegadas debajo de la pista. */
+  open?: boolean;
 }
 
 export interface Transform { x: Prop; y: Prop; sx: Prop; sy: Prop; rot: Prop; opacity: Prop; ax: Prop; ay: Prop; skx: Prop; sky: Prop }
@@ -75,7 +80,14 @@ interface ClipBase {
   tout: Transition;
   /** Recorte del origen (fracciones: izquierda, arriba, derecha, abajo). */
   crop: [number, number, number, number];
+  /** Capa guía: se ve al editar pero no se exporta. */
+  guide?: boolean;
+  /** Capa de ajuste (sólo sólidos): sus efectos y máscaras se aplican a lo que hay debajo. */
+  adjust?: boolean;
+  /** Propiedades vinculadas a las de otro clip (siguen su animación con un desfase fijo). */
+  link?: ClipLink | null;
 }
+export interface ClipLink { to: string; paths: string[]; off: Record<string, number> }
 export interface MediaClip extends ClipBase {
   kind: 'media';
   media: string;
@@ -535,11 +547,24 @@ export function normalizeMotion(v: unknown): Motion | null {
     comp.name ??= 'Composición';
     if (comp.bg !== null && typeof comp.bg !== 'string') comp.bg = '#000000';
     comp.tracks = Array.isArray(comp.tracks) ? comp.tracks.filter(t => isObj(t) && typeof t.id === 'string') : [];
-    for (const t of comp.tracks) { t.kind = t.kind === 'audio' ? 'audio' : 'visual'; t.parallax = isNum(t.parallax) ? t.parallax : 1; t.name ??= 'Pista'; }
+    for (const t of comp.tracks) {
+      t.kind = t.kind === 'audio' ? 'audio' : 'visual'; t.parallax = isNum(t.parallax) ? t.parallax : 1; t.name ??= 'Pista';
+      if (t.h !== undefined) { if (isNum(t.h)) t.h = Math.max(24, Math.min(200, t.h)); else delete t.h; }
+      if (t.open !== undefined) t.open = t.open === true;
+    }
     if (!comp.tracks.length) comp.tracks = newComposition(comp.w, comp.h, comp.fps, comp.dur).tracks;
     const tids = new Set(comp.tracks.map(t => t.id));
     comp.clips = Array.isArray(comp.clips) ? comp.clips.filter(cl => isObj(cl) && typeof cl.id === 'string' && tids.has(cl.track) && isNum(cl.start) && isNum(cl.dur) && isObj(cl.tf)) : [];
-    for (const cl of comp.clips) { cl.fx ??= []; cl.masks ??= []; cl.crop ??= [0, 0, 0, 0]; cl.tin ??= { type: 'none', dur: 0.5 }; cl.tout ??= { type: 'none', dur: 0.5 }; cl.blend ??= 'normal'; cl.enabled ??= true; cl.group ??= null; }
+    for (const cl of comp.clips) { cl.fx ??= []; cl.masks ??= []; cl.crop ??= [0, 0, 0, 0]; cl.tin ??= { type: 'none', dur: 0.5 }; cl.tout ??= { type: 'none', dur: 0.5 }; cl.blend ??= 'normal'; cl.enabled ??= true; cl.group ??= null;
+      if (cl.guide !== undefined) cl.guide = cl.guide === true;
+      if (cl.adjust !== undefined) cl.adjust = cl.adjust === true && cl.kind === 'solid';
+      if (cl.link !== undefined && cl.link !== null) {
+        const l = cl.link as unknown as Record<string, unknown>;
+        cl.link = typeof l.to === 'string' && Array.isArray(l.paths) ? { to: l.to, paths: l.paths.filter((x): x is string => typeof x === 'string'), off: isObj(l.off) ? Object.fromEntries(Object.entries(l.off).filter(([, v]) => isNum(v))) as Record<string, number> : {} } : null;
+      }
+    }
+    // Vínculos a clips que ya no están: fuera.
+    for (const cl of comp.clips) if (cl.link && !comp.clips.some(o => o.id === cl.link!.to && o.id !== cl.id)) cl.link = null;
     comp.markers = Array.isArray(comp.markers) ? comp.markers.filter(mk => isObj(mk) && isNum(mk.t)) : [];
     comp.camera = isObj(comp.camera) ? comp.camera : { on: false, x: prop(0), y: prop(0), zoom: prop(1), rot: prop(0) };
     if (!Array.isArray(comp.range) || comp.range.length !== 2 || !comp.range.every(isNum)) comp.range = null;
@@ -631,10 +656,10 @@ export function pasteKeys(c: Clip, kc: KeyClipboard, at: number, onto?: string):
 }
 
 /** Quita los keyframes de esos tiempos (todas las propiedades). Devuelve cuántos. */
-export function deleteKeysAt(c: Clip, times: number[]): number {
+export function deleteKeysAt(c: Clip, times: number[], paths?: string[] | null): number {
   let n = 0;
-  forEachProp(c, p => {
-    if (!p.k) return;
+  forEachProp(c, (p, path) => {
+    if (!p.k || (paths && !paths.includes(path))) return;
     const keep = p.k.filter(k => !times.some(t => Math.abs(t - k.t) < 1e-3));
     n += p.k.length - keep.length;
     if (keep.length === p.k.length) return;
@@ -644,14 +669,15 @@ export function deleteKeysAt(c: Clip, times: number[]): number {
 }
 
 /** Cambia la curva de los keyframes de esos tiempos (hacia el siguiente). */
-export function easeKeysAt(c: Clip, times: number[], e: Key['e']) {
-  forEachProp(c, p => { for (const k of p.k ?? []) if (times.some(t => Math.abs(t - k.t) < 1e-3)) { k.e = e; if (e === 'bezier' && !k.b) k.b = [0.42, 0, 0.58, 1]; } });
+export function easeKeysAt(c: Clip, times: number[], e: Key['e'], paths?: string[] | null) {
+  forEachProp(c, (p, path) => { if (paths && !paths.includes(path)) return; for (const k of p.k ?? []) if (times.some(t => Math.abs(t - k.t) < 1e-3)) { k.e = e; if (e === 'bezier' && !k.b) k.b = [0.42, 0, 0.58, 1]; } });
 }
 
 /** Tiempos (s del clip) de todos los keyframes del clip, sin repetir y ordenados. */
-export function keyTimes(c: Clip): number[] {
+export function keyTimes(c: Clip, paths?: string[] | null): number[] {
   const ts: number[] = [];
-  forEachProp(c, p => { for (const k of p.k ?? []) if (!ts.some(t => Math.abs(t - k.t) < 1e-3)) ts.push(k.t); });
+  forEachProp(c, (p, path) => {
+    if (paths && !paths.includes(path)) return; for (const k of p.k ?? []) if (!ts.some(t => Math.abs(t - k.t) < 1e-3)) ts.push(k.t); });
   return ts.sort((a, b) => a - b);
 }
 
@@ -660,12 +686,12 @@ export function keyTimes(c: Clip): number[] {
  * las propiedades. Los tiempos se ajustan al fotograma y al clip; un keyframe que no
  * se mueve y queda debajo de uno movido desaparece. Devuelve los tiempos nuevos.
  */
-export function retimeKeys(c: Clip, times: number[], map: (t: number) => number, fps: number): number[] {
+export function retimeKeys(c: Clip, times: number[], map: (t: number) => number, fps: number, paths?: string[] | null): number[] {
   const near = (t: number) => times.some(x => Math.abs(x - t) < 1e-3);
   const fix = (t: number) => Math.max(0, Math.min(c.dur, Math.round(t * fps) / fps));
   const out: number[] = [];
-  forEachProp(c, p => {
-    if (!p.k?.length) return;
+  forEachProp(c, (p, path) => {
+    if (!p.k?.length || (paths && !paths.includes(path))) return;
     const moving = p.k.filter(k => near(k.t));
     if (!moving.length) return;
     const to = moving.map(k => fix(map(k.t)));
