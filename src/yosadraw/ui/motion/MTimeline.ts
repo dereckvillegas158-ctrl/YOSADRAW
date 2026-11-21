@@ -1,13 +1,13 @@
 import { EASES, setValue } from '../../motion/keys';
 import {
-  clipEnd, clone, forEachProp, moveClips, snapTo, sourceTime, splitClip, trimClip,
+  clipEnd, keyTimes, clone, forEachProp, moveClips, snapTo, sourceTime, splitClip, trimClip,
   type Clip, type Composition, type MediaItem, type Track,
 } from '../../motion/model';
 import { h, toast } from '../dom';
 import { confirmDialog, promptText } from '../modal';
 import { MI } from './icons';
 import type { MotionStudio } from './MotionStudio';
-import { fmtTC, menu } from './util';
+import { fmtTC, menu, type MenuItem } from './util';
 
 const RULER = 28;
 const ROW: Record<Track['kind'], number> = { visual: 54, audio: 44 };
@@ -18,12 +18,13 @@ const COLORS: Record<string, string> = {
   text: '#e08a2e', shape: '#d85a9a', solid: '#7b7394', comp: '#4c7fe0',
 };
 
-type Hit = { c: Clip; zone: 'l' | 'r' | 'body' | 'key'; keyT?: number };
+type Hit = { c: Clip; zone: 'l' | 'r' | 'body' | 'key' | 'lane'; keyT?: number };
 type Drag =
   | { kind: 'scrub' }
   | { kind: 'move'; x0: number; y0: number; orig: Map<string, { start: number; track: string }>; moved: boolean; anchor: Clip }
   | { kind: 'trim'; id: string; edge: 'l' | 'r'; orig: Clip; x0: number }
-  | { kind: 'key'; id: string; t0: number; x0: number; orig: Clip; times: number[]; moved: boolean }
+  | { kind: 'key'; id: string; t0: number; x0: number; orig: Map<string, { c: Clip; times: number[] }>; moved: boolean }
+  | { kind: 'kmarquee'; x0: number; y0: number; x1: number; y1: number; base: Map<string, number[]> }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
   | { kind: 'marker'; id: string }
   | { kind: 'pan'; x0: number; y0: number; sx: number; sy: number }
@@ -47,6 +48,9 @@ export class MTimeline {
   sx = 0;
   sy = 0;
   private drag: Drag = null;
+  private keyTip = '';
+  private multiBtn!: HTMLButtonElement;
+  private lastX = 0;
   private snapLine: number | null = null;
   private raf = 0;
   private thumbs = new Map<string, HTMLCanvasElement | null>();
@@ -74,7 +78,9 @@ export class MTimeline {
         tog('ripple', MI.ripple, `Edición en cadena: al borrar o recortar, lo que sigue se desplaza${s.keys.hint('ripple')}`, () => this.toggle('ripple'))),
       h('div', { class: 'mo-tgroup' },
         btn(MI.keyCopy, `Copiar keyframes: los rombos elegidos o, si no hay, todos los del clip${s.keys.hint('copy')}`, () => s.copyKeyframes(s.hasKeySel ? undefined : 'all')),
-        btn(MI.keyPaste, `Pegar keyframes en el cabezal del clip elegido${s.keys.hint('paste')}`, () => s.pasteKeyframes())),
+        btn(MI.keyPaste, `Pegar keyframes en el cabezal del clip elegido${s.keys.hint('paste')}`, () => s.pasteKeyframes()),
+        this.multiBtn = btn(MI.keyMulti, 'Selección múltiple de keyframes: cada toque en un rombo lo suma o lo quita (en PC también Mayús/Ctrl + clic, o arrastrar en la fila de rombos para un recuadro)', () => { s.keyMulti = !s.keyMulti; s.keysChanged(); }),
+        btn(MI.more, 'Más acciones de keyframes', () => { const r = this.multiBtn.getBoundingClientRect(); keyMenu(s, r.left, r.bottom); })),
       h('div', { class: 'mo-tgroup' },
         btn(MI.marker, `Marcador en el cabezal${s.keys.hint('marker')}`, () => s.addMarker()),
         btn('<b class="mo-io">I</b>', `Inicio del intervalo de trabajo${s.keys.hint('range-in')}`, () => s.setRange('in')),
@@ -96,7 +102,7 @@ export class MTimeline {
     this.el = h('section', { class: 'mo-timeline', 'aria-label': 'Línea de tiempo' }, bar, this.body);
     new ResizeObserver(() => this.draw()).observe(this.body);
     s.on('change', () => { this.renderHeads(); this.draw(); });
-    s.on('select', () => this.draw());
+    s.on('select', () => { this.multiBtn.classList.toggle('on', s.keyMulti); this.multiBtn.setAttribute('aria-pressed', String(s.keyMulti)); this.draw(); });
     s.on('time', t => { if (s.player.playing) this.follow(t); this.draw(); });
     s.on('tool', () => this.syncBar());
     s.on('open', () => { this.thumbs.clear(); this.peaks.clear(); this.renderHeads(); this.zoomFit(); this.syncBar(); });
@@ -260,6 +266,14 @@ export class MTimeline {
     for (const mk of comp.markers) { const x = this.tToX(mk.t); if (x < 0 || x > W) continue; g.fillStyle = `${mk.color}55`; g.fillRect(Math.round(x), RULER, 1, H); }
     // Recuadro de selección.
     const d = this.drag;
+    if (d?.kind === 'kmarquee') { g.fillStyle = 'rgba(255,211,107,.14)'; g.strokeStyle = '#ffd36b'; g.lineWidth = 1; g.setLineDash([4, 3]); const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1); g.fillRect(x, y, Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0)); g.strokeRect(x + 0.5, y + 0.5, Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0)); g.setLineDash([]); }
+    if (d?.kind === 'key' && this.keyTip) {
+      // Cuánto se mueven los keyframes (en fotogramas), junto al puntero.
+      g.font = '600 11px "Instrument Sans", sans-serif'; g.textBaseline = 'middle';
+      const tw = g.measureText(this.keyTip).width + 10;
+      g.fillStyle = 'rgba(20,16,30,.9)'; g.fillRect(this.lastX - tw / 2, RULER + 2, tw, 16);
+      g.fillStyle = '#ffd36b'; g.fillText(this.keyTip, this.lastX - tw / 2 + 5, RULER + 10);
+    }
     if (d?.kind === 'marquee') { g.fillStyle = 'rgba(157,107,255,.12)'; g.strokeStyle = '#9d6bff'; g.lineWidth = 1; const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1); g.fillRect(x, y, Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0)); g.strokeRect(x + 0.5, y + 0.5, Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0)); }
     // Regla.
     this.paintRuler(g, W);
@@ -390,6 +404,9 @@ export class MTimeline {
       let best: number | undefined, bd = 7;
       forEachProp(c, p => { for (const k of p.k ?? []) { const d = Math.abs(this.tToX(c.start + k.t) - x); if (d < bd) { bd = d; best = k.t; } } });
       if (best !== undefined) return { c, zone: 'key', keyT: best };
+      // Fila de rombos sin tocar ninguno: arrastrar elige keyframes con un recuadro.
+      let any = false; forEachProp(c, p => { any ||= !!p.k?.length; });
+      if (any) return { c, zone: 'lane' };
     }
     const edge = Math.min(8, (x1 - x0) / 4);
     if (x - x0 < edge) return { c, zone: 'l' };
@@ -421,16 +438,29 @@ export class MTimeline {
     if (s.tool === 'razor' && hit) { const t = this.snapT(this.xToT(x), new Set()); s.edit('Cortar', (m, comp) => !!splitClip(comp, m, hit.c.id, t)); this.snapLine = null; return; }
     // Táctil: arrastrar en vacío desplaza la línea de tiempo (en lugar de seleccionar con recuadro).
     if (!hit && e.pointerType === 'touch') { this.drag = { kind: 'pan', x0: x, y0: y, sx: this.sx, sy: this.sy }; return; }
+    // Alt + arrastrar en vacío, o arrastrar en la fila de rombos: recuadro de keyframes.
+    if ((!hit && e.altKey && s.sel.size) || hit?.zone === 'lane') {
+      const add = e.shiftKey || e.ctrlKey || s.keyMulti;
+      this.drag = { kind: 'kmarquee', x0: x, y0: y, x1: x, y1: y, base: add ? new Map([...s.keySel].map(([k, v]) => [k, [...v]])) : new Map() };
+      if (!add) s.clearKeys();
+      return;
+    }
     if (!hit) { this.drag = { kind: 'marquee', x0: x, y0: y, x1: x, y1: y, base: e.shiftKey || e.ctrlKey ? new Set(s.sel) : new Set() }; if (!e.shiftKey && !e.ctrlKey) s.select([]); return; }
-    if (!s.sel.has(hit.c.id) || e.shiftKey || e.ctrlKey) s.select([hit.c.id], e.shiftKey || e.ctrlKey);
+    if (!s.sel.has(hit.c.id) || ((e.shiftKey || e.ctrlKey) && hit.zone !== 'key')) s.select([hit.c.id], e.shiftKey || e.ctrlKey);
     if (s.locked(hit.c)) return;
     s.hist?.begin();
     if (hit.zone === 'key') {
       // Rombo: se elige (Mayús/Ctrl suma) y al arrastrar se mueven todos los elegidos del clip.
+      // Mayús/Ctrl (o el modo «selección múltiple») suman o quitan; al arrastrar se mueven
+      // todos los keyframes elegidos, también los de otros clips.
       const cur = s.keySel.get(hit.c.id) ?? [];
-      if (!cur.some(t => Math.abs(t - hit.keyT!) < 1e-3) || e.shiftKey || e.ctrlKey) s.selectKeys(hit.c.id, [hit.keyT!], e.shiftKey || e.ctrlKey);
-      const times = [...(s.keySel.get(hit.c.id) ?? [hit.keyT!])];
-      this.drag = { kind: 'key', id: hit.c.id, t0: hit.keyT!, x0: x, orig: clone(hit.c), times, moved: false };
+      const add = e.shiftKey || e.ctrlKey || s.keyMulti;
+      const isSel = cur.some(t => Math.abs(t - hit.keyT!) < 1e-3);
+      if (!isSel || add) s.selectKeys(hit.c.id, [hit.keyT!], add);
+      if (!(s.keySel.get(hit.c.id) ?? []).some(t => Math.abs(t - hit.keyT!) < 1e-3)) { s.hist?.cancel(); this.draw(); return; }
+      const orig = new Map<string, { c: Clip; times: number[] }>();
+      for (const [id, ts] of s.keySel) { const c = this.comp.clips.find(cl => cl.id === id); if (c && ts.length) orig.set(id, { c: clone(c), times: [...ts] }); }
+      this.drag = { kind: 'key', id: hit.c.id, t0: hit.keyT!, x0: x, orig, moved: false };
       return;
     }
     s.clearKeys();
@@ -443,6 +473,7 @@ export class MTimeline {
   private move(e: PointerEvent) {
     const s = this.s, d = this.drag;
     const { x, y } = this.pt(e);
+    this.lastX = x;
     if (!d) {
       const hit = y > RULER ? this.hit(x, y) : null;
       this.canvas.style.cursor = s.tool === 'razor' ? 'crosshair' : !hit ? 'default' : hit.zone === 'l' || hit.zone === 'r' ? 'ew-resize' : hit.zone === 'key' ? 'pointer' : 'grab';
@@ -504,28 +535,56 @@ export class MTimeline {
       return;
     }
     if (d.kind === 'key') {
-      const c0 = d.orig;
+      const anchor = d.orig.get(d.id);
+      if (!anchor) return;
       if (!d.moved && Math.abs(x - d.x0) < 3) return;
       d.moved = true;
-      // Desplazamiento común (en fotogramas), limitado para que ninguno salga del clip.
-      let dt = Math.round(((x - d.x0) / this.pps) * this.comp.fps) / this.comp.fps;
-      dt = Math.max(-Math.min(...d.times), Math.min(c0.dur - Math.max(...d.times), dt));
+      // El rombo agarrado se ajusta al cabezal, marcadores y cortes (imán) o al fotograma.
+      const tAbs = anchor.c.start + d.t0;
+      let dt = this.snapT(tAbs + (x - d.x0) / this.pps, new Set()) - tAbs;
+      // Desplazamiento común, limitado para que ninguno salga de su clip.
+      for (const { c, times } of d.orig.values()) dt = Math.max(-Math.min(...times), Math.min(c.dur - Math.max(...times), dt));
       s.live((_m, comp) => {
-        const i = comp.clips.findIndex(c => c.id === d.id);
-        if (i < 0) return;
-        const c = clone(c0);
-        forEachProp(c, p => {
-          if (!p.k) return;
-          const moving = p.k.filter(k => d.times.some(t => Math.abs(k.t - t) < 1e-3));
-          // Un keyframe que no se mueve y queda debajo de uno movido desaparece (como en otros editores).
-          p.k = p.k.filter(k => moving.includes(k) || !moving.some(m => Math.abs(m.t + dt - k.t) < 1e-4));
-          for (const k of moving) k.t += dt;
-          p.k.sort((a, b) => a.t - b.t);
-        });
-        comp.clips[i] = c;
+        for (const [id, { c: c0, times }] of d.orig) {
+          const i = comp.clips.findIndex(c => c.id === id);
+          if (i < 0) continue;
+          const c = clone(c0);
+          forEachProp(c, p => {
+            if (!p.k) return;
+            const moving = p.k.filter(k => times.some(t => Math.abs(k.t - t) < 1e-3));
+            // Un keyframe que no se mueve y queda debajo de uno movido desaparece (como en otros editores).
+            p.k = p.k.filter(k => moving.includes(k) || !moving.some(m => Math.abs(m.t + dt - k.t) < 1e-4));
+            for (const k of moving) k.t += dt;
+            p.k.sort((a, b) => a.t - b.t);
+          });
+          comp.clips[i] = c;
+        }
       });
-      s.keySel.set(d.id, d.times.map(t => t + dt));
+      for (const [id, { times }] of d.orig) s.keySel.set(id, times.map(t => t + dt));
+      this.keyTip = `${dt >= 0 ? '+' : '−'}${Math.round(Math.abs(dt) * this.comp.fps)} f`;
       this.draw();
+    }
+    if (d.kind === 'kmarquee') {
+      d.x1 = x; d.y1 = y;
+      const xa = Math.min(d.x0, x), xb = Math.max(d.x0, x), ya = Math.min(d.y0, y), yb = Math.max(d.y0, y);
+      const next = new Map([...d.base].map(([k, v]) => [k, [...v]]));
+      for (const r of this.rows()) {
+        const ky = r.y + r.h - 7;
+        if (ky < ya - 5 || ky > yb + 5) continue;
+        for (const c of this.comp.clips) {
+          if (c.track !== r.tr.id || !s.sel.has(c.id)) continue;
+          for (const t of keyTimes(c)) {
+            const kx = this.tToX(c.start + t);
+            if (kx < xa - 5 || kx > xb + 5) continue;
+            const cur = next.get(c.id) ?? [];
+            if (!cur.some(v => Math.abs(v - t) < 1e-3)) cur.push(t);
+            next.set(c.id, cur);
+          }
+        }
+      }
+      s.keySel = next;
+      this.draw();
+      return;
     }
   }
 
@@ -536,7 +595,8 @@ export class MTimeline {
     if (!d) return;
     if (d.kind === 'move') { if (d.moved) s.commit('Mover clips'); else { s.hist?.cancel(); if (!_e.shiftKey && !_e.ctrlKey) s.select([d.anchor.id]); } }
     else if (d.kind === 'trim') s.commit('Recortar');
-    else if (d.kind === 'key') { if (d.moved) s.commit('Mover keyframes'); else { s.hist?.cancel(); s.seek(this.comp.clips.find(c => c.id === d.id)!.start + d.t0); } }
+    else if (d.kind === 'key') { this.keyTip = ''; if (d.moved) s.commit(s.keyCount > 1 ? `Mover ${s.keyCount} keyframes` : 'Mover keyframe'); else { s.hist?.cancel(); s.seek(this.comp.clips.find(c => c.id === d.id)!.start + d.t0); } s.keysChanged(); }
+    else if (d.kind === 'kmarquee') { s.keysChanged(); if (s.keyCount) toast(`${s.keyCount} ${s.keyCount === 1 ? 'keyframe elegido' : 'keyframes elegidos'}`); }
     else if (d.kind === 'marker') s.commit('Mover marcador');
     else if (d.kind === 'pan' && Math.abs(this.sx - d.sx) * this.pps < 4 && Math.abs(this.sy - d.sy) < 4) s.select([]);
     this.draw();
@@ -613,13 +673,49 @@ export class MTimeline {
   }
 }
 
+/** Elegir keyframes (menús de PC y teléfono). */
+export function keySelectItems(s: MotionStudio): MenuItem[] {
+  return [
+    { label: s.keyMulti ? '✓ Selección múltiple (cada toque suma o quita)' : 'Selección múltiple (cada toque suma o quita)', run: () => { s.keyMulti = !s.keyMulti; s.keysChanged(); toast(s.keyMulti ? 'Selección múltiple: toca varios rombos para elegirlos' : 'Selección múltiple desactivada'); } },
+    { label: 'Elegir todos los keyframes del clip', disabled: !s.sel.size, run: () => s.selectAllKeys() },
+    { label: 'Elegir los keyframes del cabezal', run: () => s.selectKeysAtPlayhead() },
+    { label: 'Invertir la selección', disabled: !s.sel.size, run: () => s.invertKeySel() },
+    { label: 'Quitar la selección de keyframes', disabled: !s.hasKeySel, run: () => s.clearKeys() },
+  ];
+}
+
+/** Acciones sobre los keyframes elegidos (menús de PC y teléfono). */
+export function keyEditItems(s: MotionStudio): MenuItem[] {
+  const n = s.keyCount, none = !n;
+  return [
+    { label: n ? `Copiar ${n === 1 ? 'el keyframe' : `los ${n} keyframes`}` : 'Copiar todos los keyframes del clip', disabled: none && !s.one, run: () => s.copyKeyframes(n ? undefined : 'all') },
+    { label: 'Pegar keyframes en el cabezal', disabled: !s.hasKeyClip || !s.sel.size, run: () => s.pasteKeyframes() },
+    { label: 'Duplicar en el cabezal', disabled: none, run: () => s.duplicateKeys() },
+    { label: 'Llevar al cabezal', disabled: none, run: () => s.keysToPlayhead() },
+    { label: 'Mover 1 fotograma ←', disabled: none, run: () => s.nudgeKeys(-1) },
+    { label: 'Mover 1 fotograma →', disabled: none, run: () => s.nudgeKeys(1) },
+    { label: 'Invertir (la animación va al revés)', disabled: n < 2, run: () => s.reverseKeys() },
+    { label: 'Estirar el tiempo ×2 (más lento)', disabled: n < 2, run: () => s.stretchKeys(2) },
+    { label: 'Comprimir el tiempo ×½ (más rápido)', disabled: n < 2, run: () => s.stretchKeys(0.5) },
+    { label: 'Cambiar la duración…', disabled: n < 2, run: () => void stretchPrompt(s) },
+    { label: 'Repartir a la misma distancia', disabled: n < 3, run: () => s.distributeKeys() },
+    { label: 'Borrar', danger: true, disabled: none, run: () => s.deleteKeyframes() },
+  ];
+}
+
+async function stretchPrompt(s: MotionStudio) {
+  const v = await promptText('Duración de los keyframes elegidos', '100', { label: 'Porcentaje del tiempo actual (200 = el doble de lento, 50 = el doble de rápido)', ok: 'Aplicar' });
+  const k = Number(String(v ?? '').replace(',', '.').replace('%', '')) / 100;
+  if (v !== null && Number.isFinite(k) && k > 0 && k !== 1) s.stretchKeys(Math.min(20, k));
+}
+
 /** Menú de los keyframes elegidos. */
 export function keyMenu(s: MotionStudio, x: number, y: number) {
-  const n = [...s.keySel.values()].reduce((a, v) => a + v.length, 0);
+  const n = s.keyCount;
   menu(x, y, `${n} ${n === 1 ? 'keyframe' : 'keyframes'}`, [
-    { label: 'Copiar keyframes', run: () => s.copyKeyframes() },
-    { label: 'Pegar keyframes en el cabezal', disabled: !s.hasKeyClip, run: () => s.pasteKeyframes() },
-    { label: 'Borrar keyframes', danger: true, run: () => s.deleteKeyframes() },
+    ...keyEditItems(s),
+    null,
+    ...keySelectItems(s),
     null,
     ...EASES.map(e => ({ label: `Curva: ${e.label}`, run: () => s.easeKeyframes(e.id) })),
   ]);

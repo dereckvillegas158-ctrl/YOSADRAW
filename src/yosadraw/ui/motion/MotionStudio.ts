@@ -6,7 +6,7 @@ import { animated, keyAt, setValue, toggleKey, valueAt, type Prop } from '../../
 import { MediaManager } from '../../motion/media';
 import {
   clipEnd, clone, compClip, compOf, copyAttrs, deleteClips, duplicateClips, findClip, forEachProp, freezeFrame, mediaClip, mid, MotionHistory, moveClips, newTrack,
-  pasteAttrs, precompose, copyKeys, pasteKeys, deleteKeysAt, easeKeysAt, type KeyClipboard, shapeClip, solidClip, splitClip, textClip, toggleGroup, trimClip,
+  pasteAttrs, precompose, copyKeys, pasteKeys, deleteKeysAt, easeKeysAt, keyTimes, retimeKeys, type KeyClipboard, shapeClip, solidClip, splitClip, textClip, toggleGroup, trimClip,
   type Attrs, type Clip, type Composition, type MediaItem, type Motion, type ShapeType, type Track,
 } from '../../motion/model';
 import { Player } from '../../motion/player';
@@ -47,6 +47,8 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   private clipboard: Clip[] = [];
   /** Keyframes elegidos en la línea de tiempo: clip → tiempos (s del clip). */
   keySel = new Map<string, number[]>();
+  /** Selección múltiple de keyframes sin teclado (teléfono): cada toque suma o quita. */
+  keyMulti = false;
   private keyClip: KeyClipboard | null = null;
   /** Qué se copió por última vez (Ctrl+V pega eso). */
   private lastCopy: 'clips' | 'keys' = 'clips';
@@ -335,11 +337,111 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
 
   /** Elige keyframes (por tiempo) de un clip; `add` suma a la selección. */
   selectKeys(clipId: string, times: number[], add = false) {
+    add ||= this.keyMulti;
     if (!add) this.keySel.clear();
     const cur = this.keySel.get(clipId) ?? [];
     for (const t of times) { const i = cur.findIndex(x => Math.abs(x - t) < 1e-3); if (i >= 0 && add && times.length === 1) cur.splice(i, 1); else if (i < 0) cur.push(t); }
     if (cur.length) this.keySel.set(clipId, cur); else this.keySel.delete(clipId);
     this.emit('select', undefined);
+  }
+  /** Avisa de que cambió la selección de keyframes (panel, menús, barra). */
+  keysChanged() { this.emit('select', undefined); }
+  get keyCount() { return [...this.keySel.values()].reduce((a, v) => a + v.length, 0); }
+  /** Todos los keyframes de los clips elegidos. */
+  selectAllKeys() {
+    this.keySel.clear();
+    for (const c of this.selected) { const ts = keyTimes(c); if (ts.length) this.keySel.set(c.id, ts); }
+    if (!this.keySel.size) toast(this.sel.size ? 'Los clips elegidos no tienen keyframes.' : 'Elige uno o más clips.');
+    this.emit('select', undefined);
+  }
+  /** Los keyframes que están en el cabezal (en los clips elegidos o, si no hay, en todos). */
+  selectKeysAtPlayhead(add = false) {
+    if (!add && !this.keyMulti) this.keySel.clear();
+    const clips = this.selected.length ? this.selected : this.comp.clips;
+    let n = 0;
+    for (const c of clips) {
+      const lt = this.time - c.start;
+      const hit = keyTimes(c).filter(t => Math.abs(t - lt) < 0.5 / this.fps);
+      if (!hit.length) continue;
+      this.sel.add(c.id);
+      const cur = this.keySel.get(c.id) ?? [];
+      for (const t of hit) if (!cur.some(x => Math.abs(x - t) < 1e-3)) cur.push(t);
+      this.keySel.set(c.id, cur); n += hit.length;
+    }
+    if (!n) toast('No hay keyframes en el cabezal.');
+    this.emit('select', undefined);
+  }
+  /** Invierte la selección de keyframes dentro de los clips elegidos. */
+  invertKeySel() {
+    for (const c of this.selected) {
+      const cur = this.keySel.get(c.id) ?? [];
+      const next = keyTimes(c).filter(t => !cur.some(x => Math.abs(x - t) < 1e-3));
+      if (next.length) this.keySel.set(c.id, next); else this.keySel.delete(c.id);
+    }
+    this.emit('select', undefined);
+  }
+  /** Retoca el tiempo de los keyframes elegidos; `map(c, times)` da la función t → t' de cada clip. */
+  private retime(label: string, map: (c: Clip, times: number[]) => ((t: number) => number) | null) {
+    if (!this.hasKeySel) { toast('Elige uno o más keyframes (rombos).'); return; }
+    const next = new Map<string, number[]>();
+    this.edit(label, (_m, comp) => {
+      for (const [id, times] of this.keySel) {
+        const c = findClip(comp, id);
+        if (!c || !times.length) continue;
+        const f = map(c, [...times].sort((a, b) => a - b));
+        next.set(id, f ? retimeKeys(c, times, f, comp.fps) : times);
+      }
+    });
+    this.keySel = next;
+    this.emit('select', undefined);
+  }
+  /** Primer keyframe elegido, en tiempo de la composición. */
+  private keySelStart() {
+    let t0 = Infinity;
+    for (const [id, ts] of this.keySel) { const c = findClip(this.comp, id); if (c && ts.length) t0 = Math.min(t0, c.start + Math.min(...ts)); }
+    return t0;
+  }
+  /** Mueve los keyframes elegidos `frames` fotogramas. */
+  nudgeKeys(frames: number) {
+    const dt = frames / this.fps;
+    this.retime('Mover keyframes', (c, ts) => { const lim = Math.max(-ts[0], Math.min(c.dur - ts[ts.length - 1], dt)); return t => t + lim; });
+  }
+  /** Lleva los keyframes elegidos al cabezal (el primero queda en el cabezal; el resto, a la misma distancia). */
+  keysToPlayhead() {
+    const dt = this.time - this.keySelStart();
+    if (!Number.isFinite(dt)) return;
+    this.retime('Keyframes al cabezal', () => t => t + dt);
+  }
+  /** Invierte el orden en el tiempo (la animación va al revés). */
+  reverseKeys() { this.retime('Invertir keyframes', (_c, ts) => (ts.length > 1 ? t => ts[0] + ts[ts.length - 1] - t : null)); }
+  /** Estira o comprime el tiempo entre los keyframes elegidos (desde el primero). */
+  stretchKeys(k: number) { this.retime(k > 1 ? 'Estirar keyframes' : 'Comprimir keyframes', (_c, ts) => t => ts[0] + (t - ts[0]) * k); }
+  /** Reparte los keyframes elegidos a la misma distancia entre el primero y el último. */
+  distributeKeys() {
+    this.retime('Repartir keyframes', (_c, ts) => {
+      if (ts.length < 3) return null;
+      const a = ts[0], b = ts[ts.length - 1];
+      return t => { const i = ts.findIndex(x => Math.abs(x - t) < 1e-3); return a + ((b - a) * i) / (ts.length - 1); };
+    });
+  }
+  /** Duplica los keyframes elegidos en el cabezal (en sus mismos clips y propiedades). */
+  duplicateKeys() {
+    if (!this.hasKeySel) { toast('Elige uno o más keyframes (rombos).'); return; }
+    const t0 = this.keySelStart();
+    let n = 0;
+    const next = new Map<string, number[]>();
+    this.edit('Duplicar keyframes', (_m, comp) => {
+      for (const [id, times] of this.keySel) {
+        const c = findClip(comp, id);
+        const kc = c && copyKeys(c, times);
+        if (!c || !kc) continue;
+        const first = Math.min(...times), at = this.time + (c.start + first - t0) - c.start;
+        n += pasteKeys(c, kc, at);
+        next.set(id, times.map(t => Math.max(0, Math.min(c.dur, Math.round((at + t - first) * comp.fps) / comp.fps))));
+      }
+      return n > 0;
+    });
+    if (n) { this.keySel = next; this.emit('select', undefined); }
   }
   clearKeys() { if (this.keySel.size) { this.keySel.clear(); this.emit('select', undefined); } }
   get hasKeySel() { return [...this.keySel.values()].some(v => v.length); }
@@ -349,9 +451,11 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   copyKeyframes(paths?: string[] | 'all') {
     let kc: KeyClipboard | null = null;
     if (this.hasKeySel && !paths) {
-      const [id, times] = [...this.keySel.entries()][0];
+      const entries = [...this.keySel.entries()].filter(([, ts]) => ts.length);
+      const [id, times] = entries.find(([i]) => i === this.one?.id) ?? entries.sort((a, b) => b[1].length - a[1].length)[0];
       const c = findClip(this.comp, id);
       if (c) kc = copyKeys(c, times);
+      if (c && entries.length > 1) toast(`Hay keyframes elegidos en ${entries.length} clips: se copian los de «${c.name}».`);
     } else if (this.one) kc = copyKeys(this.one, null, Array.isArray(paths) ? paths : null);
     if (!kc) { toast('No hay keyframes que copiar.'); return; }
     this.keyClip = kc;
@@ -435,6 +539,7 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
     this.edit('Congelar fotograma', (m, comp) => !!freezeFrame(comp, m, c.id, this.time));
   }
   nudge(frames: number) {
+    if (this.hasKeySel) { this.nudgeKeys(frames); return; }
     const ids = [...this.sel];
     if (!ids.length) return;
     this.edit('Mover', (_m, comp) => moveClips(comp, ids, frames / comp.fps));

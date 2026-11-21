@@ -8,7 +8,7 @@ import { MInspector } from './MInspector';
 import { MHistory, MLibrary } from './MLibrary';
 import { MBrowser } from './MBrowser';
 import type { MotionStudio, MotionTool } from './MotionStudio';
-import { clipMenu, MTimeline } from './MTimeline';
+import { clipMenu, keyEditItems, keySelectItems, MTimeline } from './MTimeline';
 import { MViewer } from './MViewer';
 import { comboOf, openMotionShortcuts } from './shortcuts';
 import { menu } from './util';
@@ -199,12 +199,10 @@ export class MotionUI {
 
   /** Copiar, pegar y editar keyframes sin teclado (teléfono). */
   private keyframesMenu() {
-    const s = this.s;
-    const n = [...s.keySel.values()].reduce((a, v) => a + v.length, 0);
-    menu(0, 0, 'Keyframes', [
-      { label: n ? `Copiar los ${n} keyframes elegidos` : 'Copiar todos los keyframes del clip', disabled: !s.one && !n, run: () => s.copyKeyframes(n ? undefined : 'all') },
-      { label: 'Pegar keyframes en el cabezal', disabled: !s.hasKeyClip || !s.sel.size, run: () => s.pasteKeyframes() },
-      { label: 'Borrar los keyframes elegidos', danger: true, disabled: !n, run: () => s.deleteKeyframes() },
+    const s = this.s, n = s.keyCount;
+    menu(0, 0, n ? `Keyframes · ${n} ${n === 1 ? 'elegido' : 'elegidos'}` : 'Keyframes', [
+      ...keySelectItems(s),
+      ...keyEditItems(s),
       { label: 'Keyframe de transformación en el cabezal', disabled: !s.sel.size, run: () => s.keyTransform() },
       { label: 'Ir al keyframe anterior', run: () => s.jumpKey(-1) },
       { label: 'Ir al keyframe siguiente', run: () => s.jumpKey(1) },
@@ -267,7 +265,10 @@ export class MotionUI {
       'tool-select': () => s.setTool('select'), 'tool-razor': () => s.setTool('razor'), 'tool-text': () => s.setTool('text'), 'tool-shape': () => s.setTool('shape'), 'tool-mask': () => s.setTool('mask'),
       split: () => s.split(), delete: () => s.remove(), 'ripple-delete': () => s.remove(true), duplicate: () => s.duplicate(),
       copy: () => s.copy(), cut: () => s.copy(true), paste: () => s.paste(), 'copy-attrs': () => s.copyAttributes(), 'paste-attrs': () => s.pasteAttributes(),
-      'select-all': () => s.select(s.comp.clips.map(c => c.id)), deselect: () => { s.select([]); s.setTool('select'); },
+      'select-all': () => (s.hasKeySel ? s.selectAllKeys() : s.select(s.comp.clips.map(c => c.id))),
+      'key-all': () => s.selectAllKeys(), 'key-playhead': () => s.selectKeysAtPlayhead(), 'key-to-playhead': () => s.keysToPlayhead(),
+      'key-dup': () => s.duplicateKeys(), 'key-reverse': () => s.reverseKeys(), 'key-nudge-l10': () => s.nudgeKeys(-10), 'key-nudge-r10': () => s.nudgeKeys(10),
+      'key-multi': () => { s.keyMulti = !s.keyMulti; s.keysChanged(); toast(s.keyMulti ? 'Selección múltiple de keyframes activada' : 'Selección múltiple desactivada'); }, deselect: () => { s.select([]); s.setTool('select'); },
       group: () => s.group(), precompose: () => s.precompose(), 'nudge-l': () => s.nudge(-1), 'nudge-r': () => s.nudge(1),
       'trim-start': () => s.trimTo('l'), 'trim-end': () => s.trimTo('r'),
       keyframe: () => s.keyTransform(), 'prev-key': () => s.jumpKey(-1), 'next-key': () => s.jumpKey(1),

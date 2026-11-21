@@ -1,4 +1,18 @@
-## YOSADRAW 1.9.1
+## YOSADRAW 1.10.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.10.0-x64.exe` (instalador), `YOSADRAW-1.10.0-x64-portable.exe` o `YOSADRAW-1.10.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.10.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Keyframes en YOSADRAW MOTION
+- **Elegir varios a la vez:** arrastra en la fila de rombos de un clip (o Alt + arrastrar en vacío) para elegirlos con un recuadro, también en varios clips a la vez; Mayús/Ctrl + clic suma o quita uno.
+- **Selección múltiple en el teléfono:** botón de la barra de la línea de tiempo o «Keyframes → Selección múltiple»: cada toque en un rombo lo suma o lo quita (Mayús+M en PC).
+- **Mover juntos:** al arrastrar se mueven todos los elegidos, aunque estén en clips distintos, con imán al cabezal, marcadores y cortes, y una etiqueta con cuántos fotogramas se mueven.
+- **Elegir rápido:** todos los del clip (Ctrl+Mayús+A, o Ctrl+A si ya hay rombos elegidos), los del cabezal (Alt+K) e invertir la selección.
+- **Retocar el tiempo de los elegidos:** mover 1 fotograma (Alt+←/→) o 10 (Alt+Mayús+←/→), llevar al cabezal (Ctrl+Alt+K), duplicar en el cabezal (Ctrl+Alt+D), invertir la animación (Ctrl+Alt+R), estirar ×2, comprimir ×½ o cambiar la duración en %, y repartir a la misma distancia.
+- Menú «⋯» de keyframes en la barra de la línea de tiempo, clic derecho en un rombo y botón «Keyframes» del teléfono con todas estas acciones. Todos los atajos se pueden cambiar.
+
+### Versión anterior: YOSADRAW 1.9.1
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.9.1-x64.exe` (instalador), `YOSADRAW-1.9.1-x64-portable.exe` o `YOSADRAW-1.9.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
