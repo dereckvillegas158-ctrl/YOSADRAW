@@ -252,7 +252,12 @@ export class Document {
     // Una capa con recorte sobre su base se combina como grupo «sobre lo que ya hay» (source-atop):
     // conserva el recorte dentro de la capa resultante.
     const clipped = !!upper.clip && !lower.clip;
-    const content: Item[] = upper.opacity === 1 && upper.blend === 'normal' && !clipped
+    // Borrados («clear», borrador), alfa bloqueado o trazos con fusión dependen de lo que hay
+    // debajo dentro de la capa: sueltos en la de abajo borrarían o teñirían su relleno.
+    // Entonces la capa de arriba entra como grupo aislado (se ve exactamente igual que antes).
+    const selfContained = upper.items.every(it => it.kind !== 'clear' && !it.lock
+      && !(it.kind === 'stroke' && (it.stroke.tool === 'eraser' || it.stroke.preset.render.blend !== 'normal')));
+    const content: Item[] = upper.opacity === 1 && upper.blend === 'normal' && !clipped && selfContained
       ? upper.items.slice()
       : [Object.assign(this.item({ kind: 'group', items: upper.items.slice(), opacity: upper.opacity, blend: upper.blend }), clipped ? { lock: true } : {})];
     return {

@@ -1,4 +1,15 @@
-## YOSADRAW 1.9.0
+## YOSADRAW 1.9.1
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.9.1-x64.exe` (instalador), `YOSADRAW-1.9.1-x64-portable.exe` o `YOSADRAW-1.9.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.9.1.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Correcciones
+- **Combinar hacia abajo ya no borra el color de la capa de debajo.** Al transformar parte de un dibujo (o usar el borrador), la capa guardaba un «borrado» de esa zona; al combinarla con la capa de color, ese borrado se aplicaba también al relleno y aparecían huecos sin colorear. Ahora la capa de arriba entra aislada y el resultado es idéntico a lo que se veía antes de combinar.
+- **Transformar una selección no pierde calidad:** lo seleccionado se mueve, escala y gira conservando los trazos y formas originales (antes se convertía en una imagen y al agrandarlo o girarlo quedaba borroso). Si aplicas sin mover nada, no queda ninguna marca en el borde de la selección.
+- Las capas que ya se combinaron con una versión anterior conservan el hueco: deshaz la combinación (Ctrl+Z) o vuelve a rellenar esa zona.
+
+### Versión anterior: YOSADRAW 1.9.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.9.0-x64.exe` (instalador), `YOSADRAW-1.9.0-x64-portable.exe` o `YOSADRAW-1.9.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
