@@ -647,3 +647,36 @@ export function deleteKeysAt(c: Clip, times: number[]): number {
 export function easeKeysAt(c: Clip, times: number[], e: Key['e']) {
   forEachProp(c, p => { for (const k of p.k ?? []) if (times.some(t => Math.abs(t - k.t) < 1e-3)) { k.e = e; if (e === 'bezier' && !k.b) k.b = [0.42, 0, 0.58, 1]; } });
 }
+
+/** Tiempos (s del clip) de todos los keyframes del clip, sin repetir y ordenados. */
+export function keyTimes(c: Clip): number[] {
+  const ts: number[] = [];
+  forEachProp(c, p => { for (const k of p.k ?? []) if (!ts.some(t => Math.abs(t - k.t) < 1e-3)) ts.push(k.t); });
+  return ts.sort((a, b) => a - b);
+}
+
+/**
+ * Cambia el tiempo de los keyframes de `times` con `map` (t → t', s del clip), en todas
+ * las propiedades. Los tiempos se ajustan al fotograma y al clip; un keyframe que no
+ * se mueve y queda debajo de uno movido desaparece. Devuelve los tiempos nuevos.
+ */
+export function retimeKeys(c: Clip, times: number[], map: (t: number) => number, fps: number): number[] {
+  const near = (t: number) => times.some(x => Math.abs(x - t) < 1e-3);
+  const fix = (t: number) => Math.max(0, Math.min(c.dur, Math.round(t * fps) / fps));
+  const out: number[] = [];
+  forEachProp(c, p => {
+    if (!p.k?.length) return;
+    const moving = p.k.filter(k => near(k.t));
+    if (!moving.length) return;
+    const to = moving.map(k => fix(map(k.t)));
+    const still = p.k.filter(k => !moving.includes(k) && !to.some(t => Math.abs(t - k.t) < 1e-4));
+    moving.forEach((k, i) => { k.t = to[i]; });
+    // Dos movidos al mismo fotograma: se queda el último.
+    const seen = new Map<number, Key<unknown>>();
+    for (const k of moving) seen.set(Math.round(k.t * 1e4), k);
+    p.k = [...still, ...seen.values()].sort((a, b) => a.t - b.t);
+    p.v = valueAt(p, 0);
+    for (const k of seen.values()) if (!out.some(t => Math.abs(t - k.t) < 1e-4)) out.push(k.t);
+  });
+  return out.sort((a, b) => a - b);
+}
