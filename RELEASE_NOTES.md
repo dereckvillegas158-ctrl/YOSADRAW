@@ -1,4 +1,26 @@
-## YOSADRAW 1.10.0
+## YOSADRAW 1.11.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.11.0-x64.exe` (instalador), `YOSADRAW-1.11.0-x64-portable.exe` o `YOSADRAW-1.11.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.11.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Animar más fácil en YOSADRAW MOTION
+- **Auto Keyframe** (botón rojo ● de la línea de tiempo o Mayús+A): cualquier cambio de una propiedad (en el visor, en el panel o en la línea de tiempo) crea su keyframe en el cabezal. El visor se enmarca en rojo mientras está activo.
+- **Crear keyframes sin ratón:** I crea keyframe (de la propiedad elegida o de las animadas de cada clip elegido, sin duplicar), Alt+I quita los del cabezal, J / K van al keyframe anterior / siguiente. Un clic en el rombo ◇ de cualquier propiedad crea o quita su keyframe.
+- **Propiedades en la línea de tiempo:** cada pista se despliega (▸, Mayús+E / Alt+E para todas) y muestra una fila por propiedad animada con su curva, su valor editable (escribe o arrastra el nombre), su rombo y saltos ‹ ›. Puedes ver también las propiedades sin animar y cambiar la altura de cada pista arrastrando su borde.
+- **Indicadores:** rombo vacío = sin animar, contorno dorado = animada, relleno = keyframe en el cabezal (también en el color del nombre). Al elegir un keyframe se ve su valor en la barra de la línea de tiempo.
+- **Varias capas a la vez:** con «Sincronizar» (Mayús+Y) un rombo crea el keyframe en todos los clips elegidos, cada uno con su propio valor. Con varios clips elegidos el panel muestra «Keyframes en los N clips» con rombos por propiedad y un campo Δ que mueve todos lo mismo.
+- **Copiar y pegar animaciones de varias capas:** Ctrl+C copia los keyframes elegidos de todas las capas (o toda la animación de los clips elegidos) y Ctrl+V los pega en el cabezal en otras capas, en el mismo orden y con la misma distancia entre ellas. También entre composiciones, en otra propiedad compatible, en sus tiempos originales o con **vista previa** (Ctrl+Mayús+V: los rombos fantasma siguen al puntero y un clic los coloca).
+- **Línea de tiempo:** Mayús + clic elige un rango de keyframes, Ctrl + clic suma o quita, el recuadro funciona en las filas de propiedades, Alt + arrastrar duplica, Alt + clic borra, y la barra dorada sobre la regla estira o comprime la duración de lo elegido. El imán se ajusta también a otros keyframes (mantén Ctrl al arrastrar para desactivarlo un momento). Centrar en el cabezal (Mayús+C) y buscar capas por nombre (Ctrl+F).
+- **Curvas:** barra rápida con Lineal, Ease In, Ease Out, Ease In-Out (F9), Smooth, Constante y **Auto** (suavizado automático con velocidad continua), para todos los keyframes elegidos. Invertir la curva y copiar / pegar curvas entre keyframes.
+- **Herramientas:** duplicar la animación hacia delante o atrás, repetir N veces con espacio entre repeticiones, bucle hasta el final del clip (normal o ida y vuelta), alinear cada capa al cabezal, escalonar capas, congelar la animación en el cabezal.
+- **Animación rápida:** entrada y salida deslizando (con dirección), Fade In/Out, Zoom In/Out, Rebote, Sacudida, Rotación, Pulso, Flotar, movimiento de cámara y animación de texto, con duración, intensidad, suavizado e inicio editables. Se aplica a todos los clips elegidos y sólo reemplaza el tramo que ocupa.
+- **Capas:** vincular posición, escala, rotación u opacidad a otro clip (sigue su animación con su desfase), capa guía (se ve al editar, no se exporta), capa de ajuste (sus efectos y máscaras se aplican a todo lo de debajo), aislar pistas de vídeo, duraciones rápidas.
+- **Interfaz:** «Buscar acción…» (Ctrl+P) encuentra cualquier herramienta, mostrar u ocultar la biblioteca (Alt+1) y las propiedades (Alt+2). Todos los atajos se pueden cambiar.
+- **Atajos que cambian:** el inicio del intervalo de trabajo pasa a Mayús+I; «keyframe de transformación» (antes K) pasa a Mayús+K; keyframe anterior / siguiente pasan a J / K.
+- Los proyectos anteriores se abren igual (se actualizan solos al formato nuevo) y todo se puede deshacer.
+
+### Versión anterior: YOSADRAW 1.10.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.10.0-x64.exe` (instalador), `YOSADRAW-1.10.0-x64-portable.exe` o `YOSADRAW-1.10.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

@@ -5,11 +5,15 @@ import { Emitter } from '../../engine/Emitter';
 import { animated, keyAt, setValue, toggleKey, valueAt, type Prop } from '../../motion/keys';
 import { MediaManager } from '../../motion/media';
 import {
-  clipEnd, clone, compClip, compOf, copyAttrs, deleteClips, duplicateClips, findClip, forEachProp, freezeFrame, mediaClip, mid, MotionHistory, moveClips, newTrack,
-  pasteAttrs, precompose, copyKeys, pasteKeys, deleteKeysAt, easeKeysAt, keyTimes, retimeKeys, type KeyClipboard, shapeClip, solidClip, splitClip, textClip, toggleGroup, trimClip,
+  clipEnd, clone, compClip, propByPath, propLabel, compOf, copyAttrs, deleteClips, duplicateClips, findClip, forEachProp, freezeFrame, mediaClip, mid, MotionHistory, moveClips, newTrack,
+  pasteAttrs, precompose, copyKeys, pasteKeys, deleteKeysAt, easeKeysAt, keyTimes, retimeKeys, shapeClip, solidClip, splitClip, textClip, toggleGroup, trimClip,
   type Attrs, type Clip, type Composition, type MediaItem, type Motion, type ShapeType, type Track,
 } from '../../motion/model';
 import { Player } from '../../motion/player';
+import {
+  copyMultiKeys, eachSegmentKey, easeSpecOf, freezeAt, invertEase, linkLoops, makeLink, pasteMultiKeys, pastePreview, quickAnimate, repeatKeys, repeatsToFill,
+  setEase, smoothKeys, type EaseSpec, type MultiKeyClipboard, type QuickSpec,
+} from '../../motion/keytools';
 import type { ProjectLibrary } from '../../project/library';
 import { toast } from '../dom';
 import { MotionKeys } from './shortcuts';
@@ -19,6 +23,11 @@ export type { MotionPrefs } from './prefs';
 export { normalizeMotionPrefs } from './prefs';
 
 export type MotionTool = 'select' | 'razor' | 'text' | 'shape' | 'mask';
+
+/** Clave de la selección de keyframes: el clip (todas sus propiedades) o clip + propiedad. */
+const KSEP = '\u0001';
+export const selKey = (id: string, path?: string | null) => (path ? `${id}${KSEP}${path}` : id);
+export const parseSelKey = (k: string): { id: string; path: string | null } => { const i = k.indexOf(KSEP); return i < 0 ? { id: k, path: null } : { id: k.slice(0, i), path: k.slice(i + 1) }; };
 
 export interface MotionHostDeps {
   engine: CanvasEngine; projects: ProjectLibrary; painter: StrokePainter;
@@ -45,11 +54,19 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   shape: ShapeType = 'rect';
   maskType: 'rect' | 'ellipse' = 'rect';
   private clipboard: Clip[] = [];
-  /** Keyframes elegidos en la línea de tiempo: clip → tiempos (s del clip). */
+  /**
+   * Keyframes elegidos en la línea de tiempo: clave → tiempos (s del clip). La clave es
+   * el id del clip (todas sus propiedades en esos tiempos, fila del clip) o clip + ruta
+   * (sólo esa propiedad, fila de propiedad); ver `selKey`.
+   */
   keySel = new Map<string, number[]>();
   /** Selección múltiple de keyframes sin teclado (teléfono): cada toque suma o quita. */
   keyMulti = false;
-  private keyClip: KeyClipboard | null = null;
+  private keyClip: MultiKeyClipboard | null = null;
+  /** Curva copiada (para pegarla en otros keyframes). */
+  private easeClip: EaseSpec | null = null;
+  /** Vista previa de pegado: los rombos fantasma siguen al puntero hasta hacer clic. */
+  pastePreviewOn = false;
   /** Qué se copió por última vez (Ctrl+V pega eso). */
   private lastCopy: 'clips' | 'keys' = 'clips';
   private attrs: Attrs | null = null;
@@ -155,7 +172,7 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   select(ids: string[], add = false) {
     if (!add) this.sel.clear();
     for (const id of ids) { if (add && this.sel.has(id) && ids.length === 1) this.sel.delete(id); else this.sel.add(id); }
-    for (const id of [...this.keySel.keys()]) if (!this.sel.has(id)) this.keySel.delete(id);
+    for (const k of [...this.keySel.keys()]) if (!this.sel.has(parseSelKey(k).id)) this.keySel.delete(k);
     const first = this.selected[0];
     if (!first || (this.focus && this.focus.clip !== first.id)) this.focus = null;
     this.emit('select', undefined);
@@ -328,6 +345,7 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
     this.emit('select', undefined);
   }
   duplicate() {
+    if (this.hasKeySel) { this.duplicateKeys(); return; }
     const ids = [...this.sel];
     if (!ids.length) return;
     this.edit('Duplicar', (_m, comp) => { const out = duplicateClips(comp, ids); this.sel = new Set(out.map(c => c.id)); });
@@ -336,13 +354,39 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   // ---------------------------------------------------------------- keyframes
 
   /** Elige keyframes (por tiempo) de un clip; `add` suma a la selección. */
-  selectKeys(clipId: string, times: number[], add = false) {
+  selectKeys(clipId: string, times: number[], add = false, path: string | null = null, toggle = true) {
     add ||= this.keyMulti;
     if (!add) this.keySel.clear();
-    const cur = this.keySel.get(clipId) ?? [];
-    for (const t of times) { const i = cur.findIndex(x => Math.abs(x - t) < 1e-3); if (i >= 0 && add && times.length === 1) cur.splice(i, 1); else if (i < 0) cur.push(t); }
-    if (cur.length) this.keySel.set(clipId, cur); else this.keySel.delete(clipId);
+    const key = selKey(clipId, path);
+    const cur = this.keySel.get(key) ?? [];
+    for (const t of times) { const i = cur.findIndex(x => Math.abs(x - t) < 1e-3); if (i >= 0 && add && toggle && times.length === 1) cur.splice(i, 1); else if (i < 0) cur.push(t); }
+    if (cur.length) this.keySel.set(key, cur); else this.keySel.delete(key);
     this.emit('select', undefined);
+  }
+  /** ¿Está elegido el keyframe `t` de `clipId` (en esa propiedad o en todo el clip)? */
+  isKeySel(clipId: string, t: number, path: string | null = null) {
+    const has = (k: string) => (this.keySel.get(k) ?? []).some(x => Math.abs(x - t) < 1e-3);
+    return has(clipId) || (!!path && has(selKey(clipId, path)));
+  }
+  /**
+   * La selección como lista de partes: clip, propiedad (null = todas) y tiempos. Los
+   * tiempos que ya están elegidos en todo el clip no se repiten en sus propiedades.
+   */
+  keyEntries(): { key: string; id: string; path: string | null; times: number[] }[] {
+    const out: { key: string; id: string; path: string | null; times: number[] }[] = [];
+    for (const [key, ts] of this.keySel) {
+      const { id, path } = parseSelKey(key);
+      const whole = path ? this.keySel.get(id) ?? [] : [];
+      const times = path ? ts.filter(t => !whole.some(x => Math.abs(x - t) < 1e-3)) : ts;
+      if (times.length) out.push({ key, id, path, times: [...times].sort((a, b) => a - b) });
+    }
+    return out;
+  }
+  /** Las partes agrupadas por clip (para copiar). */
+  private keyPicks() {
+    const m = new Map<string, { times: number[] | null; paths: string[] | null }[]>();
+    for (const e of this.keyEntries()) { const l = m.get(e.id) ?? []; l.push({ times: e.times, paths: e.path ? [e.path] : null }); m.set(e.id, l); }
+    return m;
   }
   /** Avisa de que cambió la selección de keyframes (panel, menús, barra). */
   keysChanged() { this.emit('select', undefined); }
@@ -384,12 +428,18 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   private retime(label: string, map: (c: Clip, times: number[]) => ((t: number) => number) | null) {
     if (!this.hasKeySel) { toast('Elige uno o más keyframes (rombos).'); return; }
     const next = new Map<string, number[]>();
+    const entries = this.keyEntries();
+    // La función de cada clip se calcula con todos sus tiempos elegidos (también los de sus propiedades).
+    const byClip = new Map<string, number[]>();
+    for (const e of entries) byClip.set(e.id, [...(byClip.get(e.id) ?? []), ...e.times].sort((a, b) => a - b));
     this.edit(label, (_m, comp) => {
-      for (const [id, times] of this.keySel) {
-        const c = findClip(comp, id);
-        if (!c || !times.length) continue;
-        const f = map(c, [...times].sort((a, b) => a - b));
-        next.set(id, f ? retimeKeys(c, times, f, comp.fps) : times);
+      const fns = new Map<string, ((t: number) => number) | null>();
+      for (const [id, ts] of byClip) { const c = findClip(comp, id); if (c) fns.set(id, map(c, ts)); }
+      for (const e of entries) {
+        const c = findClip(comp, e.id);
+        if (!c) continue;
+        const f = fns.get(e.id);
+        next.set(e.key, f ? retimeKeys(c, e.times, f, comp.fps, e.path ? [e.path] : null) : e.times);
       }
     });
     this.keySel = next;
@@ -398,7 +448,7 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   /** Primer keyframe elegido, en tiempo de la composición. */
   private keySelStart() {
     let t0 = Infinity;
-    for (const [id, ts] of this.keySel) { const c = findClip(this.comp, id); if (c && ts.length) t0 = Math.min(t0, c.start + Math.min(...ts)); }
+    for (const e of this.keyEntries()) { const c = findClip(this.comp, e.id); if (c) t0 = Math.min(t0, c.start + e.times[0]); }
     return t0;
   }
   /** Mueve los keyframes elegidos `frames` fotogramas. */
@@ -431,13 +481,13 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
     let n = 0;
     const next = new Map<string, number[]>();
     this.edit('Duplicar keyframes', (_m, comp) => {
-      for (const [id, times] of this.keySel) {
-        const c = findClip(comp, id);
-        const kc = c && copyKeys(c, times);
+      for (const e of this.keyEntries()) {
+        const c = findClip(comp, e.id);
+        const kc = c && copyKeys(c, e.times, e.path ? [e.path] : null);
         if (!c || !kc) continue;
-        const first = Math.min(...times), at = this.time + (c.start + first - t0) - c.start;
+        const first = e.times[0], at = this.time + (c.start + first - t0) - c.start;
         n += pasteKeys(c, kc, at);
-        next.set(id, times.map(t => Math.max(0, Math.min(c.dur, Math.round((at + t - first) * comp.fps) / comp.fps))));
+        next.set(e.key, e.times.map(t => Math.max(0, Math.min(c.dur, Math.round((at + t - first) * comp.fps) / comp.fps))));
       }
       return n > 0;
     });
@@ -446,50 +496,81 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
   clearKeys() { if (this.keySel.size) { this.keySel.clear(); this.emit('select', undefined); } }
   get hasKeySel() { return [...this.keySel.values()].some(v => v.length); }
   get hasKeyClip() { return !!this.keyClip; }
+  get keyClipLayers() { return this.keyClip?.items.length ?? 0; }
 
-  /** Copia keyframes: los elegidos; si no hay, los de `paths` o todos los del clip elegido. */
+  /**
+   * Copia keyframes: los elegidos (de uno o varios clips); si no hay, los de `paths`
+   * o todos los de los clips elegidos. Cada clip conserva su distancia en el tiempo.
+   */
   copyKeyframes(paths?: string[] | 'all') {
-    let kc: KeyClipboard | null = null;
-    if (this.hasKeySel && !paths) {
-      const entries = [...this.keySel.entries()].filter(([, ts]) => ts.length);
-      const [id, times] = entries.find(([i]) => i === this.one?.id) ?? entries.sort((a, b) => b[1].length - a[1].length)[0];
-      const c = findClip(this.comp, id);
-      if (c) kc = copyKeys(c, times);
-      if (c && entries.length > 1) toast(`Hay keyframes elegidos en ${entries.length} clips: se copian los de «${c.name}».`);
-    } else if (this.one) kc = copyKeys(this.one, null, Array.isArray(paths) ? paths : null);
+    let sel = new Map<string, { times: number[] | null; paths: string[] | null }[]>();
+    if (this.hasKeySel && !paths) sel = this.keyPicks();
+    else for (const c of this.selected) sel.set(c.id, [{ times: null, paths: Array.isArray(paths) ? paths : null }]);
+    const kc = sel.size ? copyMultiKeys(this.comp, sel) : null;
     if (!kc) { toast('No hay keyframes que copiar.'); return; }
     this.keyClip = kc;
     this.lastCopy = 'keys';
-    const n = kc.items.reduce((a, i) => a + i.keys.length, 0);
-    toast(`${n} ${n === 1 ? 'keyframe copiado' : 'keyframes copiados'}: pégalos en cualquier clip con el cabezal donde quieras`, 'ok');
+    const n = kc.items.reduce((a, i) => a + i.kc.items.reduce((b, x) => b + x.keys.length, 0), 0);
+    toast(`${n} ${n === 1 ? 'keyframe copiado' : 'keyframes copiados'}${kc.items.length > 1 ? ` de ${kc.items.length} capas` : ''}: pégalos con el cabezal donde quieras`, 'ok');
   }
 
-  /** Pega los keyframes copiados en el cabezal de los clips elegidos (`onto` = en esa propiedad). */
-  pasteKeyframes(onto?: string) {
-    const kc = this.keyClip;
-    if (!kc) { toast('Primero copia keyframes.'); return; }
-    const targets = this.selected;
-    if (!targets.length) { toast('Elige el clip donde pegar los keyframes.'); return; }
-    let n = 0;
-    this.edit('Pegar keyframes', () => { for (const c of targets) n += pasteKeys(c, kc, Math.max(0, this.time - c.start), onto); return n > 0; });
-    if (!n) toast(onto ? 'Esa propiedad no admite estos keyframes (otro tipo de valor).' : 'El clip no tiene esas propiedades (p. ej. otro efecto).', 'error');
+  /** Destinos de un pegado de keyframes: los clips elegidos o, si no hay, los de origen. */
+  private keyTargets(): Clip[] {
+    if (this.selected.length) return this.selected;
+    const ids = new Set(this.keyClip?.items.map(i => i.src) ?? []);
+    return this.comp.clips.filter(c => ids.has(c.id));
   }
+  /** Dónde caerían los keyframes copiados si se pegan en `at` (vista previa). */
+  pasteGhosts(at: number | 'orig'): { clip: string; t: number }[] {
+    return this.keyClip ? pastePreview(this.comp, this.keyClip, this.keyTargets(), at) : [];
+  }
+
+  /**
+   * Pega los keyframes copiados en los clips elegidos: en el cabezal (o en `at`),
+   * conservando la distancia entre ellos y entre capas, o en sus tiempos originales
+   * (`at` = 'orig'). `onto` = todos en esa propiedad. Los pegados quedan elegidos.
+   */
+  pasteKeyframes(onto?: string, at: number | 'orig' = this.time) {
+    const kc = this.keyClip;
+    this.pastePreviewOn = false;
+    if (!kc) { toast('Primero copia keyframes.'); return; }
+    const targets = this.keyTargets();
+    if (!targets.length) { toast('Elige el clip donde pegar los keyframes.'); return; }
+    let r = { n: 0, sel: new Map<string, number[]>() };
+    this.edit(kc.items.length > 1 ? `Pegar keyframes de ${kc.items.length} capas` : 'Pegar keyframes', (_m, comp) => {
+      r = pasteMultiKeys(comp, kc, targets.map(c => findClip(comp, c.id)!).filter(Boolean), at, onto);
+      return r.n > 0;
+    });
+    if (!r.n) { toast(onto ? 'Esa propiedad no admite estos keyframes (otro tipo de valor).' : 'El clip no tiene esas propiedades (p. ej. otro efecto) o el cabezal está fuera del clip.', 'error'); this.emit('select', undefined); return; }
+    this.keySel = r.sel;
+    for (const id of r.sel.keys()) this.sel.add(id);
+    if (targets.length < kc.items.length) toast(`Se copiaron ${kc.items.length} capas y hay ${targets.length} ${targets.length === 1 ? 'clip elegido' : 'clips elegidos'}: se pegan las primeras.`);
+    this.emit('select', undefined);
+  }
+  /** Vista previa de pegado: en la línea de tiempo se ven los rombos donde caerán; clic para pegar, Esc para cancelar. */
+  beginPastePreview() {
+    if (!this.keyClip) { toast('Primero copia keyframes.'); return; }
+    this.pastePreviewOn = true;
+    toast('Mueve el puntero por la línea de tiempo y haz clic donde pegar (Esc: cancelar · Intro: en el cabezal)');
+    this.emit('select', undefined);
+  }
+  cancelPastePreview() { if (this.pastePreviewOn) { this.pastePreviewOn = false; this.emit('select', undefined); } }
 
   deleteKeyframes() {
     if (!this.hasKeySel) return;
     let n = 0;
-    this.edit('Borrar keyframes', (_m, comp) => { for (const [id, times] of this.keySel) { const c = findClip(comp, id); if (c) n += deleteKeysAt(c, times); } return n > 0; });
+    this.edit('Borrar keyframes', (_m, comp) => { for (const e of this.keyEntries()) { const c = findClip(comp, e.id); if (c) n += deleteKeysAt(c, e.times, e.path ? [e.path] : null); } return n > 0; });
     this.keySel.clear();
     this.emit('select', undefined);
   }
 
   easeKeyframes(e: Parameters<typeof easeKeysAt>[2]) {
     if (!this.hasKeySel) return;
-    this.edit('Curva de keyframes', (_m, comp) => { for (const [id, times] of this.keySel) { const c = findClip(comp, id); if (c) easeKeysAt(c, times, e); } });
+    this.edit('Curva de keyframes', (_m, comp) => { for (const x of this.keyEntries()) { const c = findClip(comp, x.id); if (c) easeKeysAt(c, x.times, e, x.path ? [x.path] : null); } });
   }
 
   copy(cut = false) {
-    if (this.hasKeySel && !cut) { this.copyKeyframes(); return; }
+    if (this.hasKeySel) { this.copyKeyframes(); if (cut) this.deleteKeyframes(); return; }
     const s = this.selected;
     if (!s.length) return;
     this.clipboard = clone(s);
@@ -574,12 +655,247 @@ export class MotionStudio extends Emitter<{ change: string; time: number; select
 
   /** Cambia una propiedad animable: si ya tiene keyframes, crea o mueve el del cabezal. */
   setProp<T>(c: Clip, p: Prop<T>, v: T, liveOnly = false) {
-    const lt = Math.max(0, Math.min(c.dur, this.time - c.start));
-    const fn = () => setValue(p, lt, v, false);
+    const lt = this.localT(c);
+    const fn = () => setValue(p, lt, v, this.autoKey);
     if (liveOnly) this.live(fn); else this.edit('Cambiar propiedad', fn);
   }
-  valueNow<T>(c: Clip, p: Prop<T>): T { return valueAt(p, Math.max(0, Math.min(c.dur, this.time - c.start))); }
+  valueNow<T>(c: Clip, p: Prop<T>): T { return valueAt(p, this.localT(c)); }
+  /** Tiempo del cabezal dentro del clip (s, al fotograma y dentro del clip). */
+  localT(c: Clip) { return Math.max(0, Math.min(c.dur, Math.round((this.time - c.start) * this.fps) / this.fps)); }
+  get autoKey() { return this.prefs.autoKey; }
+  setAutoKey(on: boolean) { this.prefs.autoKey = on; this.deps.persist(); this.emit('select', undefined); toast(on ? 'Auto Keyframe activado: cada cambio crea su keyframe en el cabezal' : 'Auto Keyframe desactivado'); }
+  get keySync() { return this.prefs.keySync; }
+  setKeySync(on: boolean) { this.prefs.keySync = on; this.deps.persist(); this.emit('select', undefined); toast(on ? 'Sincronizar: los rombos actúan en todos los clips elegidos' : 'Sincronizar desactivado: los rombos actúan sólo en su clip'); }
   isAnimated(p: Prop<unknown>) { return animated(p); }
+
+  // ---------------------------------------------------------------- crear y quitar keyframes (1.11.0)
+
+  /** Clips donde actúa un rombo de `c`: con «Sincronizar», todos los elegidos que tengan esa propiedad. */
+  syncTargets(c: Clip, path: string): Clip[] {
+    if (!this.keySync || !this.sel.has(c.id) || this.sel.size < 2) return [c];
+    return this.selected.filter(x => !!propByPath(x, path) && this.time >= x.start - 1e-6 && this.time <= clipEnd(x) + 1e-6);
+  }
+  /**
+   * Rombo de una propiedad: si hay keyframe en el cabezal lo quita; si no, lo crea con el
+   * valor actual. Con «Sincronizar» lo hace en todos los clips elegidos (cada uno con su valor).
+   */
+  toggleKeyPath(clipId: string, path: string) {
+    const c = findClip(this.comp, clipId);
+    if (!c) return;
+    const p = propByPath(c, path);
+    if (!p) return;
+    const on = !!keyAt(p, this.localT(c));
+    const targets = this.syncTargets(c, path).map(x => x.id);
+    const lab = propLabel(c, path);
+    this.edit(on ? `Quitar keyframe de ${lab}` : targets.length > 1 ? `Keyframe de ${lab} en ${targets.length} clips` : `Keyframe de ${lab}`, (_m, comp) => {
+      for (const id of targets) {
+        const x = findClip(comp, id), q = x && propByPath(x, path);
+        if (!x || !q) continue;
+        const lt = this.localT(x), has = !!keyAt(q, lt);
+        if (on === has) toggleKey(q, lt);
+      }
+    });
+  }
+  /**
+   * Crea keyframes en el cabezal sin duplicar: de `paths` o, si no se indican, de la
+   * propiedad elegida (fila de la línea de tiempo) o de las animadas de cada clip
+   * (posición, escala, giro y opacidad si no tiene ninguna). En todos los clips elegidos.
+   */
+  addKeysNow(paths?: string[]) {
+    const sel = this.selected.filter(c => this.time >= c.start - 1e-6 && this.time <= clipEnd(c) + 1e-6);
+    if (!sel.length) { toast(this.sel.size ? 'El cabezal está fuera de los clips elegidos.' : 'Elige uno o más clips bajo el cabezal.'); return; }
+    const focus = !paths && this.focus && this.sel.has(this.focus.clip) ? [this.focus.path] : null;
+    let n = 0;
+    this.edit(sel.length > 1 ? `Keyframes en ${sel.length} clips` : 'Keyframe', (_m, comp) => {
+      for (const c0 of sel) {
+        const c = findClip(comp, c0.id)!;
+        let ps = paths ?? focus;
+        if (!ps) { ps = []; forEachProp(c, (p, path) => { if (p.k?.length) ps!.push(path); }); if (!ps.length) ps = ['tf.x', 'tf.y', 'tf.sx', 'tf.sy', 'tf.rot', 'tf.opacity']; }
+        const lt = this.localT(c);
+        for (const path of ps) { const p = propByPath(c, path); if (p && !keyAt(p, lt)) { setValue(p, lt, valueAt(p, lt), true); n++; } }
+      }
+      return n > 0;
+    });
+    toast(n ? `${n} ${n === 1 ? 'keyframe creado' : 'keyframes creados'}${sel.length > 1 ? ` en ${sel.length} clips` : ''}` : 'Ya hay keyframes en el cabezal.', n ? 'ok' : 'info');
+  }
+  /** Quita los keyframes del cabezal (de la propiedad elegida o de todas) en los clips elegidos. */
+  removeKeysNow() {
+    const focus = this.focus && this.sel.has(this.focus.clip) ? this.focus.path : null;
+    let n = 0;
+    this.edit('Quitar keyframes del cabezal', (_m, comp) => {
+      for (const c0 of this.selected) {
+        const c = findClip(comp, c0.id)!, lt = this.localT(c);
+        forEachProp(c, (p, path) => { if ((!focus || path === focus || this.sel.size > 1) && keyAt(p, lt)) { toggleKey(p, lt); n++; } });
+      }
+      return n > 0;
+    });
+    if (!n) toast('No hay keyframes en el cabezal.');
+  }
+  /** Keyframes de una propiedad en los clips elegidos (fila del inspector con varios clips). */
+  keyPathOnSelected(path: string) {
+    const sel = this.selected.filter(c => propByPath(c, path) && this.time >= c.start - 1e-6 && this.time <= clipEnd(c) + 1e-6);
+    if (!sel.length) return;
+    const allOn = sel.every(c => !!keyAt(propByPath(c, path)!, this.localT(c)));
+    this.edit(`${allOn ? 'Quitar' : 'Crear'} keyframes de ${propLabel(sel[0], path)}`, (_m, comp) => {
+      for (const c0 of sel) { const c = findClip(comp, c0.id)!, p = propByPath(c, path)!, lt = this.localT(c); if (allOn === !!keyAt(p, lt)) toggleKey(p, lt); }
+    });
+  }
+
+  // ---------------------------------------------------------------- curvas de los keyframes elegidos
+
+  private segEdit(label: string, fn: (k: Parameters<typeof setEase>[0]) => boolean | void, keysOnly = true) {
+    if (keysOnly && !this.hasKeySel) { toast('Elige uno o más keyframes (rombos).'); return 0; }
+    let n = 0;
+    this.edit(label, (_m, comp) => { for (const x of this.keyEntries()) { const c = findClip(comp, x.id); if (c) n += eachSegmentKey(c, x.times, fn, x.path ? [x.path] : null); } return n > 0; });
+    if (!n) toast('Elige keyframes que tengan otro después (la curva va hacia el siguiente).');
+    return n;
+  }
+  /** Curva (preset o personalizada) en todos los keyframes elegidos. */
+  applyEase(spec: EaseSpec, label = 'Curva') { this.segEdit(label, k => { setEase(k, spec); }); }
+  /** Suavizado automático (tangentes continuas) de los keyframes elegidos o, si no hay, de todo el clip elegido. */
+  smoothSel() {
+    const sel = this.hasKeySel ? this.keyEntries() : this.selected.map(c => ({ id: c.id, times: null, path: null }));
+    let n = 0;
+    this.edit('Suavizar automáticamente', (_m, comp) => { for (const x of sel) { const c = findClip(comp, x.id); if (c) n += smoothKeys(c, x.times, x.path ? [x.path] : null); } return n > 0; });
+    if (!n) toast('No hay tramos numéricos que suavizar.');
+  }
+  invertCurves() { let bad = 0; this.segEdit('Invertir curvas', k => { if (!invertEase(k)) { bad++; return false; } return true; }); if (bad) toast(`${bad} con rebote, elástico o rebasar no tienen inversa simple y se dejan igual.`); }
+  copyEase() {
+    for (const x of this.keyEntries()) {
+      const c = findClip(this.comp, x.id);
+      let found: EaseSpec | null = null;
+      if (c) eachSegmentKey(c, x.times, k => { found ??= easeSpecOf(k); }, x.path ? [x.path] : null);
+      if (found) { this.easeClip = found; toast('Curva copiada: elige otros keyframes y pégala', 'ok'); return; }
+    }
+    toast('Elige un keyframe que tenga otro después.');
+  }
+  get hasEaseClip() { return !!this.easeClip; }
+  pasteEase() { if (!this.easeClip) { toast('Primero copia una curva.'); return; } this.applyEase(this.easeClip, 'Pegar curva'); }
+
+  // ---------------------------------------------------------------- repetir, bucle, alinear, congelar
+
+  /** Repite los keyframes elegidos `count` veces (`dir` = hacia delante o atrás), con `gap` s entre repeticiones. */
+  repeatSel(count: number | 'fill', gap = 0, o: { dir?: 1 | -1; pingpong?: boolean } = {}) {
+    if (!this.hasKeySel) { toast('Elige los keyframes de la animación que quieres repetir.'); return; }
+    const next = new Map<string, number[]>();
+    let n = 0;
+    this.edit(o.pingpong ? 'Bucle ida y vuelta' : count === 'fill' ? 'Bucle hasta el final' : `Repetir ×${count}`, (_m, comp) => {
+      for (const x of this.keyEntries()) {
+        const c = findClip(comp, x.id);
+        if (!c) continue;
+        const k = count === 'fill' ? repeatsToFill(c, x.times, gap, comp.fps, o.dir ?? 1) : count;
+        const out = repeatKeys(c, x.times, k, gap, comp.fps, { ...o, paths: x.path ? [x.path] : null });
+        n += out.length;
+        next.set(x.key, [...x.times, ...out]);
+      }
+      return n > 0;
+    });
+    if (!n) { toast('No cabe ninguna repetición dentro del clip (alárgalo o reduce el espacio).'); return; }
+    this.keySel = next;
+    this.emit('select', undefined);
+  }
+  /** Cada clip: su primer keyframe elegido al cabezal (la animación de todas las capas empieza a la vez). */
+  alignKeys() {
+    this.retime('Alinear keyframes al cabezal', (c, ts) => { const dt = this.localT(c) - ts[0]; return t => t + dt; });
+  }
+  /** Escalona las capas: la animación de cada clip empieza `frames` fotogramas después que la anterior. */
+  staggerKeys(frames: number) {
+    const ids = [...new Set(this.keyEntries().map(e => e.id))].map(id => findClip(this.comp, id)).filter((c): c is Clip => !!c).sort((a, b) => this.comp.tracks.findIndex(t => t.id === a.track) - this.comp.tracks.findIndex(t => t.id === b.track) || a.start - b.start).map(c => c.id);
+    const t0 = this.keySelStart();
+    this.retime('Escalonar animaciones', (c, ts) => { const i = ids.indexOf(c.id); const dt = t0 + (i * frames) / this.fps - (c.start + ts[0]); return t => t + dt; });
+  }
+  /** Congela la animación de los clips elegidos en el cabezal (antes se anima; después queda fija). */
+  freezeAnim() {
+    let n = 0;
+    this.edit('Congelar animación', (_m, comp) => { for (const c0 of this.selected) { const c = findClip(comp, c0.id)!; n += freezeAt(c, this.localT(c)); } return n > 0; });
+    toast(n ? `Animación congelada en el cabezal (${n} ${n === 1 ? 'propiedad' : 'propiedades'})` : 'Los clips elegidos no tienen animación.');
+  }
+
+  // ---------------------------------------------------------------- animación rápida
+
+  /** Aplica una animación rápida a los clips elegidos (con su duración, intensidad, dirección y curva). */
+  quick(spec: QuickSpec, label: string) {
+    const sel = this.selected;
+    if (!sel.length) { toast('Elige uno o más clips.'); return; }
+    let n = 0;
+    this.edit(`Animación rápida: ${label}`, (_m, comp) => { for (const c0 of sel) { const c = findClip(comp, c0.id)!; n += quickAnimate(c, { ...spec, at: spec.at < 0 ? this.localT(c) : spec.at }, comp.w, comp.h, comp.fps); } return n > 0; });
+  }
+  /** Movimiento de cámara (acercamiento con deriva) a lo largo de los clips elegidos o de la composición. */
+  quickCamera(intensity: number, ease: EaseSpec) {
+    const sel = this.selected;
+    const a = sel.length ? Math.min(...sel.map(c => c.start)) : 0, b = sel.length ? Math.max(...sel.map(clipEnd)) : this.comp.dur;
+    this.edit('Animación rápida: cámara', (_m, comp) => {
+      const cam = comp.camera;
+      cam.on = true;
+      const z0 = valueAt(cam.zoom, a), x0 = valueAt(cam.x, a), y0 = valueAt(cam.y, a);
+      for (const [p, v0, v1] of [[cam.zoom, z0, z0 * (1 + 0.2 * intensity)], [cam.x, x0, x0 - comp.w * 0.03 * intensity], [cam.y, y0, y0 - comp.h * 0.02 * intensity]] as const) {
+        setValue(p, a, v0, true); setValue(p, b, v1, true);
+        const k = keyAt(p, a); if (k) setEase(k, ease);
+      }
+    });
+    toast('Cámara 2D animada (composición → Cámara 2D)', 'ok');
+  }
+  /** Animación de texto: letras que aparecen a lo largo de `len` segundos desde el cabezal. */
+  quickText(kind: 'typewriter' | 'chars-fade' | 'chars-up' | 'words-pop', len: number, ease: EaseSpec) {
+    const sel = this.selected.filter(c => c.kind === 'text');
+    if (!sel.length) { toast('Elige un clip de texto.'); return; }
+    this.edit('Animación de texto', (_m, comp) => {
+      for (const c0 of sel) {
+        const c = findClip(comp, c0.id) as Extract<Clip, { kind: 'text' }>;
+        const a = this.localT(c), b = Math.min(c.dur, a + len);
+        c.anim = kind;
+        c.reveal = { v: 0, k: [{ t: a, v: 0, e: 'linear' }, { t: b, v: 1, e: 'linear' }] };
+        setEase(c.reveal.k![0], ease);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- capas: vínculos, guía, ajuste, búsqueda
+
+  /** Vincula propiedades de los clips elegidos a `srcId` (siguen su animación conservando su posición actual). */
+  linkTo(srcId: string, paths: string[]) {
+    const src = findClip(this.comp, srcId);
+    const kids = this.selected.filter(c => c.id !== srcId);
+    if (!src || !kids.length) { toast('Elige los clips que van a seguir a otro.'); return; }
+    if (kids.some(c => linkLoops(this.comp, c, src))) { toast('Ese vínculo formaría un círculo.', 'error'); return; }
+    this.edit('Vincular propiedades', (_m, comp) => { for (const k of kids) { const c = findClip(comp, k.id)!; c.link = makeLink(comp, c, findClip(comp, srcId)!, paths, this.time); } });
+    toast(`${kids.length === 1 ? 'El clip sigue' : `${kids.length} clips siguen`} a «${src.name}»`, 'ok');
+  }
+  unlink() { const ids = this.selected.filter(c => c.link).map(c => c.id); if (!ids.length) return; this.edit('Desvincular', (_m, comp) => { for (const id of ids) findClip(comp, id)!.link = null; }); }
+  toggleGuide() { const on = !this.selected.every(c => c.guide); this.edit(on ? 'Capa guía' : 'Quitar capa guía', (_m, comp) => { for (const c of this.selected) findClip(comp, c.id)!.guide = on; }); if (on) toast('Capa guía: se ve al editar pero no se exporta.'); }
+  /** Capa de ajuste: un sólido cuyos efectos se aplican a todo lo que hay debajo. */
+  addAdjustment() {
+    this.edit('Añadir capa de ajuste', (_m, comp) => {
+      const tr = this.freeTrack(comp, 'visual', this.time, 5);
+      const c = solidClip(comp, tr.id, this.time, '#ffffff');
+      c.name = 'Ajuste'; c.adjust = true;
+      comp.clips.push(c);
+      this.sel = new Set([c.id]);
+    });
+    this.emit('select', undefined);
+    toast('Capa de ajuste: añádele efectos (pestaña Efectos) y afectarán a todo lo de debajo.', 'ok');
+  }
+  /** Elige los clips cuyo nombre contiene `q`. */
+  findClips(q: string): number {
+    const t = q.trim().toLowerCase();
+    const hits = t ? this.comp.clips.filter(c => c.name.toLowerCase().includes(t) || (c.kind === 'text' && c.text.toLowerCase().includes(t))) : [];
+    this.select(hits.map(c => c.id));
+    return hits.length;
+  }
+  /** Duración rápida de los clips elegidos (s). */
+  setDuration(d: number) {
+    if (!this.sel.size) return;
+    this.edit('Duración', (m, comp) => { for (const c0 of this.selected) { const c = findClip(comp, c0.id)!; trimClip(comp, m, c.id, 'r', c.start + Math.max(1 / comp.fps, d), this.prefs.ripple); } });
+  }
+
+  // ---------------------------------------------------------------- pistas
+
+  setTrackOpen(ids: string[] | 'all', open: boolean) {
+    this.edit(open ? 'Desplegar propiedades' : 'Plegar propiedades', (_m, comp) => { for (const t of comp.tracks) if (ids === 'all' || ids.includes(t.id)) t.open = open; });
+  }
+  setTrackHeight(ids: string[] | 'all', hgt: number | null) {
+    this.edit('Altura de pista', (_m, comp) => { for (const t of comp.tracks) if (ids === 'all' || ids.includes(t.id)) { if (hgt === null) delete t.h; else t.h = Math.max(24, Math.min(200, Math.round(hgt))); } });
+  }
 
   // ---------------------------------------------------------------- marcadores e intervalo
 

@@ -2,6 +2,7 @@ import { blendOp } from '../doc/ItemRenderer';
 import { EFFECTS, LUTS, lutCanvas, parseCube, type Values } from '../effects/effects';
 import { applyEffect } from '../effects/run';
 import { valueAt, type Prop } from './keys';
+import { resolveLinks } from './keytools';
 import type { MediaManager } from './media';
 import {
   activeClips, clipSize, setTextMeasurer, isAudioOnly, sourceTime, type Clip, type Composition, type MediaClip, type Motion, type ShapeClip, type TextClip, type Transition,
@@ -87,9 +88,14 @@ export class Compositor {
     g.clearRect(0, 0, W, H);
     if (comp.bg) { g.fillStyle = comp.bg; g.fillRect(0, 0, W, H); }
     const tracks = new Map(comp.tracks.map(tr => [tr.id, tr]));
-    for (const c of activeClips(comp, t)) {
-      const tr = tracks.get(c.track);
-      if (!tr || tr.hidden || tr.kind === 'audio' || isAudioOnly(m, c)) continue;
+    // Aislar (solo): si alguna pista visual está en solo, sólo se ven esas.
+    const solo = comp.tracks.some(tr => tr.kind === 'visual' && tr.solo);
+    for (const c0 of activeClips(comp, t)) {
+      const tr = tracks.get(c0.track);
+      if (!tr || tr.hidden || tr.kind === 'audio' || isAudioOnly(m, c0) || (solo && !tr.solo)) continue;
+      // Capas guía: sólo al editar (no en la exportación).
+      if (c0.guide && !o.preview) continue;
+      const c = resolveLinks(comp, c0);
       const lt = t - c.start;
       lg.setTransform(1, 0, 0, 1, 0, 0); lg.globalAlpha = 1; lg.globalCompositeOperation = 'source-over'; lg.filter = 'none';
       lg.clearRect(0, 0, W, H);
@@ -97,7 +103,8 @@ export class Compositor {
       const tin = trans(c.tin, lt, c.dur, 'in'), tout = trans(c.tout, lt, c.dur, 'out');
       const M = this.matrix(comp, c, t, o.scale, tr.parallax, size, [tin, tout]);
       const tf = c.tf;
-      const drawn = await this.drawContent(m, comp, c, lt, lg, M, size, o, depth);
+      // Capa de ajuste: sus efectos y máscaras actúan sobre lo que ya hay debajo.
+      const drawn = c.adjust && c.kind === 'solid' ? (lg.drawImage(out, 0, 0), true) : await this.drawContent(m, comp, c, lt, lg, M, size, o, depth);
       if (!drawn) continue;
       if (c.masks.length) this.applyMasks(c, lt, lg, M, W, H);
       let img: HTMLCanvasElement = L;
@@ -130,7 +137,7 @@ export class Compositor {
    * giro · inclinación · escala · anclaje. El visor la usa para sus controles.
    */
   matrix(comp: Composition, c: Clip, t: number, scale: number, parallax: number, size: { w: number; h: number }, trs: (TransState | null)[] = []): M6 {
-    const lt = t - c.start, tf = c.tf;
+    const lt = t - c.start, tf = resolveLinks(comp, c).tf;
     let M: M6 = S(scale, scale);
     if (comp.camera.on) M = mul(M, this.camera(comp, t, parallax));
     for (const x of trs) M = mul(M, transitionMatrix(x, comp));

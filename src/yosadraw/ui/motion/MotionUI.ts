@@ -10,7 +10,7 @@ import { MBrowser } from './MBrowser';
 import type { MotionStudio, MotionTool } from './MotionStudio';
 import { clipMenu, keyEditItems, keySelectItems, MTimeline } from './MTimeline';
 import { MViewer } from './MViewer';
-import { comboOf, openMotionShortcuts } from './shortcuts';
+import { comboOf, keyLabel, MOTION_ACTIONS, openMotionShortcuts } from './shortcuts';
 import { menu } from './util';
 
 export interface MotionUIDeps {
@@ -68,6 +68,9 @@ export class MotionUI {
       ib(MI.grid, 'Galería', () => deps.gallery()), chip, ib(MI.save, `Guardar${s.keys.hint('save')}`, () => deps.save()),
       h('span', { class: 'mo-sep' }), this.undoBtn, this.redoBtn,
       h('div', { class: 'mo-spacer' }),
+      h('button', { type: 'button', class: 'btn sm ghost mo-pconly mo-palbtn', title: `Buscar herramientas y acciones${s.keys.hint('palette')}`, html: `${MI.search} <span>Buscar acción…</span>`, on: { click: () => this.palette() } }),
+      ib(MI.folder, `Mostrar / ocultar la biblioteca${s.keys.hint('toggle-left')}`, () => this.togglePanel('left'), 'icon mo-pconly'),
+      ib(MI.edit, `Mostrar / ocultar las propiedades${s.keys.hint('toggle-right')}`, () => this.togglePanel('right'), 'icon mo-pconly'),
       ib(MI.keyboard, 'Atajos de teclado', () => openMotionShortcuts(s.keys, () => s.deps.persist()), 'icon mo-pconly'),
       h('button', { type: 'button', class: 'btn primary mo-export', html: `${MI.export} <span>Exportar</span>`, title: `Exportar vídeo${s.keys.hint('export')}`, on: { click: () => deps.exportVideo() } }));
 
@@ -133,6 +136,7 @@ export class MotionUI {
 
     s.on('tool', t => { for (const [id, b] of this.rails) { b.classList.toggle('on', id === t); b.setAttribute('aria-pressed', String(id === t)); } });
     s.on('change', () => { this.syncTop(); this.showBanner(); });
+    s.on('select', () => { this.el.classList.toggle('mo-autokey', s.autoKey); });
     s.on('media', () => this.showBanner());
     s.on('open', on => { this.el.hidden = !on; if (on) { this.layout(); this.syncTop(); this.showBanner(); s.setTool('select'); } });
     watchDevice(() => this.layout());
@@ -153,8 +157,19 @@ export class MotionUI {
     this.applySizes();
   }
 
+  /** Muestra u oculta el panel izquierdo (biblioteca) o derecho (propiedades). */
+  togglePanel(side: 'left' | 'right') {
+    const p = this.s.prefs;
+    if (side === 'left') p.showLeft = !p.showLeft; else p.showRight = !p.showRight;
+    this.s.deps.persist();
+    this.applySizes();
+  }
+
   private applySizes() {
     const p = this.s.prefs;
+    this.el.classList.toggle('mo-noleft', !p.showLeft && !this.simple);
+    this.el.classList.toggle('mo-noright', !p.showRight && !this.simple);
+    this.el.classList.toggle('mo-autokey', p.autoKey);
     this.el.style.setProperty('--mo-left', `${p.leftW}px`);
     this.el.style.setProperty('--mo-right', `${p.rightW}px`);
     this.el.style.setProperty('--mo-tl', `${p.tlH}px`);
@@ -201,8 +216,13 @@ export class MotionUI {
   private keyframesMenu() {
     const s = this.s, n = s.keyCount;
     menu(0, 0, n ? `Keyframes · ${n} ${n === 1 ? 'elegido' : 'elegidos'}` : 'Keyframes', [
+      { label: 'Crear keyframe en el cabezal', disabled: !s.sel.size, run: () => s.addKeysNow() },
+      { label: 'Quitar los keyframes del cabezal', disabled: !s.sel.size, run: () => s.removeKeysNow() },
+      { label: s.autoKey ? '✓ Auto Keyframe (cada cambio crea keyframe)' : 'Auto Keyframe (cada cambio crea keyframe)', run: () => s.setAutoKey(!s.autoKey) },
+      { label: s.keySync ? '✓ Sincronizar en los clips elegidos' : 'Sincronizar en los clips elegidos', run: () => s.setKeySync(!s.keySync) },
       ...keySelectItems(s),
       ...keyEditItems(s),
+      { label: 'Suavizar automáticamente', run: () => s.smoothSel() },
       { label: 'Keyframe de transformación en el cabezal', disabled: !s.sel.size, run: () => s.keyTransform() },
       { label: 'Ir al keyframe anterior', run: () => s.jumpKey(-1) },
       { label: 'Ir al keyframe siguiente', run: () => s.jumpKey(1) },
@@ -254,8 +274,16 @@ export class MotionUI {
   /** Atajos del editor de vídeo. Devuelve true si la tecla se usó. */
   handleKey(e: KeyboardEvent): boolean {
     const s = this.s;
+    // Vista previa de pegado: Intro pega en el cabezal, Esc cancela.
+    if (s.pastePreviewOn && (e.key === 'Enter' || e.key === 'Escape')) { if (e.key === 'Enter') s.pasteKeyframes(); else s.cancelPastePreview(); return true; }
     const a = s.keys.action(comboOf(e));
     if (!a) return false;
+    return this.run(a);
+  }
+
+  /** Ejecuta una acción del editor por su id (atajos, paleta de acciones). */
+  run(a: string): boolean {
+    const s = this.s;
     const run: Record<string, () => void> = {
       play: () => s.player.toggle(), 'prev-frame': () => s.step(-1), 'next-frame': () => s.step(1),
       'prev-sec': () => s.step(-s.fps), 'next-sec': () => s.step(s.fps), 'prev-edit': () => s.jumpEdit(-1), 'next-edit': () => s.jumpEdit(1),
@@ -265,13 +293,23 @@ export class MotionUI {
       'tool-select': () => s.setTool('select'), 'tool-razor': () => s.setTool('razor'), 'tool-text': () => s.setTool('text'), 'tool-shape': () => s.setTool('shape'), 'tool-mask': () => s.setTool('mask'),
       split: () => s.split(), delete: () => s.remove(), 'ripple-delete': () => s.remove(true), duplicate: () => s.duplicate(),
       copy: () => s.copy(), cut: () => s.copy(true), paste: () => s.paste(), 'copy-attrs': () => s.copyAttributes(), 'paste-attrs': () => s.pasteAttributes(),
-      'select-all': () => (s.hasKeySel ? s.selectAllKeys() : s.select(s.comp.clips.map(c => c.id))),
+      'select-all': () => (s.hasKeySel || (s.focus && s.sel.size) ? s.selectAllKeys() : s.select(s.comp.clips.map(c => c.id))),
       'key-all': () => s.selectAllKeys(), 'key-playhead': () => s.selectKeysAtPlayhead(), 'key-to-playhead': () => s.keysToPlayhead(),
       'key-dup': () => s.duplicateKeys(), 'key-reverse': () => s.reverseKeys(), 'key-nudge-l10': () => s.nudgeKeys(-10), 'key-nudge-r10': () => s.nudgeKeys(10),
-      'key-multi': () => { s.keyMulti = !s.keyMulti; s.keysChanged(); toast(s.keyMulti ? 'Selección múltiple de keyframes activada' : 'Selección múltiple desactivada'); }, deselect: () => { s.select([]); s.setTool('select'); },
+      'key-multi': () => { s.keyMulti = !s.keyMulti; s.keysChanged(); toast(s.keyMulti ? 'Selección múltiple de keyframes activada' : 'Selección múltiple desactivada'); }, deselect: () => { if (s.pastePreviewOn) { s.cancelPastePreview(); return; } if (s.hasKeySel) { s.clearKeys(); return; } s.select([]); s.setTool('select'); },
       group: () => s.group(), precompose: () => s.precompose(), 'nudge-l': () => s.nudge(-1), 'nudge-r': () => s.nudge(1),
       'trim-start': () => s.trimTo('l'), 'trim-end': () => s.trimTo('r'),
-      keyframe: () => s.keyTransform(), 'prev-key': () => s.jumpKey(-1), 'next-key': () => s.jumpKey(1),
+      keyframe: () => s.addKeysNow(), 'key-remove': () => s.removeKeysNow(), 'key-transform': () => s.keyTransform(), 'prev-key': () => s.jumpKey(-1), 'next-key': () => s.jumpKey(1),
+      'auto-key': () => s.setAutoKey(!s.autoKey), 'key-sync': () => s.setKeySync(!s.keySync),
+      'paste-preview': () => s.beginPastePreview(), 'paste-orig': () => s.pasteKeyframes(undefined, 'orig'),
+      'ease-inout': () => s.applyEase({ e: 'inout' }, 'Curva Ease In-Out'), 'ease-in': () => s.applyEase({ e: 'in' }, 'Curva Ease In'), 'ease-out': () => s.applyEase({ e: 'out' }, 'Curva Ease Out'),
+      'ease-linear': () => s.applyEase({ e: 'linear' }, 'Curva lineal'), 'ease-hold': () => s.applyEase({ e: 'hold' }, 'Curva constante'),
+      'key-smooth': () => s.smoothSel(), 'key-invert-ease': () => s.invertCurves(), 'key-copy-ease': () => s.copyEase(), 'key-paste-ease': () => s.pasteEase(),
+      'key-repeat': () => s.repeatSel(1, 0), 'key-repeat-back': () => s.repeatSel(1, 0, { dir: -1 }), 'key-loop': () => s.repeatSel('fill', 0), 'key-pingpong': () => s.repeatSel('fill', 0, { pingpong: true }),
+      'key-align': () => s.alignKeys(), 'key-freeze': () => s.freezeAnim(),
+      'center-playhead': () => this.timeline.centerPlayhead(), 'expand-all': () => this.timeline.expandAll(true), 'collapse-all': () => this.timeline.expandAll(false),
+      'find-layer': () => this.timeline.focusSearch(), palette: () => this.palette(), 'toggle-left': () => this.togglePanel('left'), 'toggle-right': () => this.togglePanel('right'),
+      'add-adjust': () => s.addAdjustment(), 'toggle-guide': () => s.toggleGuide(),
       marker: () => s.addMarker(), snap: () => this.timeline.toggle('snap'), ripple: () => this.timeline.toggle('ripple'),
       'zoom-in': () => this.timeline.setZoom(this.timeline.pps * 1.5), 'zoom-out': () => this.timeline.setZoom(this.timeline.pps / 1.5), 'zoom-fit': () => this.timeline.zoomFit(),
       curves: () => this.showCurves(this.curves.el.hidden),
@@ -281,5 +319,41 @@ export class MotionUI {
     if (!fn) return false;
     fn();
     return true;
+  }
+
+  /** Paleta de acciones: escribe para buscar cualquier herramienta o acción del editor y pulsa Intro. */
+  palette() {
+    const s = this.s;
+    document.querySelector('.mo-palette')?.remove();
+    const norm = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const input = h('input', { type: 'search', class: 'mo-palinput', placeholder: 'Buscar acción (p. ej. «keyframe», «bucle», «curva», «capa»)…', 'aria-label': 'Buscar acción' });
+    const list = h('div', { class: 'mo-pallist', role: 'listbox' });
+    let items: typeof MOTION_ACTIONS = [], cur = 0;
+    const close = () => { wrap.remove(); };
+    const exec = (id: string) => { close(); this.run(id); };
+    const render = () => {
+      const q = norm(input.value.trim());
+      items = MOTION_ACTIONS.filter(a => !q || q.split(/\s+/).every(w => norm(`${a.label} ${a.group} ${a.id}`).includes(w))).slice(0, 60);
+      cur = Math.min(cur, Math.max(0, items.length - 1));
+      list.replaceChildren(...items.map((a, i) => {
+        const b = h('button', { type: 'button', role: 'option', class: `mo-palitem${i === cur ? ' on' : ''}`, 'aria-selected': String(i === cur), on: { click: () => exec(a.id) } },
+          h('span', null, a.label), h('span', { class: 'mo-palgroup' }, a.group), h('kbd', null, keyLabel(s.keys.key(a.id)) || ''));
+        return b;
+      }));
+      if (!items.length) list.append(h('p', { class: 'ctl-help' }, 'Nada coincide.'));
+      list.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+    };
+    input.addEventListener('input', () => { cur = 0; render(); });
+    input.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); cur = Math.min(items.length - 1, cur + 1); render(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); cur = Math.max(0, cur - 1); render(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (items[cur]) exec(items[cur].id); }
+    });
+    const wrap = h('div', { class: 'mo-palette', role: 'dialog', 'aria-label': 'Buscar acciones', on: { pointerdown: (e: Event) => { if (e.target === wrap) close(); } } }, h('div', { class: 'mo-palbox' }, input, list));
+    this.el.append(wrap);
+    render();
+    input.focus();
   }
 }

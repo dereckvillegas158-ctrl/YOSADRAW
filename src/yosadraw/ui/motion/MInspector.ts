@@ -7,6 +7,7 @@ import {
 import { h, toast } from '../dom';
 import { BLENDS } from '../LayersPanel';
 import { confirmDialog, promptText } from '../modal';
+import { LINKABLE, QUICK_ANIMS, type QuickDir, type QuickKind } from '../../motion/keytools';
 import { MI } from './icons';
 import type { MotionStudio } from './MotionStudio';
 import { fmtTC, menu } from './util';
@@ -79,7 +80,7 @@ export class MInspector {
   private num(c: Clip | null, p: Prop, label: string, o: { min?: number; max?: number; step?: number; k?: number; unit?: string; path?: string; anim?: boolean; key: string; onSet?: (v: number) => void }) {
     const s = this.s;
     const k = o.k ?? 1, step = o.step ?? 1;
-    const lt = () => (c ? Math.max(0, Math.min(c.dur, s.time - c.start)) : s.time);
+    const lt = () => (c ? s.localT(c) : s.time);
     const input = h('input', { type: 'number', step: String(step), class: 'mo-num', 'data-k': o.key, 'aria-label': label });
     if (o.min !== undefined) input.min = String(o.min * k);
     if (o.max !== undefined) input.max = String(o.max * k);
@@ -88,7 +89,7 @@ export class MInspector {
       v = clamp(v);
       if (o.onSet) { o.onSet(v); return; }
       if (c) s.setProp(c, p, v, live);
-      else if (live) s.live(() => { setV(p, lt(), v); }); else s.edit(label, () => { setV(p, lt(), v); });
+      else if (live) s.live(() => { setV(p, lt(), v, s.autoKey); }); else s.edit(label, () => { setV(p, lt(), v, s.autoKey); });
     };
     input.addEventListener('change', () => { const v = Number(input.value.replace(',', '.')) / k; if (Number.isFinite(v)) apply(v, false); });
     // Arrastrar la etiqueta cambia el valor (como en los editores de vídeo).
@@ -111,17 +112,21 @@ export class MInspector {
   /** Rombo de keyframe y flechas anterior/siguiente. */
   private keyBtn(c: Clip | null, p: Prop<unknown>, label: string): HTMLElement[] {
     const s = this.s;
-    const lt = () => (c ? Math.max(0, Math.min(c.dur, s.time - c.start)) : s.time);
+    const lt = () => (c ? s.localT(c) : s.time);
     const base = c ? c.start : 0;
     const b = h('button', { type: 'button', class: 'mo-key', title: `Keyframe de ${label}`, 'aria-label': `Keyframe de ${label}` });
     const prev = h('button', { type: 'button', class: 'mo-keynav', title: 'Keyframe anterior', 'aria-label': 'Keyframe anterior', html: '‹' });
     const next = h('button', { type: 'button', class: 'mo-keynav', title: 'Keyframe siguiente', 'aria-label': 'Keyframe siguiente', html: '›' });
-    b.addEventListener('click', () => s.edit(keyAt(p, lt()) ? `Quitar keyframe de ${label}` : `Keyframe de ${label}`, () => { toggleKey(p, lt()); }));
+    let path = '';
+    if (c) forEachProp(c, (q, n) => { if (q === p) path = n; });
+    // Un clic: crea o quita el keyframe del cabezal (con «Sincronizar», en todos los clips elegidos).
+    b.addEventListener('click', () => {
+      if (c && path) { s.toggleKeyPath(c.id, path); return; }
+      s.edit(keyAt(p, lt()) ? `Quitar keyframe de ${label}` : `Keyframe de ${label}`, () => { toggleKey(p, lt()); });
+    });
     // Clic derecho (o mantener pulsado): copiar o pegar los keyframes de esta propiedad.
     if (c) b.addEventListener('contextmenu', e => {
       e.preventDefault();
-      let path = '';
-      forEachProp(c, (q, n) => { if (q === p) path = n; });
       if (!path) return;
       menu(e.clientX, e.clientY, label, [
         { label: `Copiar keyframes de ${label}`, disabled: !animated(p), run: () => { s.select([c.id]); s.copyKeyframes([path]); } },
@@ -135,10 +140,14 @@ export class MInspector {
       const on = !!keyAt(p, lt()), an = animated(p);
       b.innerHTML = on ? MI.diamondFill : MI.diamond;
       b.classList.toggle('animated', an); b.classList.toggle('on', on);
+      b.title = on ? `${label}: hay keyframe en el cabezal (clic para quitarlo)` : an ? `${label}: animada; clic para añadir keyframe en el cabezal` : `${label}: sin animar; clic para crear el primer keyframe${s.autoKey ? ' (Auto Keyframe activo: cambiar el valor también lo crea)' : ''}`;
+      // Indicador en toda la fila: animada / con keyframe aquí / sin animar.
+      const row = b.closest('.mo-prop');
+      row?.classList.toggle('is-anim', an); row?.classList.toggle('is-key', on);
       b.setAttribute('aria-pressed', String(on));
       prev.hidden = next.hidden = !an;
     };
-    this.syncs.push(sync); sync();
+    this.syncs.push(sync); sync(); queueMicrotask(sync);
     return [prev, b, next];
   }
 
@@ -257,6 +266,91 @@ export class MInspector {
       this.select('Transición de salida', '', [['', '—'], ...TRANSITIONS], v => { if (v) all('Transición', c => { c.tout = { type: v as TransitionType, dur: c.tout.dur }; }); }, 'mtout'),
       this.btns(['Activar todos', () => all('Activar', c => { c.enabled = true; })], ['Desactivar todos', () => all('Desactivar', c => { c.enabled = false; })]),
       this.btns(['Eliminar', () => s.remove(false)], ['Eliminar y cerrar hueco', () => s.remove(true)]));
+    this.multiKeys(sel);
+    this.quickPanel();
+    this.layerPanel(sel);
+  }
+
+  /** Keyframes en varios clips a la vez: cada uno con su propio valor; Δ mueve todos lo mismo. */
+  private multiKeys(sel: Clip[]) {
+    const s = this.s;
+    const rows: HTMLElement[] = [];
+    for (const [path, label, k, unit] of [['tf.x', 'Posición X', 1, 'px'], ['tf.y', 'Posición Y', 1, 'px'], ['tf.sx', 'Escala X', 100, '%'], ['tf.sy', 'Escala Y', 100, '%'], ['tf.rot', 'Rotación', 1, '°'], ['tf.opacity', 'Opacidad', 100, '%']] as const) {
+      const b = h('button', { type: 'button', class: 'mo-key', 'aria-label': `Keyframe de ${label} en todos` });
+      b.addEventListener('click', () => s.keyPathOnSelected(path));
+      const delta = h('input', { type: 'number', class: 'mo-num', placeholder: 'Δ', step: '1', 'data-k': `md${path}`, 'aria-label': `Sumar a ${label} en todos`, title: `Suma este valor a ${label} de cada clip (en el cabezal; crea o ajusta su keyframe si está animada o con Auto Keyframe)` });
+      delta.addEventListener('change', () => {
+        const d = Number(delta.value.replace(',', '.')) / k;
+        delta.value = '';
+        if (!d) return;
+        s.edit(`${label} +${+(d * k).toFixed(2)} en ${sel.length} clips`, (_m, comp) => {
+          for (const c0 of sel) { const c = comp.clips.find(x => x.id === c0.id); const p = c && (propByPath(c, path) as Prop | null); if (c && p) setV(p, s.localT(c), valueAt(p, s.localT(c)) + d, s.autoKey); }
+        });
+      });
+      const sync = () => {
+        const live = s.selected.filter(c => s.time >= c.start && s.time <= clipEnd(c));
+        const on = live.length > 0 && live.every(c => !!keyAt(propByPath(c, path)!, s.localT(c)));
+        const some = live.some(c => animated(propByPath(c, path)!));
+        b.innerHTML = on ? MI.diamondFill : MI.diamond;
+        b.classList.toggle('on', on); b.classList.toggle('animated', some);
+        b.title = on ? `Quitar el keyframe de ${label} del cabezal en los clips elegidos` : `Crear keyframe de ${label} en el cabezal en los ${live.length} clips (cada uno con su valor)`;
+      };
+      this.syncs.push(sync); sync();
+      rows.push(h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, label), delta, h('span', { class: 'mo-unit' }, unit), b));
+    }
+    this.section(`Keyframes en los ${sel.length} clips`,
+      h('p', { class: 'ctl-help' }, 'Cada rombo crea (o quita) el keyframe en todos los clips elegidos en el mismo instante; cada clip conserva su propio valor.'),
+      ...rows,
+      this.btns(['Keyframe de todo', () => s.addKeysNow(['tf.x', 'tf.y', 'tf.sx', 'tf.sy', 'tf.rot', 'tf.opacity']), `Posición, escala, rotación y opacidad${s.keys.hint('keyframe')}`], ['Quitar los del cabezal', () => s.removeKeysNow(), s.keys.hint('key-remove')]),
+      this.btns(['Copiar animación', () => s.copyKeyframes('all'), 'Todos los keyframes de los clips elegidos, con su distancia entre capas'], ['Pegar animación', () => s.pasteKeyframes(), 'En el cabezal, en los clips elegidos (en el mismo orden de capas)'], ['Congelar en el cabezal', () => s.freezeAnim()]));
+  }
+
+  /** Animación rápida (Quick Animation): un clic aplica un movimiento editable a los clips elegidos. */
+  private quickPanel() {
+    const s = this.s, q = s.prefs.quick;
+    const persist = () => s.deps.persist();
+    const len = h('input', { type: 'number', class: 'mo-num', value: String(q.len), min: '0.05', step: '0.05', 'data-k': 'qlen', 'aria-label': 'Duración' });
+    len.addEventListener('change', () => { const v = Number(len.value.replace(',', '.')); if (v > 0) { q.len = v; persist(); } });
+    const inten = h('input', { type: 'range', min: '10', max: '300', step: '5', value: String(Math.round(q.intensity * 100)), 'data-k': 'qint', 'aria-label': 'Intensidad' });
+    const intenV = h('span', { class: 'mo-unit' }, `${Math.round(q.intensity * 100)} %`);
+    inten.addEventListener('input', () => { q.intensity = Number(inten.value) / 100; intenV.textContent = `${inten.value} %`; });
+    inten.addEventListener('change', persist);
+    const dir = this.select('Dirección', q.dir, [['left', 'Izquierda'], ['right', 'Derecha'], ['up', 'Arriba'], ['down', 'Abajo']], v => { q.dir = v; persist(); }, 'qdir');
+    const ease = this.select('Suavizado', q.ease, [['preset', 'El del preset'], ['linear', 'Lineal'], ['in', 'Ease In'], ['out', 'Ease Out'], ['inout', 'Ease In-Out'], ['smooth', 'Smooth'], ['overshoot', 'Rebasar'], ['bounce', 'Rebote'], ['elastic', 'Elástico']], v => { q.ease = v; persist(); }, 'qease');
+    const from = this.select('Empieza en', 'head', [['head', 'El cabezal'], ['start', 'El inicio del clip']], () => undefined, 'qfrom');
+    const fromSel = from.querySelector('select')!;
+    const spec = (kind: QuickKind) => ({ kind, dir: q.dir as QuickDir, len: q.len, intensity: q.intensity, ease: q.ease as 'preset', at: fromSel.value === 'head' ? -1 : 0 });
+    const easeSpec = () => (q.ease === 'smooth' ? { e: 'bezier' as const, b: [0.25, 0.1, 0.25, 1] as [number, number, number, number] } : { e: (q.ease === 'preset' ? 'inout' : q.ease) as EaseType });
+    const grid = h('div', { class: 'mo-presets mo-quick' },
+      ...QUICK_ANIMS.map(a => h('button', { type: 'button', class: 'btn xs', title: `${a.label}${a.dir ? ' (según la dirección)' : ''}: ${q.len} s`, on: { click: () => s.quick(spec(a.kind), a.label) } }, a.label)),
+      h('button', { type: 'button', class: 'btn xs', title: 'Acercamiento con deriva de la cámara 2D a lo largo de los clips elegidos', on: { click: () => s.quickCamera(q.intensity, easeSpec()) } }, 'Movimiento de cámara'),
+      h('button', { type: 'button', class: 'btn xs', title: 'Texto: letras que suben desde el cabezal', on: { click: () => s.quickText('chars-up', q.len, easeSpec()) } }, 'Animación de texto'),
+      h('button', { type: 'button', class: 'btn xs', title: 'Texto: máquina de escribir desde el cabezal', on: { click: () => s.quickText('typewriter', q.len, { e: 'linear' }) } }, 'Máquina de escribir'));
+    this.section('Animación rápida',
+      h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Duración'), len, h('span', { class: 'mo-unit' }, 's')),
+      h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Intensidad'), inten, intenV),
+      dir, ease, from, grid,
+      h('p', { class: 'ctl-help' }, 'Se aplica a todos los clips elegidos y sólo reemplaza los keyframes del tramo que ocupa. Después se puede retocar como cualquier keyframe.'));
+  }
+
+  /** Capa: guía, ajuste, vínculos y duración rápida. */
+  private layerPanel(sel: Clip[]) {
+    const s = this.s;
+    const others = s.comp.clips.filter(c => !sel.some(x => x.id === c.id));
+    const linked = sel.find(c => c.link);
+    const src = linked ? s.comp.clips.find(c => c.id === linked.link!.to) : null;
+    const pick = h('select', { class: 'mo-sel', 'data-k': 'lnk', 'aria-label': 'Clip al que vincular' }, h('option', { value: '' }, others.length ? 'Elegir clip…' : 'No hay otros clips'), ...others.map(c => h('option', { value: c.id }, `${c.name} (${fmtTC(c.start, s.fps)})`)));
+    const groups = LINKABLE.map(l => { const cb = h('input', { type: 'checkbox', checked: l.id === 'pos' }); return { l, cb, el: h('label', { class: 'mo-checkrow' }, cb, h('span', null, l.label)) }; });
+    this.section('Capa',
+      this.check('Capa guía (se ve al editar, no se exporta)', sel.every(c => c.guide), () => s.toggleGuide(), 'guide'),
+      sel.length === 1 && sel[0].kind === 'solid' ? this.check('Capa de ajuste (sus efectos se aplican a lo de debajo)', !!sel[0].adjust, v => this.set(sel[0], 'Capa de ajuste', x => { x.adjust = v; }), 'adjust') : null,
+      h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Duración'), h('div', { class: 'mo-btnrow' },
+        ...[1, 2, 3, 5, 10].map(d => h('button', { type: 'button', class: 'btn xs', on: { click: () => s.setDuration(d) } }, `${d} s`)),
+        h('button', { type: 'button', class: 'btn xs', title: `Hasta el cabezal${s.keys.hint('trim-end')}`, on: { click: () => s.trimTo('r') } }, '→ cabezal'))),
+      h('p', { class: 'ctl-help' }, src ? `Vinculado a «${src.name}» (${linked!.link!.paths.map(p => propLabel(linked!, p)).join(', ')}).` : 'Vincular: las propiedades siguen la animación de otro clip, con su desfase actual.'),
+      h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Seguir a'), pick),
+      h('div', { class: 'mo-btnrow' }, ...groups.map(g => g.el)),
+      this.btns(['Vincular', () => { if (!pick.value) { toast('Elige el clip al que seguir.'); return; } s.linkTo(pick.value, groups.filter(g => g.cb.checked).flatMap(g => g.l.paths)); }], ['Desvincular', () => s.unlink()]));
   }
 
   // ---------------------------------------------------------------- clip
@@ -307,6 +401,7 @@ export class MInspector {
         this.section('Recorte', crop(0, 'Izquierda'), crop(1, 'Arriba'), crop(2, 'Derecha'), crop(3, 'Abajo'));
       }
       this.masksPanel(c);
+      this.layerPanel([c]);
     }
     if (c.kind === 'media' && md && (md.kind === 'audio' || md.hasAudio)) {
       this.section('Audio',
@@ -510,6 +605,7 @@ export class MInspector {
     const groups = ['Entrada', 'Salida', 'Bucle'] as const;
     const len = h('input', { type: 'number', value: String(Math.min(s.presetLen, +(c.dur / 2).toFixed(2))), min: '0.05', step: '0.05', class: 'mo-num', 'aria-label': 'Duración del movimiento' });
     len.addEventListener('change', () => { const v = Number(len.value); if (v > 0) s.presetLen = v; });
+    this.quickPanel();
     this.section('Presets de movimiento',
       h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Duración'), len, h('span', { class: 'mo-unit' }, 's')),
       ...groups.map(g => h('div', { class: 'mo-presets' }, h('span', { class: 'mo-unit' }, g), ...MOTION_PRESETS.filter(p => p.group === g).map(p => h('button', { type: 'button', class: 'btn xs', on: { click: () => this.set(c, p.label, x => { applyPreset(x.tf, p.id, x.dur, Math.max(0.05, Number(len.value) || s.presetLen), s.comp.w, s.comp.h); }) } }, p.label)))),
@@ -539,7 +635,8 @@ export class MInspector {
           h('button', { type: 'button', class: 'icon xs', title: 'Quitar keyframe', 'aria-label': 'Quitar keyframe', html: MI.trash, on: { click: () => sk('Quitar keyframe', (_kk, pp) => { pp.k!.splice(i, 1); if (!pp.k!.length) delete pp.k; }) } })));
       });
     });
-    this.section('Keyframes', rows.childElementCount ? rows : h('p', { class: 'ctl-help' }, 'Sin keyframes. Pulsa un rombo ◇ junto a una propiedad (pestaña Clip) o la tecla K.'),
+    this.section('Keyframes', rows.childElementCount ? rows : h('p', { class: 'ctl-help' }, `Sin keyframes. Pulsa un rombo ◇ junto a una propiedad (pestaña Clip), la tecla${s.keys.hint('keyframe')} o activa Auto Keyframe.`),
+      this.btns(['Suavizar todo', () => s.smoothSel(), 'Curvas Bézier automáticas con velocidad continua'], ['Congelar en el cabezal', () => s.freezeAnim()], ['Elegir todos', () => s.selectAllKeys()]),
       this.btns(['Copiar todos', () => s.copyKeyframes('all'), 'Copia todos los keyframes de este clip'], ['Pegar en el cabezal', () => s.pasteKeyframes(), 'Pega los keyframes copiados (de este u otro clip) desde el cabezal']),
       this.btns(['Quitar todos los keyframes', () => this.set(c, 'Quitar keyframes', x => forEachProp(x, (p, path) => { if (p.k?.length) { p.v = valueAt(p, s.time - c.start); delete p.k; } void path; }))]));
   }
@@ -562,6 +659,6 @@ export class MInspector {
   }
 }
 
-function setV(p: Prop, t: number, v: number) { if (p.k?.length) { const k = keyAt(p, t); if (k) k.v = v; else { p.k.push({ t, v, e: 'inout' }); p.k.sort((a, b) => a.t - b.t); } } else p.v = v; }
+function setV(p: Prop, t: number, v: number, force = false) { if (p.k?.length || force) { p.k ??= []; const k = keyAt(p, t); if (k) k.v = v; else { p.k.push({ t, v, e: 'inout' }); p.k.sort((a, b) => a.t - b.t); } } else p.v = v; }
 /** Valor en el cabezal (crea keyframe si la propiedad está animada). */
 function setNow(s: MotionStudio, c: Clip, p: Prop, v: number) { setV(p, Math.max(0, Math.min(c.dur, s.time - c.start)), v); }

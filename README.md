@@ -369,6 +369,7 @@ con rangos HTTP, en Android desde el servidor local de la app y en el navegador 
 |---|---|
 | Modelo, historial y operaciones | `src/yosadraw/motion/model.ts` |
 | Keyframes, curvas y presets | `src/yosadraw/motion/keys.ts` |
+| Herramientas de keyframes (suavizado automático, repetir y bucles, congelar, copiar entre capas, animación rápida, vínculos) | `src/yosadraw/motion/keytools.ts` |
 | Medios (importar, streaming, proxies, miniaturas, forma de onda) | `src/yosadraw/motion/media.ts` |
 | Compositor (Canvas2D + efectos WebGL2) | `src/yosadraw/motion/render.ts` |
 | Audio (WebAudio en vivo y OfflineAudioContext al exportar) | `src/yosadraw/motion/audio.ts` |
