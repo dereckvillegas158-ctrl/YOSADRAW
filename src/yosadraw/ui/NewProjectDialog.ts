@@ -33,9 +33,10 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     const spec: NewProjectSpec = {
       name: defaultName, width: last?.width ?? 2048, height: last?.height ?? 2048, dpi: last?.dpi ?? 300,
       background: last?.background === null ? null : '#ffffff', profile: last?.profile ?? 'srgb',
-      anim: last?.anim ?? null, motion: last?.motion ?? null,
+      anim: last?.anim ?? null, motion: last?.motion ?? null, s3d: !!last?.s3d,
     };
-    if (spec.motion) spec.anim = null;
+    if (spec.motion || spec.s3d) spec.anim = null;
+    if (spec.s3d) spec.motion = null;
     let animSpec = { fps: last?.anim?.fps ?? 12, frames: last?.anim?.frames ?? 48 };
     const prev = document.activeElement as HTMLElement | null;
     let done = false;
@@ -113,9 +114,11 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     const syncMotion = () => { motionSpec = { fps: Number(mFps.value), dur: Math.max(1, Math.min(36000, Number(mDur.value) || 30)) }; if (spec.motion) spec.motion = { ...motionSpec }; };
     mFps.addEventListener('change', syncMotion); mDur.addEventListener('input', syncMotion);
     const motionBox = h('div', { class: 'np-dims np-anim', hidden: !spec.motion }, h('label', null, h('span', null, 'FPS'), mFps), h('label', null, h('span', null, 'Duración (s)'), mDur));
-    const kindSeg = seg<string>('Tipo', spec.motion ? 'motion' : spec.anim ? 'anim' : 'draw', [['draw', 'Dibujo'], ['anim', 'Animación'], ['motion', 'Vídeo']], v => {
+    const kindSeg = seg<string>('Tipo', spec.s3d ? 's3d' : spec.motion ? 'motion' : spec.anim ? 'anim' : 'draw', [['draw', 'Dibujo'], ['anim', 'Animación'], ['motion', 'Vídeo'], ['s3d', '3D']], v => {
       spec.anim = v === 'anim' ? { ...animSpec } : null;
       spec.motion = v === 'motion' ? { ...motionSpec } : null;
+      spec.s3d = v === 's3d';
+      if (spec.s3d && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === 'hd')!);
       animBox.hidden = !spec.anim;
       motionBox.hidden = !spec.motion;
       if (spec.motion && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === (document.documentElement.classList.contains('phone') ? 'phone' : 'hd'))!);

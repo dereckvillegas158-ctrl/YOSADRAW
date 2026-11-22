@@ -9,6 +9,7 @@ import type { Item, LayerBlend } from '../doc/items';
 import type { SelShape, Selection } from '../doc/Selection';
 import type { AABB, Mat, ViewState } from '../engine/ViewTransform';
 import { normalizeMotion } from '../motion/model';
+import { normalizeStudio, studioMeta } from '../studio3d/model';
 import { capture, DEFAULT_ONION, FPS_OPTIONS, MAX_FRAMES, MOUTH_SHAPES, newAnimation, type Animation, type AudioClip, type Cel, type MouthShape } from '../anim/model';
 
 /**
@@ -63,6 +64,8 @@ export interface ProjectMeta {
   anim: { frames: number; fps: number } | null;
   /** Vídeo de YOSADRAW MOTION: FPS y duración en segundos (null = no es vídeo). */
   motion?: { fps: number; dur: number } | null;
+  /** Proyecto 3D: escenas y objetos (null = no es 3D). */
+  s3d?: { scenes: number; objects: number } | null;
   /** Formato de origen (yosa, png, jpeg, webp) si se creó importando. */
   source: string;
   /** Guardados realizados (detecta que otra ventana guardó antes: no se sobrescribe sin preguntar). */
@@ -210,8 +213,8 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
   await w.done();
   const project = {
     format: FORMAT_ID, version: FORMAT_VERSION,
-    meta: { ...meta, width: doc.width, height: doc.height, dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, layers: doc.layers.length, anim: a ? { frames: a.length, fps: a.fps } : null, motion: doc.motion ? motionMeta(doc) : null },
-    document: { activeId, counters, layers, selection, ...(doc.folders.length ? { folders: doc.folders } : {}), ...(a ? { anim: animOut, pool } : {}), ...(doc.motion ? { motion: doc.motion } : {}) },
+    meta: { ...meta, width: doc.width, height: doc.height, dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, layers: doc.layers.length, anim: a ? { frames: a.length, fps: a.fps } : null, motion: doc.motion ? motionMeta(doc) : null, s3d: doc.s3d ? studioMeta(doc.s3d) : null },
+    document: { activeId, counters, layers, selection, ...(doc.folders.length ? { folders: doc.folders } : {}), ...(a ? { anim: animOut, pool } : {}), ...(doc.motion ? { motion: doc.motion } : {}), ...(doc.s3d ? { s3d: s3dOut(doc) } : {}) },
     references: refs,
     presets: w.presetTable,
     view: o.view ?? null,
@@ -225,6 +228,13 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
   for (const [k, v] of Object.entries(audioFiles)) files[k] = [v, { level: 0 }];
   if (o.thumb) files['thumb.png'] = [o.thumb, { level: 0 }];
   return zipAsync(files, w.owned);
+}
+
+/** Proyecto 3D para guardar: sólo las texturas que usa algún material. */
+function s3dOut(doc: Document) {
+  const s = doc.s3d!;
+  const used = new Set(s.materials.map(m => m.tex).filter(Boolean));
+  return { ...s, textures: s.textures.filter(t => used.has(t.id)) };
 }
 
 /** Resumen del vídeo para la galería. */
@@ -356,6 +366,7 @@ export function normalizeMeta(v: unknown, fallbackId = ''): ProjectMeta {
     layers: num(o.layers, 1),
     anim: o.anim && typeof o.anim === 'object' ? { frames: Math.max(1, Math.round(num((o.anim as J).frames, 1))), fps: Math.max(1, num((o.anim as J).fps, 12)) } : null,
     motion: o.motion && typeof o.motion === 'object' ? { fps: Math.max(1, num((o.motion as J).fps, 30)), dur: Math.max(0, num((o.motion as J).dur, 0)) } : null,
+    s3d: o.s3d && typeof o.s3d === 'object' ? { scenes: Math.max(1, num((o.s3d as J).scenes, 1)), objects: Math.max(0, num((o.s3d as J).objects, 0)) } : null,
     source: str(o.source, 'yosa'), rev: num(o.rev, 0), app: str(o.app, ''),
   };
 }
@@ -413,6 +424,7 @@ export async function readProject(bytes: Uint8Array, codec: ImageCodec): Promise
   for (const l of doc.layers) if (!animIn && l.group && !foldersIn.some(f => f.id === l.group)) l.group = null;
   if (animIn) doc.anim = readAnim(animIn, files, doc);
   if (d.motion) { doc.motion = normalizeMotion(d.motion); if (!doc.motion) throw new ProjectFormatError('El vídeo del proyecto está dañado'); }
+  if (d.s3d) { doc.s3d = normalizeStudio(d.s3d); if (!doc.s3d) throw new ProjectFormatError('El proyecto 3D está dañado'); }
   const media = new Map<string, Uint8Array>();
   for (const [k, v] of Object.entries(files)) if (k.startsWith('media/m/')) media.set(k.slice(6), v);
   const v = p.view as J | null;

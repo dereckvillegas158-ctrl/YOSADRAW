@@ -356,6 +356,21 @@ mover, copiar/pegar, exponer, marcadores, grupos, interpolación), `tests/projec
 (guardado completo de una animación) y `tests/video-ffmpeg.test.ts` (codifica de verdad los 11 formatos con
 el FFmpeg incluido y comprueba códecs, alfa y audio en los archivos).
 
+## YOSADRAW 3D Studio (editor 3D)
+
+Proyectos 3D dentro de YOSADRAW («Nuevo proyecto → 3D»): modelado poligonal, generadores, materiales y texturas (también dibujos de YOSADRAW y pintura sobre el modelo), luces y render, escenas y plantillas, animación por keyframes, cámaras, exportación (GLB, glTF, OBJ, STL, PNG, MP4, GIF) e importación. Renderizado con Three.js, que se carga bajo demanda.
+
+| Módulo | Archivo |
+|---|---|
+| Malla editable y operaciones de modelado | `src/yosadraw/studio3d/mesh.ts` |
+| Generadores (escaleras, paredes, puertas, ventanas, tejados, columnas, muebles, terrenos, árboles) | `src/yosadraw/studio3d/generators.ts` |
+| Modelo del proyecto (escenas, objetos, materiales, luces, cámaras, historial, validación) | `src/yosadraw/studio3d/model.ts` |
+| Estado y acciones del editor | `src/yosadraw/studio3d/Studio3D.ts` |
+| Visor y render (Three.js), gizmos, modo edición, bloques, pintura | `src/yosadraw/studio3d/View3D.ts` |
+| Texturas procedimentales y de imagen | `src/yosadraw/studio3d/textures.ts` |
+| Importar y exportar | `src/yosadraw/studio3d/io.ts` |
+| Interfaz (paneles, jerarquía, línea de tiempo, asistente) | `src/yosadraw/studio3d/ui/*` |
+
 ## YOSADRAW MOTION (editor de vídeo)
 
 Nuevo proyecto → **Vídeo**. El proyecto es un `.yosa` con `document.motion` (composiciones,

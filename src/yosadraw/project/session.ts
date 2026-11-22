@@ -2,6 +2,7 @@ import { ClipComposer } from '../doc/clip';
 import { folderOf, layerVisible } from '../doc/folders';
 import { newAnimation, newCel } from '../anim/model';
 import { newMotion } from '../motion/model';
+import { newStudio, studioMeta } from '../studio3d/model';
 import { Document, type DocProfile } from '../doc/Document';
 import type { CanvasEngine } from '../engine';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
@@ -11,7 +12,7 @@ import { browserImageCodec, motionMeta, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SI
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.11.0';
+export const APP_VERSION = '1.12.0';
 
 export interface NewProjectSpec {
   name: string;
@@ -24,6 +25,8 @@ export interface NewProjectSpec {
   anim?: { fps: number; frames: number } | null;
   /** Proyecto de vídeo (YOSADRAW MOTION): FPS y duración inicial en segundos. */
   motion?: { fps: number; dur: number } | null;
+  /** Proyecto 3D (YOSADRAW 3D Studio). */
+  s3d?: boolean;
 }
 
 export interface SessionState {
@@ -148,9 +151,14 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
       // Vídeo: el documento lleva el proyecto de YOSADRAW MOTION (las capas de dibujo no se usan).
       doc.motion = newMotion(doc.width, doc.height, spec.motion.fps, spec.motion.dur);
       doc.layers[0].name = 'Vídeo';
+    } else if (spec.s3d) {
+      // 3D: el documento lleva el proyecto de YOSADRAW 3D Studio (el tamaño es el del render).
+      doc.s3d = newStudio();
+      doc.s3d.render.w = doc.width; doc.s3d.render.h = doc.height;
+      doc.layers[0].name = '3D';
     }
     const name = this.library.uniqueName(spec.name.trim() || 'Sin título');
-    const meta = normalizeMeta({ id: newId(), name, width: doc.width, height: doc.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, source: 'yosa', app: APP_VERSION, anim: spec.anim ? { frames: spec.anim.frames, fps: spec.anim.fps } : null, motion: doc.motion ? motionMeta(doc) : null });
+    const meta = normalizeMeta({ id: newId(), name, width: doc.width, height: doc.height, dpi: spec.dpi, background: spec.background, profile: spec.profile, source: 'yosa', app: APP_VERSION, anim: spec.anim ? { frames: spec.anim.frames, fps: spec.anim.fps } : null, motion: doc.motion ? motionMeta(doc) : null, s3d: doc.s3d ? studioMeta(doc.s3d) : null });
     const e = await this.library.create(meta, m => this.serialize(doc, m), { folder });
     this.load(doc, e);
     this.changed();
@@ -188,6 +196,8 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
 
   /** Miniatura de un proyecto de vídeo (la pone el editor de vídeo: un fotograma de la composición). */
   motionThumb: (() => Promise<Uint8Array | null>) | null = null;
+  /** Miniatura de un proyecto 3D (la pone el editor 3D: un render de la escena). */
+  s3dThumb: (() => Promise<Uint8Array | null>) | null = null;
 
   /** Cuánto tardó la última serialización (ms): sirve para espaciar las copias automáticas. */
   private lastSerializeMs = 0;
@@ -195,12 +205,13 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
   private async serialize(doc: Document, meta: ProjectMeta, withThumb = true) {
     const t = performance.now();
     // La miniatura repinta todo el documento: sólo hace falta al guardar, no en la copia de recuperación.
-    const thumb = withThumb ? (doc.motion && this.motionThumb ? await this.motionThumb().catch(() => null) : null) ?? await this.thumbnail(doc) : null;
+    const thumb = withThumb ? (doc.motion && this.motionThumb ? await this.motionThumb().catch(() => null) : null) ?? (doc.s3d && this.s3dThumb ? await this.s3dThumb().catch(() => null) : null) ?? await this.thumbnail(doc) : null;
     const animMeta = doc.anim ? { frames: doc.anim.length, fps: doc.anim.fps } : null;
     const mMeta = doc.motion ? motionMeta(doc) : null;
-    const bytes = await writeProject(doc, { ...meta, width: doc.width, height: doc.height, layers: doc.layers.length, anim: animMeta, motion: mMeta }, { codec: this.codec, cache: this.imageCache, thumb });
+    const sMeta = doc.s3d ? studioMeta(doc.s3d) : null;
+    const bytes = await writeProject(doc, { ...meta, width: doc.width, height: doc.height, layers: doc.layers.length, anim: animMeta, motion: mMeta, s3d: sMeta }, { codec: this.codec, cache: this.imageCache, thumb });
     this.lastSerializeMs = performance.now() - t;
-    return { bytes, thumb, meta: { layers: doc.layers.length, anim: animMeta, motion: mMeta } };
+    return { bytes, thumb, meta: { layers: doc.layers.length, anim: animMeta, motion: mMeta, s3d: sMeta } };
   }
 
   /** Guarda en el proyecto abierto. Si otra ventana lo guardó antes, lanza ConflictError (salvo `force`). */
@@ -238,7 +249,7 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
     const meta = normalizeMeta({
       id: newId(), name: this.library.uniqueName(name.trim() || 'Sin título'), width: doc.width, height: doc.height,
       dpi: doc.settings.dpi, background: doc.settings.background, profile: doc.settings.profile, source: cur?.source ?? 'yosa', app: APP_VERSION,
-      anim: doc.anim ? { frames: doc.anim.length, fps: doc.anim.fps } : null, motion: doc.motion ? motionMeta(doc) : null,
+      anim: doc.anim ? { frames: doc.anim.length, fps: doc.anim.fps } : null, motion: doc.motion ? motionMeta(doc) : null, s3d: doc.s3d ? studioMeta(doc.s3d) : null,
     });
     const e = await this.library.create(meta, m => this.serialize(doc, m), { folder: cur?.folder ?? null });
     // La recuperación pendiente era del original: ya no hace falta.
