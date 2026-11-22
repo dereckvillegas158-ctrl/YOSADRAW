@@ -1,4 +1,15 @@
-## YOSADRAW 1.13.0
+## YOSADRAW 1.14.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.14.0-x64.exe` (instalador), `YOSADRAW-1.14.0-x64-portable.exe` o `YOSADRAW-1.14.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.14.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo en 3D Studio
+- **Carteles PNG más reales en el modo En vivo:** al agarrarlos y moverlos con el ratón se inclinan, se balancean y giran según cómo los muevas (la parte que no agarras se queda atrás), con gelatina; al soltarlos vuelven a ponerse derechos solos y flotan donde los dejes. Los dibujos e imágenes nuevos vienen así; en «Física y control» de cada objeto dinámico se ajustan **Gelatina**, **Balanceo al arrastrar** y **Flota**.
+- **Estilos de render (shaders):** **Squiggle vision** (las líneas tiemblan a pocos fotogramas por segundo, como dibujadas a mano, con velocidad y tamaño ajustables), contorno de **tinta** (con su color), **pintura al óleo**, **posterizar**, **semitono de cómic**, **píxel art**, **papel** y **líneas de TV**. Estilos listos: Squiggle vision, Boceto a lápiz, Cómic, Óleo, Píxel art y VHS. Se ven en vivo, en la vista previa y en los renders de imagen, MP4 y GIF (en los vídeos el squiggle se mueve fotograma a fotograma). Pestaña **Vivo → Estilo (shaders)** o **Escena → Render → Estilo**; la casilla «Con los efectos y el estilo» decide si el render los usa.
+- Los efectos de la escena (luz volumétrica, resplandor, etc.) ahora también salen en los renders.
+
+### Versión anterior: YOSADRAW 1.13.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.13.0-x64.exe` (instalador), `YOSADRAW-1.13.0-x64-portable.exe` o `YOSADRAW-1.13.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

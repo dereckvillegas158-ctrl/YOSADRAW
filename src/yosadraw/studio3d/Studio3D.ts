@@ -9,7 +9,7 @@ import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
 import * as M from './mesh';
 import {
-  History3, PRIMS, cameraObject, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, PRIMS, cameraObject, cardPhys, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
@@ -602,7 +602,7 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
 
   /** Física de los objetos elegidos (crea la configuración si no tenían). */
   setPhys(ids: string[], patch: Partial<Phys3>, label = 'Física') {
-    this.edit(label, (_s, sc) => { for (const id of ids) { const o = objOf(sc, id); if (o && o.kind === 'mesh') o.phys = { ...(o.phys ?? defaultPhys()), ...patch }; } });
+    this.edit(label, (_s, sc) => { for (const id of ids) { const o = objOf(sc, id); if (o && o.kind === 'mesh') o.phys = { ...(o.phys ?? (o.card ? cardPhys() : defaultPhys())), ...patch }; } });
   }
   /** Convierte los elegidos en personajes (o lo quita con `on` = false). */
   setCharacter(ids: string[], on: boolean) {
@@ -638,6 +638,7 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
     o.mesh = { v: [-w / 2, 0, 0, w / 2, 0, 0, w / 2, hh, 0, -w / 2, hh, 0], f: [[0, 1, 2, 3]], m: [0], uv: [[0, 0, 1, 0, 1, 1, 0, 1]] };
     o.mats = [mat.id];
     o.card = { billboard: false };
+    o.phys = cardPhys();
     this.edit(`Dibujo en 3D: ${name}`, (st, sc) => { st.textures.push({ id: tex, name, src, project }); st.materials.push(mat); o.name = this.uniqueName(sc, o.name); sc.objects.push(o); });
     this.sel = [o.id];
     this.emit('select', undefined);

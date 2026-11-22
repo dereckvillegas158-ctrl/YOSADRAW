@@ -50,6 +50,12 @@ export interface Phys3 {
   grab: boolean;
   /** Zona (no choca: avisa cuando algo entra; sirve para disparadores). */
   zone: boolean;
+  /** Gelatina: se estira y aplasta al moverlo o sacudirlo (0..1). */
+  jelly: number;
+  /** Balanceo: se inclina y gira según cómo lo arrastras (0..1). */
+  swing: number;
+  /** Flota (sin gravedad): se queda donde lo sueltas y vuelve a ponerse derecho. */
+  float: boolean;
 }
 export type Behavior = 'walk' | 'mouse' | 'patrol' | 'idle';
 export interface Ctrl3 {
@@ -66,7 +72,9 @@ export interface Ctrl3 {
   /** Gelatina: cuánto se estira y aplasta al moverse o sacudirlo (0..1). */
   wobble: number;
 }
-export const defaultPhys = (body: BodyType = 'dynamic'): Phys3 => ({ body, mass: 1, bounce: 0.2, friction: 0.4, shape: 'auto', grab: true, zone: false });
+export const defaultPhys = (body: BodyType = 'dynamic'): Phys3 => ({ body, mass: 1, bounce: 0.2, friction: 0.4, shape: 'auto', grab: true, zone: false, jelly: 0.3, swing: 0.5, float: false });
+/** Física de un dibujo (cartel): flota, se balancea y tiene gelatina al arrastrarlo. */
+export const cardPhys = (): Phys3 => ({ ...defaultPhys('dynamic'), mass: 0.5, jelly: 0.6, swing: 0.8, float: true });
 export const defaultCtrl = (): Ctrl3 => ({ behavior: 'walk', dir: 0, speed: 2, jump: 5, dist: 4, upright: true, lock: { x: false, y: false, z: false }, wobble: 0.4 });
 
 /** Efectos en tiempo real de una escena (modo En vivo y vista previa). */
@@ -82,11 +90,14 @@ export interface Fx3 {
   bloom: number; chroma: number; glitch: number;
   tint: string; tintAmt: number; vignette: number; grain: number;
   shadows: 0 | 1 | 2 | 3;
+  /** Estilo (shaders): squiggle vision (líneas que tiemblan), tinta, posterizar, trama, píxeles, pintura, papel, TV. */
+  squiggle: number; squigFps: number; squigSize: number;
+  ink: number; inkColor: string; posterize: number; halftone: number; pixel: number; paint: number; paper: number; scan: number;
   gravity: number;
   /** Suelo infinito para la física (y = 0). */
   ground: boolean;
 }
-export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, gravity: 9.81, ground: true });
+export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, paper: 0, scan: 0, gravity: 9.81, ground: true });
 
 /** Disparador: cuando pasa algo, se hacen acciones. */
 export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release';
@@ -114,7 +125,7 @@ export interface Scene3 {
   rules?: Rule3[];
   script?: string;
 }
-export interface RenderSet { w: number; h: number; quality: 1 | 2 | 3; shadows: 0 | 1 | 2 | 3; transparent: boolean }
+export interface RenderSet { w: number; h: number; quality: 1 | 2 | 3; shadows: 0 | 1 | 2 | 3; transparent: boolean; /** Aplicar los efectos y el estilo (shaders) de la escena al render. */ fx: boolean }
 export interface Studio3 {
   version: number;
   scenes: Scene3[];
@@ -281,7 +292,7 @@ export function newStudio(): Studio3 {
   const floor = newMaterial('Suelo', { color: '#8a8597', rough: 0.9 });
   const st: Studio3 = {
     version: S3D_VERSION, scenes: [], open: '', materials: [base, floor], textures: [],
-    render: { w: 1920, h: 1080, quality: 2, shadows: 2, transparent: false }, time: 0,
+    render: { w: 1920, h: 1080, quality: 2, shadows: 2, transparent: false, fx: true }, time: 0,
     grid: { size: 0.25, snap: true, show: true, axes: true },
   };
   const sc = newScene('Escena 1', st.materials);

@@ -107,4 +107,21 @@ describe('3D: proyecto en .yosa', () => {
     expect(n.scenes[0].objects[2].tf.sx.v).toBe(1);
     expect(normalizeStudio({})).toBeNull();
   });
+  it('proyectos anteriores reciben los valores nuevos (gelatina, balanceo, estilos, efectos en el render)', () => {
+    const st = newStudio();
+    const old = JSON.parse(JSON.stringify(st));
+    const sc = old.scenes[0];
+    sc.objects[1].phys = { body: 'dynamic', mass: 2, bounce: 0.1, friction: 0.5, shape: 'auto', grab: true, zone: false };
+    sc.fx = { godrays: 1 };
+    delete old.render.fx;
+    const n = normalizeStudio(old)!;
+    const ph = n.scenes[0].objects[1].phys!;
+    expect(ph.mass).toBe(2);
+    expect(ph.jelly).toBeGreaterThan(0);
+    expect(ph.float).toBe(false);
+    expect(n.scenes[0].fx!.godrays).toBe(1);
+    expect(n.scenes[0].fx!.squiggle).toBe(0);
+    expect(n.scenes[0].fx!.squigFps).toBe(8);
+    expect(n.render.fx).toBe(true);
+  });
 });

@@ -1,5 +1,5 @@
 import { h, toast } from '../../ui/dom';
-import { defaultCtrl, defaultFx, defaultPhys, sid, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
+import { cardPhys, defaultCtrl, defaultFx, defaultPhys, sid, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
 import type { Studio3D } from '../Studio3D';
 import type { Rows } from './Panels';
 
@@ -11,7 +11,7 @@ export function physicsSection(r: Rows, s: Studio3D, o: Obj3) {
     return;
   }
   if (o.kind !== 'mesh') return;
-  const ph = o.phys ?? { ...defaultPhys('none') };
+  const ph = { ...defaultPhys('none'), ...(o.phys ?? (o.card ? cardPhys() : {})) };
   const c = o.ctrl;
   const kids: (Node | null)[] = [
     r.select('Física', ph.body, [['none', 'Sin física (decorado)'], ['dynamic', 'Dinámico (cae, choca, se puede agarrar)'], ['static', 'Estático (suelo, paredes)'], ['kinematic', 'Cinemático (sigue sus keyframes y empuja)']], v => s.setPhys(ids, { body: v as typeof ph.body })),
@@ -22,6 +22,9 @@ export function physicsSection(r: Rows, s: Studio3D, o: Obj3) {
     r.range('Rozamiento', ph.friction, 0, 1, 0.05, v => s.setPhys(ids, { friction: v })),
     r.select('Forma de choque', ph.shape, [['auto', 'Automática'], ['box', 'Caja'], ['sphere', 'Esfera (rueda)']], v => s.setPhys(ids, { shape: v as typeof ph.shape })),
     r.check('Se puede agarrar y sacudir con el ratón', ph.grab, v => s.setPhys(ids, { grab: v })),
+    ph.body === 'dynamic' ? r.range('Gelatina', ph.jelly, 0, 1, 0.05, (v, live) => { if (!live) s.setPhys(ids, { jelly: v }); }) : null,
+    ph.body === 'dynamic' ? r.range('Balanceo al arrastrar', ph.swing, 0, 2, 0.05, (v, live) => { if (!live) s.setPhys(ids, { swing: v }); }) : null,
+    ph.body === 'dynamic' ? r.check('Flota (sin gravedad, vuelve a ponerse derecho)', ph.float, v => s.setPhys(ids, { float: v })) : null,
     r.check('Zona (no choca: avisa cuando algo entra)', ph.zone, v => s.setPhys(ids, { zone: v, body: 'static' })));
   kids.push(r.check('Personaje (se mueve solo, con el ratón o con reglas)', !!c, v => s.setCharacter(ids, v)));
   if (c) {
@@ -79,6 +82,19 @@ every(1, () => fx('bloom', random(0.3, 1.2), 0.8));
 `;
 
 /** Pestaña «Vivo»: efectos en tiempo real, reglas (disparadores) y programa. */
+const STYLE_PARAMS: [keyof Fx3, string][] = [['squiggle', 'Squiggle (líneas que tiemblan)'], ['ink', 'Contorno de tinta'], ['paint', 'Pintura al óleo'], ['posterize', 'Posterizar (pocos colores)'], ['halftone', 'Semitono de cómic'], ['pixel', 'Píxel art'], ['paper', 'Papel'], ['scan', 'Líneas de TV']];
+const STYLE_OFF: Partial<Fx3> = { squiggle: 0, ink: 0, paint: 0, posterize: 0, halftone: 0, pixel: 0, paper: 0, scan: 0 };
+/** Estilos de render (shaders) listos para usar. */
+export const STYLE_PRESETS: [string, Partial<Fx3>][] = [
+  ['Sin estilo', STYLE_OFF],
+  ['Squiggle vision', { ...STYLE_OFF, squiggle: 0.6, squigFps: 8, squigSize: 40, ink: 0.7, inkColor: '#1a1420', posterize: 0.25, paper: 0.35 }],
+  ['Boceto a lápiz', { ...STYLE_OFF, squiggle: 0.35, squigFps: 6, squigSize: 25, ink: 1, inkColor: '#2b2b33', paper: 0.8, posterize: 0.6 }],
+  ['Cómic', { ...STYLE_OFF, ink: 0.85, inkColor: '#000000', halftone: 0.55, posterize: 0.5 }],
+  ['Óleo', { ...STYLE_OFF, paint: 0.7, paper: 0.4 }],
+  ['Píxel art', { ...STYLE_OFF, pixel: 0.35, posterize: 0.7 }],
+  ['VHS', { ...STYLE_OFF, scan: 0.7, squiggle: 0.15, squigFps: 24, squigSize: 120, chroma: 0.6, glitch: 0.12, grain: 0.3 }],
+];
+
 export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
   const fx = s.fx;
   const objs: [string, string][] = [['', '(el objeto del suceso)'], ...s.scene.objects.filter(o => !o.folder).map(o => [o.id, o.name] as [string, string])];
@@ -94,6 +110,16 @@ export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
     r.select('Calidad', fx.quality, [['low', 'Baja (más FPS)'], ['medium', 'Media'], ['high', 'Alta']], v => s.setFx({ quality: v as Fx3['quality'] })),
     r.check('Calidad adaptativa (baja sola si van pocos FPS)', fx.adaptive, v => s.setFx({ adaptive: v })),
     r.btns(['Quitar todos los efectos', () => s.setFx({ godrays: 0, cones: 0, bloom: 0, chroma: 0, glitch: 0, tintAmt: 0, vignette: 0, grain: 0 })], ['Cinemático', () => s.setFx({ godrays: 1, cones: 0.6, bloom: 0.5, vignette: 0.45, grain: 0.15, tintAmt: 0.15, tint: '#ffd9a8' })], ['Ciberpunk', () => s.setFx({ bloom: 1.2, chroma: 0.8, glitch: 0.15, tintAmt: 0.35, tint: '#c48bff', vignette: 0.4, cones: 1 })]));
+  const styleRow = (k: keyof Fx3, label: string) => r.range(label, fx[k] as number, 0, 1, 0.01, (v, live) => s.setFx({ [k]: v } as Partial<Fx3>, live));
+  const preset = h('select', { class: 'mo-sel', 'aria-label': 'Estilo' }, h('option', { value: '' }, 'Estilo listo…'), ...STYLE_PRESETS.map(([l], i) => h('option', { value: String(i) }, l)));
+  preset.addEventListener('change', () => { const p = STYLE_PRESETS[Number(preset.value)]; if (p) s.setFx({ ...p[1], preview: true }); });
+  r.sec('Estilo (shaders)',
+    h('p', { class: 'ctl-help' }, 'Cambia el aspecto de todo lo que se ve: en vivo, en la vista previa (si está activada) y en los renders de imagen, MP4 y GIF.'),
+    preset,
+    ...STYLE_PARAMS.map(([k, l]) => styleRow(k, l)),
+    fx.squiggle > 0 ? r.range('Squiggle: dibujos por segundo', fx.squigFps, 1, 30, 1, (v, live) => s.setFx({ squigFps: v }, live), v => `${Math.round(v)} fps`) : null,
+    fx.squiggle > 0 ? r.range('Squiggle: tamaño de la onda', fx.squigSize, 5, 200, 1, (v, live) => s.setFx({ squigSize: v }, live), v => `${Math.round(v)} px`) : null,
+    fx.ink > 0 ? (() => { const i = h('input', { type: 'color', class: 'mo-color', value: fx.inkColor }); i.addEventListener('change', () => s.setFx({ inkColor: i.value })); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Color de la tinta'), i); })() : null);
   r.sec('Física de la escena',
     r.range('Gravedad', fx.gravity, 0, 30, 0.1, (v, live) => s.setFx({ gravity: v }, live), v => `${v.toFixed(1)} m/s²`),
     r.check('Suelo infinito (y = 0)', fx.ground, v => s.setFx({ ground: v })),

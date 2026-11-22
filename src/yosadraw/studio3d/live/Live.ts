@@ -2,7 +2,7 @@ import * as C from 'cannon-es';
 import * as T from 'three';
 import { valueAt } from '../../motion/keys';
 import { bounds } from '../mesh';
-import { defaultCtrl, defaultFx, effVisible, objOf, type Act3, type Ctrl3, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
+import { cardPhys, defaultCtrl, defaultFx, defaultPhys, effVisible, objOf, type Act3, type Ctrl3, type EventType, type Fx3, type Obj3, type Phys3, type Rule3 } from '../model';
 import { round, type Studio3D } from '../Studio3D';
 import type { LiveHooks, View3D } from '../View3D';
 
@@ -26,6 +26,8 @@ interface BodyInfo {
   kinematic: boolean;
   /** Hasta cuándo el control no frena un empujón (s de simulación). */
   free: number;
+  /** Físicas efectivas (los carteles PNG sin físicas usan las de cartel). */
+  ph: Phys3;
 }
 interface Tween { apply: (k: number) => void; t0: number; dur: number; done?: () => void }
 export interface LiveLog { t: number; msg: string; error?: boolean }
@@ -80,6 +82,8 @@ export class Live {
     this.world.defaultContactMaterial.restitution = 0.2;
     if (this.fx.ground) { const g = new C.Body({ type: C.Body.STATIC, shape: new C.Plane(), material: new C.Material({ friction: 0.6, restitution: 0.5 }) }); g.quaternion.setFromEuler(-Math.PI / 2, 0, 0); this.world.addBody(g); }
     for (const o of sc.objects) if (o.phys && o.phys.body !== 'none' && effVisible(sc, o)) this.addBody(o);
+    // Carteles (PNG) sin físicas: flotan y se pueden agarrar y balancear.
+    for (const o of sc.objects) if (o.card && !o.phys && !this.bodies.has(o.id) && effVisible(sc, o)) this.addBody(o);
     // Personajes sin física: se les pone un cuerpo dinámico (de pie).
     for (const o of sc.objects) if (o.ctrl && !this.bodies.has(o.id) && effVisible(sc, o)) this.addBody(o, true);
     this.world.addEventListener('beginContact', (e: { bodyA: C.Body; bodyB: C.Body }) => this.contact(e.bodyA, e.bodyB));
@@ -110,14 +114,14 @@ export class Live {
   // ---------------------------------------------------------------- cuerpos
 
   private addBody(o: Obj3, asChar = false) {
-    const s = this.s, ph = o.phys;
+    const s = this.s, ph: Phys3 = { ...defaultPhys(), ...(o.phys ?? (o.card ? cardPhys() : {})) };
     const W = s.worldMatrix(o);
     const p = new T.Vector3(), q = new T.Quaternion(), sc = new T.Vector3();
     W.decompose(p, q, sc);
     const b = o.mesh?.v.length ? bounds(o.mesh) : { min: [-0.25, -0.25, -0.25], max: [0.25, 0.25, 0.25] };
     const center = new T.Vector3((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2);
     const half = new T.Vector3((b.max[0] - b.min[0]) / 2 * Math.abs(sc.x), (b.max[1] - b.min[1]) / 2 * Math.abs(sc.y), (b.max[2] - b.min[2]) / 2 * Math.abs(sc.z)).max(new T.Vector3(0.02, 0.02, 0.02));
-    const type = asChar ? 'dynamic' : ph!.body;
+    const type = asChar || ph.body === 'none' ? 'dynamic' : ph.body;
     const ctrl = o.ctrl ? { ...defaultCtrl(), ...o.ctrl } : null;
     const round_ = o.prim?.type === 'sphere' || (ph?.shape === 'sphere');
     const terrain = o.gen?.type === 'terrain' && type === 'static';
@@ -134,11 +138,12 @@ export class Live {
     } else if (round_) shape = new C.Sphere(Math.max(half.x, half.y, half.z));
     else shape = new C.Box(new C.Vec3(half.x, half.y, half.z));
     const mass = type === 'dynamic' ? Math.max(0.05, ph?.mass ?? 1) : 0;
-    const body = new C.Body({ mass, type: type === 'static' ? C.Body.STATIC : type === 'kinematic' ? C.Body.KINEMATIC : C.Body.DYNAMIC, shape, linearDamping: ctrl ? 0.05 : 0.02, angularDamping: 0.08 });
+    const body = new C.Body({ mass, type: type === 'static' ? C.Body.STATIC : type === 'kinematic' ? C.Body.KINEMATIC : C.Body.DYNAMIC, shape, linearDamping: ctrl ? 0.05 : ph.float ? 0.35 : 0.02, angularDamping: ph.float ? 0.45 : 0.08 });
     body.position.set(wc.x, wc.y, wc.z);
     body.quaternion.set(q.x, q.y, q.z, q.w);
-    body.material = new C.Material({ friction: ctrl ? 0 : ph?.friction ?? 0.4, restitution: ph?.bounce ?? 0.2 });
-    if (ph?.zone) { body.collisionResponse = false; body.type = C.Body.STATIC; body.mass = 0; }
+    body.material = new C.Material({ friction: ctrl ? 0 : ph.friction, restitution: ph.bounce });
+    if (ph.float) body.allowSleep = false;
+    if (ph.zone) { body.collisionResponse = false; body.type = C.Body.STATIC; body.mass = 0; }
     if (ctrl) {
       body.fixedRotation = ctrl.upright;
       body.linearFactor.set(ctrl.lock.x ? 0 : 1, ctrl.lock.y ? 0 : 1, ctrl.lock.z ? 0 : 1);
@@ -146,7 +151,7 @@ export class Live {
     }
     body.updateMassProperties();
     this.world.addBody(body);
-    const info: BodyInfo = { id: o.id, obj: o, body, center, scale: sc, rot0: q.clone(), ctrl, origin: wc.clone(), patrolSign: 1, target: null, yaw: 0, jig: 0, jigV: 0, prevV: new T.Vector3(), grounded: false, kinematic: type === 'kinematic', free: 0 };
+    const info: BodyInfo = { id: o.id, obj: o, body, center, scale: sc, rot0: q.clone(), ctrl, origin: wc.clone(), patrolSign: 1, target: null, yaw: 0, jig: 0, jigV: 0, prevV: new T.Vector3(), grounded: false, kinematic: type === 'kinematic', free: 0, ph };
     if (terrain) info.rot0 = new T.Quaternion();
     this.bodies.set(o.id, info);
     this.byBody.set(body, info);
@@ -193,7 +198,7 @@ export class Live {
     this.control(dt);
     this.acc += dt;
     let n = 0;
-    while (this.acc >= STEP && n++ < 4) { this.world.step(STEP); this.acc -= STEP; }
+    while (this.acc >= STEP && n++ < 4) { this.forces(); this.world.step(STEP); this.acc -= STEP; }
     if (n >= 4) this.acc = 0;
     this.lights();
     this.tweenStep();
@@ -242,6 +247,37 @@ export class Live {
       if (want.lengthSq() > 0.01) { const target = Math.atan2(want.x, want.z); let d = target - b.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); b.yaw += d * Math.min(1, dt * 8); }
     }
   }
+  /**
+   * Fuerzas de cada paso: los que flotan anulan la gravedad y vuelven a ponerse
+   * derechos (como un cartel colgado de un muelle); al arrastrar, el aire frena la
+   * parte que no se agarra y el objeto se inclina y gira según cómo se mueva el ratón.
+   */
+  private forces() {
+    const g = this.world.gravity;
+    for (const b of this.bodies.values()) {
+      const body = b.body, ph = b.ph;
+      if (body.type !== C.Body.DYNAMIC || b.ctrl || ph.zone) continue;
+      const grabbed = this.grab?.info === b;
+      const m = body.mass;
+      if (ph.float) body.force.vadd(new C.Vec3(-g.x * m, -g.y * m, -g.z * m), body.force);
+      const up = body.quaternion.vmult(new C.Vec3(0, 1, 0));
+      if (ph.float) {
+        // Muelle que lo endereza (más flojo mientras se agarra).
+        // Eje × ángulo (no × seno): sigue enderezando aunque esté muy volcado.
+        const axis = up.cross(new C.Vec3(0, 1, 0)), sn = axis.length();
+        if (sn > 1e-6) axis.scale(Math.acos(Math.max(-1, Math.min(1, up.y))) / sn, axis);
+        const k = (grabbed ? 4 : 7) * m, d = (grabbed ? 1.4 : 0.9) * m;
+        body.torque.vadd(new C.Vec3(axis.x * k - body.angularVelocity.x * d, axis.y * k - body.angularVelocity.y * d * 0.3, axis.z * k - body.angularVelocity.z * d), body.torque);
+      }
+      if (grabbed && ph.swing > 0) {
+        // Balanceo: la parte de abajo se queda atrás al arrastrar.
+        const v = body.velocity;
+        const sw = up.cross(new C.Vec3(v.x, 0, v.z));
+        const k = ph.swing * m * 0.7;
+        body.torque.vadd(new C.Vec3(sw.x * k, sw.y * k, sw.z * k), body.torque);
+      }
+    }
+  }
   /** ¿Apoyado en algo? (algún contacto con la normal hacia arriba). */
   private groundedAt(b: BodyInfo): boolean {
     for (const c of this.world.contacts) {
@@ -276,11 +312,11 @@ export class Live {
   /** Posición final de cada objeto con física (con su «gelatina» al moverse o sacudirlo). */
   private output(dt: number) {
     for (const b of this.bodies.values()) {
-      if (b.obj.phys?.zone) continue;
+      if (b.ph.zone) continue;
       const bp = b.body.position, bq = b.body.quaternion;
       const v = new T.Vector3(b.body.velocity.x, b.body.velocity.y, b.body.velocity.z);
       // Muelle de gelatina impulsado por la aceleración.
-      const w = b.ctrl?.wobble ?? (this.grab?.info === b ? 0.3 : 0);
+      const w = b.ctrl?.wobble ?? (this.grab?.info === b ? Math.max(0.3, b.ph.jelly) : b.ph.jelly * 0.6);
       if (w > 0 && dt > 0) {
         const acc = v.clone().sub(b.prevV).length() / dt;
         b.jigV += (-b.jig * 180 - b.jigV * 12 + Math.min(40, acc) * 0.6 * w) * dt;
@@ -309,7 +345,7 @@ export class Live {
     const hit = hits[0];
     const info = hit ? this.bodies.get(hit.object.userData.oid as string) : undefined;
     if (hit) this.emit('click', { a: hit.object.userData.oid as string });
-    if (info && info.body.type === C.Body.DYNAMIC && info.obj.phys?.grab !== false) {
+    if (info && info.body.type === C.Body.DYNAMIC && info.ph.grab) {
       const p = hit!.point;
       const mouse = new C.Body({ mass: 0, type: C.Body.KINEMATIC });
       mouse.collisionResponse = false;
@@ -449,7 +485,7 @@ export class Live {
     W.decompose(p, q, sc);
     const e = new T.Euler().setFromQuaternion(q);
     Object.assign(o.tf, { px: { v: p.x }, py: { v: p.y }, pz: { v: p.z }, rx: { v: e.x / D2R }, ry: { v: e.y / D2R }, rz: { v: e.z / D2R }, sx: { v: sc.x }, sy: { v: sc.y }, sz: { v: sc.z } });
-    o.phys = { ...(src.phys ?? { body: 'dynamic', mass: 1, bounce: 0.2, friction: 0.4, shape: 'auto', grab: true, zone: false }), body: src.phys?.body === 'static' ? 'static' : 'dynamic' };
+    o.phys = { ...(src.phys ?? (src.card ? cardPhys() : defaultPhys())), body: src.phys?.body === 'static' ? 'static' : 'dynamic' };
     const getW = s.worldMatrix.bind(s);
     s.worldMatrix = (x: Obj3, t?: number) => (x.id === copyId ? W.clone() : getW(x, t));
     this.addBody(o);
