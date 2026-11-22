@@ -1,4 +1,24 @@
-## YOSADRAW 1.14.0
+## YOSADRAW 1.15.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.15.0-x64.exe` (instalador), `YOSADRAW-1.15.0-x64-portable.exe` o `YOSADRAW-1.15.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.15.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo en 3D Studio
+- **Estilo propio por objeto (shaders):** cualquier objeto o dibujo puede tener su propio squiggle, tinta (con su color), óleo, posterizado, semitono, píxel art o líneas de TV, sin cambiar el resto de la escena (se suma al estilo de la escena). Estilos listos: Squiggle vision, Cómic, Óleo, Píxel art y Holograma. Panel **Objeto → Estilo del objeto (shaders)**; se ve en los modos Materiales y Render (el squiggle tiembla también al editar), en vivo y en los renders de imagen, MP4 y GIF.
+- **Volumen en los renders:** nuevo efecto **Volumen (oclusión ambiental)**: sombras suaves en rincones, uniones y bajo los objetos, que dan sensación de volumen. Y los dibujos en 3D pueden tener **grosor** (Objeto → «Grosor del dibujo»): se ven como recortes con cuerpo desde cualquier ángulo.
+- **Actores en el modo En vivo:** a cada personaje se le puede poner una o más teclas (Objeto → Física y control → «Actor: tecla(s)»). En vivo, al pulsar su tecla pasas a controlarlo: clic en la escena para mandarlo allí, WASD o flechas para caminar, Espacio para saltar; los demás actores se quedan quietos o vuelven a su sitio (se elige por actor). Barra de actores en vivo para elegirlos con el ratón, y un aro marca al que controlas.
+- **Opción del clic en vivo:** con un actor elegido, el clic sólo mueve al actor y no agarra objetos (se puede desactivar en Vivo → Física de la escena).
+- **En vivo ya no se elige ni se mueve nada del proyecto** al hacer clic: sin contornos naranjas, sin gizmos.
+- **Ocultar la interfaz en vivo** (botón «⛶ Ocultar interfaz» o tecla H): sólo la escena a pantalla completa; H otra vez para volver.
+
+### Mejor luz volumétrica en 3D Studio
+- **Los haces de los focos chocan con las cosas:** una pared, un mueble, el suelo o la silueta de un dibujo cortan el haz y dejan su «sombra» dentro de la luz, en vez de atravesarlo todo. Usa la sombra que el foco ya calcula, así que apenas cuesta más.
+- **Aspecto más real:** más denso cerca del foco y más suave al alejarse, bordes difuminados, más brillo cuando miras hacia la luz y polvo flotando. Se ve bien también desde dentro del haz y mirando desde la base.
+- **Cristal:** los objetos casi transparentes (ventanas de cristal) ya no proyectan sombra ni tapan los rayos del sol: la luz entra por las ventanas.
+- El detalle del haz sigue la calidad de los efectos (baja, media o alta), y la calidad adaptativa lo baja sola si van pocos FPS.
+
+### Versión anterior: YOSADRAW 1.14.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.14.0-x64.exe` (instalador), `YOSADRAW-1.14.0-x64-portable.exe` o `YOSADRAW-1.14.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

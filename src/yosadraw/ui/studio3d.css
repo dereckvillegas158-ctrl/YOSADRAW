@@ -93,6 +93,15 @@ body.s3d-mode #app { visibility: hidden; }
 .s3-playing .s3-playbtn { background: #ff4d6d; color: #fff; border-color: transparent; }
 .s3-playing .s3-vbar, .s3-playing .s3-editbar, .s3-playing .s3-paintbar, .s3-playing .s3-assistant, .s3-playing .s3-hud { display: none !important; }
 .s3-playing .s3-view { box-shadow: inset 0 0 0 2px #ff4d6d; }
+/* En vivo sin interfaz: sólo la escena a pantalla completa. */
+.s3-hudmin { display: none !important; }
+.s3-clean .s3-viewwrap { position: fixed !important; inset: 0; z-index: 60; background: #000; }
+.s3-clean .s3-view { box-shadow: none !important; }
+.s3-clean .s3-hudrow:not(.s3-hudmin):not(.s3-actors), .s3-clean .s3-hudhelp { display: none !important; }
+.s3-clean .s3-hudmin { display: flex !important; opacity: 0.35; transition: opacity 0.2s; }
+.s3-clean .s3-hudmin:hover { opacity: 1; }
+.s3-clean .s3-livehud { top: auto; bottom: 10px; }
+.s3-actors[hidden] { display: none !important; }
 .s3-livehud { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 4; display: flex; flex-direction: column; gap: 4px; align-items: center; pointer-events: none; width: min(860px, calc(100% - 16px)); }
 .s3-hudrow { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 12px; background: rgba(20, 16, 30, 0.82); border: 1px solid var(--line); pointer-events: auto; }
 .s3-hudfx label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }

@@ -9,7 +9,7 @@ import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
 import * as M from './mesh';
 import {
-  History3, PRIMS, cameraObject, cardPhys, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, PRIMS, cameraObject, cardPhys, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
@@ -613,6 +613,16 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
   setCtrl(ids: string[], patch: Partial<Ctrl3>, live = false) {
     const fn = (_s: Studio3, sc: Scene3) => { for (const id of ids) { const o = objOf(sc, id); if (o?.ctrl) o.ctrl = { ...o.ctrl, ...patch, lock: { ...o.ctrl.lock, ...(patch.lock ?? {}) } }; } };
     if (live) this.live(fn); else this.edit('Personaje', fn);
+  }
+  /** Estilo propio (shaders) de los objetos elegidos; `null` lo quita. */
+  setStyle(ids: string[], patch: Partial<ObjStyle> | null, live = false) {
+    const fn = (_s: Studio3, sc: Scene3) => { for (const id of ids) { const o = objOf(sc, id); if (!o || o.kind !== 'mesh') continue; if (patch === null) delete o.style; else o.style = { ...defaultObjStyle(), ...(o.style ?? {}), ...patch }; } };
+    if (live) this.live(fn); else this.edit('Estilo del objeto', fn);
+  }
+  /** Grosor (volumen) de los dibujos elegidos. */
+  setCardDepth(ids: string[], depth: number, live = false) {
+    const fn = (_s: Studio3, sc: Scene3) => { for (const id of ids) { const o = objOf(sc, id); if (o?.card) o.card = { ...o.card, depth: Math.max(0, Math.min(2, depth)) }; } };
+    if (live) this.live(fn); else this.edit('Grosor del dibujo', fn);
   }
   get fx(): Fx3 { return { ...defaultFx(), ...(this.scene.fx ?? {}) }; }
   /** Efectos de la escena (`live` = mientras se arrastra; se registra al soltar). */

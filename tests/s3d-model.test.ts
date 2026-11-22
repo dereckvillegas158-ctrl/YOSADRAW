@@ -123,5 +123,22 @@ describe('3D: proyecto en .yosa', () => {
     expect(n.scenes[0].fx!.squiggle).toBe(0);
     expect(n.scenes[0].fx!.squigFps).toBe(8);
     expect(n.render.fx).toBe(true);
+    expect(n.scenes[0].fx!.ao).toBe(0);
+    expect(n.scenes[0].fx!.actorClick).toBe(true);
+  });
+  it('estilo por objeto y actores se guardan y se completan', () => {
+    const st = newStudio();
+    const raw = JSON.parse(JSON.stringify(st));
+    const o = raw.scenes[0].objects[1];
+    o.style = { squiggle: 0.5 };
+    o.ctrl = { behavior: 'idle', keys: '1, q', rest: 'return' };
+    const n = normalizeStudio(raw)!;
+    const x = n.scenes[0].objects[1];
+    expect(x.style!.squiggle).toBe(0.5);
+    expect(x.style!.squigFps).toBe(8);
+    expect(x.style!.ink).toBe(0);
+    expect(x.ctrl!.keys).toBe('1, q');
+    expect(x.ctrl!.rest).toBe('return');
+    expect(x.ctrl!.speed).toBeGreaterThan(0);
   });
 });

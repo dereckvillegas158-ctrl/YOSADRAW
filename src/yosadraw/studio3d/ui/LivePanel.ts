@@ -1,5 +1,5 @@
 import { h, toast } from '../../ui/dom';
-import { cardPhys, defaultCtrl, defaultFx, defaultPhys, sid, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
+import { cardPhys, defaultCtrl, defaultFx, defaultObjStyle, defaultPhys, styled, sid, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
 import type { Studio3D } from '../Studio3D';
 import type { Rows } from './Panels';
 
@@ -38,16 +38,49 @@ export function physicsSection(r: Rows, s: Studio3D, o: Obj3) {
       c.behavior === 'patrol' ? r.range('Recorrido', c.dist, 0.5, 40, 0.5, (v, live) => s.setCtrl(ids, { dist: v }, live), v => `${v.toFixed(1)} m`) : null,
       r.range('Gelatina', c.wobble, 0, 1, 0.05, (v, live) => s.setCtrl(ids, { wobble: v }, live)),
       r.check('Siempre de pie (no vuelca)', c.upright, v => set({ upright: v })),
+      r.text('Actor: tecla(s) para controlarlo en vivo', c.keys ?? '', v => set({ keys: v.trim().slice(0, 20) })),
+      c.keys?.trim() ? r.select('Cuando controlas a otro', c.rest ?? 'stay', [['stay', 'Se queda quieto'], ['return', 'Vuelve a su sitio']], v => set({ rest: v as 'stay' | 'return' })) : null,
+      c.keys?.trim() ? h('p', { class: 'ctl-help' }, `En vivo, pulsa ${c.keys.trim().toUpperCase()} para controlarlo: clic en la escena para mandarlo allí, WASD o flechas para caminar, Espacio para saltar. Los demás actores esperan.`) : null,
       h('div', { class: 'mo-btnrow' }, h('span', { class: 'mo-unit' }, 'Bloquear movimiento en'),
         ...(['x', 'y', 'z'] as const).map(a => { const cb = h('input', { type: 'checkbox', checked: c.lock[a] }); cb.addEventListener('change', () => set({ lock: { ...c.lock, [a]: cb.checked } })); return h('label', { class: 'mo-checkrow' }, cb, h('span', null, a.toUpperCase())); })));
   }
+  // Grosor de los dibujos (volumen 3D).
+  if (o.card) kids.unshift(r.range('Grosor del dibujo (volumen)', o.card.depth ?? 0, 0, 0.5, 0.01, (v, live) => s.setCardDepth(ids, v, live), v => (v > 0 ? `${Math.round(v * 100)} cm` : 'Plano')));
   kids.push(h('p', { class: 'ctl-help' }, 'Pulsa «En vivo» (F5) para ejecutar la escena: agarra y sacude lo dinámico con el ratón, Espacio hace saltar a los personajes.'));
   r.sec('Física y control (En vivo)', ...kids);
+  styleSection(r, s, o, ids);
+}
+
+const OBJ_STYLE_PARAMS: [keyof typeof OBJ_STYLE_LABELS, string][] = [];
+const OBJ_STYLE_LABELS = { squiggle: 'Squiggle (líneas que tiemblan)', ink: 'Contorno de tinta', paint: 'Pintura al óleo', posterize: 'Posterizar', halftone: 'Semitono de cómic', pixel: 'Píxel art', scan: 'Líneas de TV' } as const;
+for (const k of Object.keys(OBJ_STYLE_LABELS) as (keyof typeof OBJ_STYLE_LABELS)[]) OBJ_STYLE_PARAMS.push([k, OBJ_STYLE_LABELS[k]]);
+/** Estilos listos para un objeto. */
+const OBJ_PRESETS: [string, Partial<ReturnType<typeof defaultObjStyle>>][] = [
+  ['Squiggle vision', { squiggle: 0.7, squigFps: 8, squigSize: 30, ink: 0.8, inkColor: '#1a1420', posterize: 0.3, paint: 0, halftone: 0, pixel: 0, scan: 0 }],
+  ['Cómic', { squiggle: 0, ink: 0.9, inkColor: '#000000', halftone: 0.6, posterize: 0.5, paint: 0, pixel: 0, scan: 0 }],
+  ['Óleo', { squiggle: 0, ink: 0, paint: 0.8, posterize: 0, halftone: 0, pixel: 0, scan: 0 }],
+  ['Píxel art', { squiggle: 0, ink: 0, pixel: 0.4, posterize: 0.7, paint: 0, halftone: 0, scan: 0 }],
+  ['Holograma', { squiggle: 0.2, squigFps: 24, squigSize: 80, scan: 0.9, ink: 0.5, inkColor: '#5ad1ff', posterize: 0, paint: 0, halftone: 0, pixel: 0 }],
+];
+/** Estilo propio (shaders) de un objeto: sólo él se ve así. */
+function styleSection(r: Rows, s: Studio3D, o: Obj3, ids: string[]) {
+  const st = { ...defaultObjStyle(), ...(o.style ?? {}) };
+  const pre = h('select', { class: 'mo-sel', 'aria-label': 'Estilo del objeto' }, h('option', { value: '' }, 'Estilo listo para este objeto…'), ...OBJ_PRESETS.map(([l], i) => h('option', { value: String(i) }, l)));
+  pre.addEventListener('change', () => { const p = OBJ_PRESETS[Number(pre.value)]; if (p) s.setStyle(ids, p[1]); });
+  const on = styled(o.style);
+  r.sec('Estilo del objeto (shaders)',
+    h('p', { class: 'ctl-help' }, 'Sólo este objeto (o dibujo) se ve con el estilo; se suma al de la escena. Se ve en los modos Materiales y Render, en vivo y en los renders.'),
+    pre,
+    ...OBJ_STYLE_PARAMS.map(([k, l]) => r.range(l, st[k], 0, 1, 0.01, (v, live) => s.setStyle(ids, { [k]: v }, live))),
+    st.squiggle > 0 ? r.range('Squiggle: dibujos por segundo', st.squigFps, 1, 30, 1, (v, live) => s.setStyle(ids, { squigFps: v }, live), v => `${Math.round(v)} fps`) : null,
+    st.squiggle > 0 ? r.range('Squiggle: tamaño de la onda', st.squigSize, 5, 200, 1, (v, live) => s.setStyle(ids, { squigSize: v }, live), v => `${Math.round(v)} px`) : null,
+    st.ink > 0 ? (() => { const i = h('input', { type: 'color', class: 'mo-color', value: st.inkColor }); i.addEventListener('change', () => s.setStyle(ids, { inkColor: i.value })); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Color de la tinta'), i); })() : null,
+    on ? r.btns(['Quitar el estilo', () => s.setStyle(ids, null)]) : null);
 }
 
 const EVENTS: [EventType, string][] = [['start', 'Al empezar'], ['time', 'En el segundo…'], ['every', 'Cada … segundos'], ['key', 'Al pulsar la tecla…'], ['click', 'Al hacer clic en…'], ['collide', 'Al chocar…'], ['enter', 'Al entrar en la zona…'], ['grab', 'Al agarrar…'], ['release', 'Al soltar…']];
 const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código']];
-const FX_PARAMS: [keyof Fx3, string, number][] = [['godrays', 'Luz volumétrica', 2], ['cones', 'Conos de luz', 2], ['bloom', 'Resplandor (bloom)', 3], ['chroma', 'Aberración cromática', 3], ['glitch', 'Glitch', 1], ['tintAmt', 'Tinte de color', 1], ['vignette', 'Viñeta', 1], ['grain', 'Grano', 1]];
+const FX_PARAMS: [keyof Fx3, string, number][] = [['godrays', 'Luz volumétrica', 2], ['cones', 'Conos de luz', 2], ['bloom', 'Resplandor (bloom)', 3], ['chroma', 'Aberración cromática', 3], ['glitch', 'Glitch', 1], ['tintAmt', 'Tinte de color', 1], ['vignette', 'Viñeta', 1], ['grain', 'Grano', 1], ['ao', 'Volumen (oclusión ambiental)', 1]];
 
 /** Plantillas de reglas para empezar rápido. */
 function presets(s: Studio3D): [string, () => Rule3][] {
@@ -109,7 +142,7 @@ export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
     r.select('Sombras', String(fx.shadows), [['0', 'Sin sombras'], ['1', 'Básicas'], ['2', 'Buenas'], ['3', 'Muy nítidas']], v => s.setFx({ shadows: Number(v) as Fx3['shadows'] })),
     r.select('Calidad', fx.quality, [['low', 'Baja (más FPS)'], ['medium', 'Media'], ['high', 'Alta']], v => s.setFx({ quality: v as Fx3['quality'] })),
     r.check('Calidad adaptativa (baja sola si van pocos FPS)', fx.adaptive, v => s.setFx({ adaptive: v })),
-    r.btns(['Quitar todos los efectos', () => s.setFx({ godrays: 0, cones: 0, bloom: 0, chroma: 0, glitch: 0, tintAmt: 0, vignette: 0, grain: 0 })], ['Cinemático', () => s.setFx({ godrays: 1, cones: 0.6, bloom: 0.5, vignette: 0.45, grain: 0.15, tintAmt: 0.15, tint: '#ffd9a8' })], ['Ciberpunk', () => s.setFx({ bloom: 1.2, chroma: 0.8, glitch: 0.15, tintAmt: 0.35, tint: '#c48bff', vignette: 0.4, cones: 1 })]));
+    r.btns(['Quitar todos los efectos', () => s.setFx({ godrays: 0, cones: 0, bloom: 0, chroma: 0, glitch: 0, tintAmt: 0, vignette: 0, grain: 0, ao: 0 })], ['Cinemático', () => s.setFx({ godrays: 1, cones: 0.6, bloom: 0.5, vignette: 0.45, grain: 0.15, tintAmt: 0.15, tint: '#ffd9a8' })], ['Ciberpunk', () => s.setFx({ bloom: 1.2, chroma: 0.8, glitch: 0.15, tintAmt: 0.35, tint: '#c48bff', vignette: 0.4, cones: 1 })]));
   const styleRow = (k: keyof Fx3, label: string) => r.range(label, fx[k] as number, 0, 1, 0.01, (v, live) => s.setFx({ [k]: v } as Partial<Fx3>, live));
   const preset = h('select', { class: 'mo-sel', 'aria-label': 'Estilo' }, h('option', { value: '' }, 'Estilo listo…'), ...STYLE_PRESETS.map(([l], i) => h('option', { value: String(i) }, l)));
   preset.addEventListener('change', () => { const p = STYLE_PRESETS[Number(preset.value)]; if (p) s.setFx({ ...p[1], preview: true }); });
@@ -123,6 +156,7 @@ export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
   r.sec('Física de la escena',
     r.range('Gravedad', fx.gravity, 0, 30, 0.1, (v, live) => s.setFx({ gravity: v }, live), v => `${v.toFixed(1)} m/s²`),
     r.check('Suelo infinito (y = 0)', fx.ground, v => s.setFx({ ground: v })),
+    r.check('Con un actor elegido, el clic sólo lo mueve a él (no agarra objetos)', fx.actorClick !== false, v => s.setFx({ actorClick: v })),
     r.btns(['Hacer dinámicos los elegidos', () => s.setPhys(s.selected.map(o => o.id), { body: 'dynamic' })], ['Estáticos', () => s.setPhys(s.selected.map(o => o.id), { body: 'static' })], ['Personajes', () => s.setCharacter(s.selected.map(o => o.id), true)]));
   // Reglas.
   const rules = s.scene.rules ?? [];
