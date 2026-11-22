@@ -25,6 +25,7 @@ export function physicsSection(r: Rows, s: Studio3D, o: Obj3) {
     ph.body === 'dynamic' ? r.range('Gelatina', ph.jelly, 0, 1, 0.05, (v, live) => { if (!live) s.setPhys(ids, { jelly: v }); }) : null,
     ph.body === 'dynamic' ? r.range('Balanceo al arrastrar', ph.swing, 0, 2, 0.05, (v, live) => { if (!live) s.setPhys(ids, { swing: v }); }) : null,
     ph.body === 'dynamic' ? r.check('Flota (sin gravedad, vuelve a ponerse derecho)', ph.float, v => s.setPhys(ids, { float: v })) : null,
+    ph.body === 'dynamic' ? r.select('Al arrastrarlo con el ratón', ph.turn ?? (o.card ? 'face' : 'free'), [['face', 'Se inclina de frente (como una hoja, sin dejar de mirar al frente)'], ['free', 'Gira libre en 3D']], v => s.setPhys(ids, { turn: v as 'face' | 'free' })) : null,
     r.check('Zona (no choca: avisa cuando algo entra)', ph.zone, v => s.setPhys(ids, { zone: v, body: 'static' })));
   kids.push(r.check('Personaje (se mueve solo, con el ratón o con reglas)', !!c, v => s.setCharacter(ids, v)));
   if (c) {
