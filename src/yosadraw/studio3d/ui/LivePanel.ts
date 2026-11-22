@@ -1,0 +1,154 @@
+import { h, toast } from '../../ui/dom';
+import { defaultCtrl, defaultFx, defaultPhys, sid, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
+import type { Studio3D } from '../Studio3D';
+import type { Rows } from './Panels';
+
+/** Física y control de un objeto (sección del panel «Objeto»). */
+export function physicsSection(r: Rows, s: Studio3D, o: Obj3) {
+  const ids = s.selected.filter(x => x.kind === 'mesh').map(x => x.id);
+  if (o.kind === 'light') {
+    r.sec('En vivo', r.select('Comportamiento', o.lightFx ?? 'none', [['none', 'Fija'], ['flicker', 'Parpadeo (fuego, avería)'], ['pulse', 'Pulso suave'], ['orbit', 'Girar alrededor del centro']], v => s.edit('Comportamiento de la luz', (_st, sc) => { const x = sc.objects.find(y => y.id === o.id); if (x) x.lightFx = v as Obj3['lightFx']; })));
+    return;
+  }
+  if (o.kind !== 'mesh') return;
+  const ph = o.phys ?? { ...defaultPhys('none') };
+  const c = o.ctrl;
+  const kids: (Node | null)[] = [
+    r.select('Física', ph.body, [['none', 'Sin física (decorado)'], ['dynamic', 'Dinámico (cae, choca, se puede agarrar)'], ['static', 'Estático (suelo, paredes)'], ['kinematic', 'Cinemático (sigue sus keyframes y empuja)']], v => s.setPhys(ids, { body: v as typeof ph.body })),
+  ];
+  if (ph.body !== 'none') kids.push(
+    r.plainNum('Masa', ph.mass, v => s.setPhys(ids, { mass: Math.max(0.05, v) }), { min: 0.05, step: 0.5, unit: 'kg' }),
+    r.range('Rebote', ph.bounce, 0, 1, 0.05, v => s.setPhys(ids, { bounce: v })),
+    r.range('Rozamiento', ph.friction, 0, 1, 0.05, v => s.setPhys(ids, { friction: v })),
+    r.select('Forma de choque', ph.shape, [['auto', 'Automática'], ['box', 'Caja'], ['sphere', 'Esfera (rueda)']], v => s.setPhys(ids, { shape: v as typeof ph.shape })),
+    r.check('Se puede agarrar y sacudir con el ratón', ph.grab, v => s.setPhys(ids, { grab: v })),
+    r.check('Zona (no choca: avisa cuando algo entra)', ph.zone, v => s.setPhys(ids, { zone: v, body: 'static' })));
+  kids.push(r.check('Personaje (se mueve solo, con el ratón o con reglas)', !!c, v => s.setCharacter(ids, v)));
+  if (c) {
+    const set = (patch: Parameters<Studio3D['setCtrl']>[1]) => s.setCtrl(ids, patch);
+    kids.push(
+      r.select('Comportamiento', c.behavior, [['walk', 'Caminar en su dirección'], ['patrol', 'Ir y volver (patrulla)'], ['mouse', 'Ir hacia el ratón (clic o arrastrar en el suelo)'], ['idle', 'Quieto (sólo reglas y ratón)']], v => set({ behavior: v as typeof c.behavior })),
+      r.range('Dirección', c.dir, -180, 180, 5, (v, live) => s.setCtrl(ids, { dir: v }, live), v => `${Math.round(v)}°`),
+      r.btns(['Apuntar en el visor', () => { s.setTool('aim'); toast('Haz clic en el suelo hacia donde debe ir'); }, 'Clic en el suelo: el personaje mirará y caminará hacia ese punto']),
+      r.range('Velocidad', c.speed, 0, 15, 0.1, (v, live) => s.setCtrl(ids, { speed: v }, live), v => `${v.toFixed(1)} m/s`),
+      r.range('Salto', c.jump, 0, 20, 0.5, (v, live) => s.setCtrl(ids, { jump: v }, live), v => `${v.toFixed(1)} m/s`),
+      c.behavior === 'patrol' ? r.range('Recorrido', c.dist, 0.5, 40, 0.5, (v, live) => s.setCtrl(ids, { dist: v }, live), v => `${v.toFixed(1)} m`) : null,
+      r.range('Gelatina', c.wobble, 0, 1, 0.05, (v, live) => s.setCtrl(ids, { wobble: v }, live)),
+      r.check('Siempre de pie (no vuelca)', c.upright, v => set({ upright: v })),
+      h('div', { class: 'mo-btnrow' }, h('span', { class: 'mo-unit' }, 'Bloquear movimiento en'),
+        ...(['x', 'y', 'z'] as const).map(a => { const cb = h('input', { type: 'checkbox', checked: c.lock[a] }); cb.addEventListener('change', () => set({ lock: { ...c.lock, [a]: cb.checked } })); return h('label', { class: 'mo-checkrow' }, cb, h('span', null, a.toUpperCase())); })));
+  }
+  kids.push(h('p', { class: 'ctl-help' }, 'Pulsa «En vivo» (F5) para ejecutar la escena: agarra y sacude lo dinámico con el ratón, Espacio hace saltar a los personajes.'));
+  r.sec('Física y control (En vivo)', ...kids);
+}
+
+const EVENTS: [EventType, string][] = [['start', 'Al empezar'], ['time', 'En el segundo…'], ['every', 'Cada … segundos'], ['key', 'Al pulsar la tecla…'], ['click', 'Al hacer clic en…'], ['collide', 'Al chocar…'], ['enter', 'Al entrar en la zona…'], ['grab', 'Al agarrar…'], ['release', 'Al soltar…']];
+const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código']];
+const FX_PARAMS: [keyof Fx3, string, number][] = [['godrays', 'Luz volumétrica', 2], ['cones', 'Conos de luz', 2], ['bloom', 'Resplandor (bloom)', 3], ['chroma', 'Aberración cromática', 3], ['glitch', 'Glitch', 1], ['tintAmt', 'Tinte de color', 1], ['vignette', 'Viñeta', 1], ['grain', 'Grano', 1]];
+
+/** Plantillas de reglas para empezar rápido. */
+function presets(s: Studio3D): [string, () => Rule3][] {
+  const ch = s.scene.objects.find(o => o.ctrl)?.id ?? '', zone = s.scene.objects.find(o => o.phys?.zone)?.id ?? '', dyn = s.scene.objects.find(o => o.phys?.body === 'dynamic' && !o.ctrl)?.id ?? '';
+  const light = s.scene.objects.find(o => o.light?.type === 'point' || o.light?.type === 'spot')?.id ?? '';
+  const R = (name: string, on: Rule3['on'], acts: Act3[]): Rule3 => ({ id: sid('ru'), name, enabled: true, once: false, on, do: acts });
+  return [
+    ['Espacio: saltar', () => R('Espacio: saltar', { type: 'key', key: ' ' }, [{ type: 'jump', target: ch, value: 6 }])],
+    ['Al chocar: glitch y temblor', () => R('Choque: glitch', { type: 'collide', a: ch }, [{ type: 'fx', target: '', param: 'glitch', value: 0.8, dur: 0.1 }, { type: 'shake', target: '', value: 0.25, dur: 0.4 }, { type: 'fx', target: '', param: 'chroma', value: 1.5, dur: 0.1 }])],
+    ['Cada 2 s: soltar una copia', () => R('Lluvia de copias', { type: 'every', t: 2 }, [{ type: 'spawn', target: dyn, v: [0, 4, 0] }])],
+    ['Al entrar en la zona: luz roja', () => R('Zona: alarma', { type: 'enter', a: zone }, [{ type: 'light', target: light, value: 2, color: '#ff3030', dur: 0.3 }, { type: 'fx', target: '', param: 'tintAmt', value: 0.5, dur: 0.5 }])],
+    ['Tecla G: gravedad lunar', () => R('Gravedad lunar', { type: 'key', key: 'g' }, [{ type: 'gravity', target: '', value: 1.6 }, { type: 'slowmo', target: '', value: 0.6, dur: 3 }])],
+    ['A los 3 s: girar y acelerar', () => R('Giro', { type: 'time', t: 3 }, [{ type: 'setdir', target: ch, value: 90 }, { type: 'speed', target: ch, value: 4 }])],
+  ];
+}
+
+export const SCRIPT_EXAMPLE = `// Programa de la escena: se ejecuta al pulsar «En vivo».
+// on(suceso, [objeto o tecla], función) · every(s, f) · after(s, f) · obj(nombre)
+// light(nombre) · fx(efecto, valor, segundos) · shake(fuerza, s) · gravity(g)
+// slowmo(k, s) · random(a, b) · time() · log(texto) · stop()
+
+const heroe = obj('Cubo');
+
+on('key', 'w', () => heroe?.impulse(0, 0, -3));
+on('key', 's', () => heroe?.impulse(0, 0, 3));
+on('collide', 'Cubo', e => {
+  fx('glitch', 0.7, 0.1);
+  shake(0.2, 0.3);
+  after(0.4, () => fx('glitch', 0, 0.3));
+});
+every(1, () => fx('bloom', random(0.3, 1.2), 0.8));
+`;
+
+/** Pestaña «Vivo»: efectos en tiempo real, reglas (disparadores) y programa. */
+export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
+  const fx = s.fx;
+  const objs: [string, string][] = [['', '(el objeto del suceso)'], ...s.scene.objects.filter(o => !o.folder).map(o => [o.id, o.name] as [string, string])];
+  r.sec('En vivo', r.btns(['▶ Ejecutar (F5)', onPlay, 'La escena se ejecuta como un videojuego: física, personajes, reglas y efectos']),
+    h('p', { class: 'ctl-help' }, 'Ratón: agarra y sacude lo dinámico, arrastra en el suelo para guiar a los personajes «hacia el ratón». Espacio: saltar. Esc: parar. Mientras corre puedes cambiar los efectos, grabar keyframes o grabar vídeo.'));
+  const fxRow = (k: keyof Fx3, label: string, max: number) => r.range(label, fx[k] as number, 0, max, 0.01, (v, live) => s.setFx({ [k]: v } as Partial<Fx3>, live));
+  r.sec('Efectos en tiempo real',
+    r.check('Ver los efectos también al editar (modos Materiales y Render)', fx.preview, v => s.setFx({ preview: v })),
+    ...FX_PARAMS.map(([k, l, max]) => fxRow(k, l, max)),
+    (() => { const i = h('input', { type: 'color', class: 'mo-color', value: fx.godColor }); i.addEventListener('change', () => s.setFx({ godColor: i.value })); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Color de la luz volumétrica'), i); })(),
+    (() => { const i = h('input', { type: 'color', class: 'mo-color', value: fx.tint }); i.addEventListener('change', () => s.setFx({ tint: i.value })); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Color del entorno (tinte)'), i); })(),
+    r.select('Sombras', String(fx.shadows), [['0', 'Sin sombras'], ['1', 'Básicas'], ['2', 'Buenas'], ['3', 'Muy nítidas']], v => s.setFx({ shadows: Number(v) as Fx3['shadows'] })),
+    r.select('Calidad', fx.quality, [['low', 'Baja (más FPS)'], ['medium', 'Media'], ['high', 'Alta']], v => s.setFx({ quality: v as Fx3['quality'] })),
+    r.check('Calidad adaptativa (baja sola si van pocos FPS)', fx.adaptive, v => s.setFx({ adaptive: v })),
+    r.btns(['Quitar todos los efectos', () => s.setFx({ godrays: 0, cones: 0, bloom: 0, chroma: 0, glitch: 0, tintAmt: 0, vignette: 0, grain: 0 })], ['Cinemático', () => s.setFx({ godrays: 1, cones: 0.6, bloom: 0.5, vignette: 0.45, grain: 0.15, tintAmt: 0.15, tint: '#ffd9a8' })], ['Ciberpunk', () => s.setFx({ bloom: 1.2, chroma: 0.8, glitch: 0.15, tintAmt: 0.35, tint: '#c48bff', vignette: 0.4, cones: 1 })]));
+  r.sec('Física de la escena',
+    r.range('Gravedad', fx.gravity, 0, 30, 0.1, (v, live) => s.setFx({ gravity: v }, live), v => `${v.toFixed(1)} m/s²`),
+    r.check('Suelo infinito (y = 0)', fx.ground, v => s.setFx({ ground: v })),
+    r.btns(['Hacer dinámicos los elegidos', () => s.setPhys(s.selected.map(o => o.id), { body: 'dynamic' })], ['Estáticos', () => s.setPhys(s.selected.map(o => o.id), { body: 'static' })], ['Personajes', () => s.setCharacter(s.selected.map(o => o.id), true)]));
+  // Reglas.
+  const rules = s.scene.rules ?? [];
+  const pre = h('select', { class: 'mo-sel', 'aria-label': 'Añadir regla' }, h('option', { value: '' }, '+ Regla desde plantilla…'), h('option', { value: '__new' }, 'Regla vacía'), ...presets(s).map(([l], i) => h('option', { value: String(i) }, l)));
+  pre.addEventListener('change', () => { const v = pre.value; if (!v) return; if (v === '__new') s.addRule({ id: sid('ru'), name: `Regla ${rules.length + 1}`, enabled: true, once: false, on: { type: 'start' }, do: [] }); else s.addRule(presets(s)[Number(v)][1]()); });
+  r.sec(`Disparadores (${rules.length})`, pre, ...rules.map(rule => ruleCard(r, s, rule, objs)), rules.length ? null : h('p', { class: 'ctl-help' }, 'Cuando pase algo (tecla, choque, clic, entrar en una zona, tiempo), haz algo (empujar, saltar, luz, efecto, temblor, copias…).'));
+  // Programa.
+  const ta = h('textarea', { class: 's3-code', rows: '12', spellcheck: 'false', 'aria-label': 'Programa de la escena' }, s.scene.script ?? '');
+  ta.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Tab') { e.preventDefault(); const p = ta.selectionStart; ta.setRangeText('  ', p, ta.selectionEnd, 'end'); } });
+  ta.addEventListener('change', () => s.setScript(ta.value));
+  r.sec('Programa (JavaScript)', ta,
+    r.btns(['Guardar', () => s.setScript(ta.value)], ['Ejemplo', () => { ta.value = SCRIPT_EXAMPLE; s.setScript(ta.value); }], ['Probar', () => { s.setScript(ta.value); onPlay(); }]),
+    h('p', { class: 'ctl-help' }, 'on(suceso, objeto o tecla, función) — sucesos: start, key, click, collide, enter, grab, release. obj("Nombre") da .pos, .vel, .impulse(x,y,z), .jump(v), .dir(grados), .speed(v), .goTo(x,z), .color("#f00", s), .hide(), .show(), .spawn(x,y,z). También every, after, light("Nombre").intensity(k, s), fx("glitch", 0.5, s), shake, gravity, slowmo, random, time, log y stop.'));
+}
+
+function ruleCard(r: Rows, s: Studio3D, rule: Rule3, objs: [string, string][]) {
+  const up = (fn: (x: Rule3) => void) => s.updateRule(rule.id, fn);
+  const sel = (value: string, opts: [string, string][], set: (v: string) => void, label: string) => { const e = h('select', { class: 'mo-sel', 'aria-label': label }, ...opts.map(([v, l]) => h('option', { value: v, selected: v === value }, l))); e.addEventListener('change', () => set(e.value)); return e; };
+  const num = (value: number | undefined, set: (v: number) => void, label: string, step = 0.1) => { const i = h('input', { type: 'number', class: 'mo-num', value: String(value ?? 0), step: String(step), 'aria-label': label, title: label }); i.addEventListener('keydown', e => e.stopPropagation()); i.addEventListener('change', () => { const v = Number(i.value.replace(',', '.')); if (Number.isFinite(v)) set(v); }); return i; };
+  const txt = (value: string, set: (v: string) => void, label: string, w = 70) => { const i = h('input', { type: 'text', value, 'aria-label': label, title: label, style: { width: `${w}px` } }); i.addEventListener('keydown', e => e.stopPropagation()); i.addEventListener('change', () => set(i.value)); return i; };
+  const objNoSelf: [string, string][] = [['', 'cualquiera'], ...objs.slice(1)];
+  const on = rule.on;
+  const when = h('div', { class: 's3-rulewhen' }, h('b', null, 'Cuando '),
+    sel(on.type, EVENTS, v => up(x => { x.on = { type: v as EventType, t: v === 'every' ? 1 : v === 'time' ? 2 : undefined }; }), 'Suceso'),
+    on.type === 'time' || on.type === 'every' ? num(on.t, v => up(x => { x.on.t = Math.max(0, v); }), 'Segundos') : null,
+    on.type === 'key' ? txt(on.key === ' ' ? 'Espacio' : on.key ?? '', v => up(x => { x.on.key = v.toLowerCase() === 'espacio' ? ' ' : v.slice(0, 1).toLowerCase(); }), 'Tecla', 60) : null,
+    ['click', 'collide', 'enter', 'grab', 'release'].includes(on.type) ? sel(on.a ?? '', objNoSelf, v => up(x => { x.on.a = v; }), 'Objeto') : null,
+    on.type === 'collide' || on.type === 'enter' ? h('span', null, ' con ') : null,
+    on.type === 'collide' || on.type === 'enter' ? sel(on.b ?? '', objNoSelf, v => up(x => { x.on.b = v; }), 'Con') : null);
+  const acts = rule.do.map((a, i) => {
+    const ua = (fn: (x: Act3) => void) => up(x => fn(x.do[i]));
+    const p: (Node | null)[] = [sel(a.type, ACTS, v => ua(x => { x.type = v as ActType; }), 'Acción')];
+    if (!['fx', 'shake', 'gravity', 'slowmo', 'stop', 'script'].includes(a.type)) p.push(sel(a.target, objs, v => ua(x => { x.target = v; }), 'Objeto'));
+    const v3 = () => { const v = a.v ?? [0, 5, 0]; return (['x', 'y', 'z'] as const).map((n, k) => num(v[k], val => ua(x => { const w = [...(x.v ?? [0, 5, 0])] as [number, number, number]; w[k] = val; x.v = w; }), n.toUpperCase())); };
+    if (a.type === 'impulse' || a.type === 'spawn') p.push(...v3());
+    if (['jump', 'setdir', 'speed', 'gravity', 'slowmo', 'shake'].includes(a.type)) p.push(num(a.value, v => ua(x => { x.value = v; }), 'Valor'));
+    if (a.type === 'behavior') p.push(sel(a.param ?? 'walk', [['walk', 'Caminar'], ['patrol', 'Patrulla'], ['mouse', 'Hacia el ratón'], ['idle', 'Quieto']], v => ua(x => { x.param = v; }), 'Comportamiento'));
+    if (a.type === 'fx') p.push(sel(a.param ?? 'glitch', FX_PARAMS.map(([k, l]) => [k, l]), v => ua(x => { x.param = v; }), 'Efecto'), num(a.value, v => ua(x => { x.value = v; }), 'Valor', 0.05));
+    if (a.type === 'light') p.push(num(a.value, v => ua(x => { x.value = v; }), 'Intensidad (×)', 0.1));
+    if (a.type === 'color' || a.type === 'light') { const c = h('input', { type: 'color', value: a.color ?? '#ff4040' }); c.addEventListener('change', () => ua(x => { x.color = c.value; })); p.push(c); }
+    if (['color', 'light', 'fx', 'shake', 'slowmo'].includes(a.type)) p.push(num(a.dur, v => ua(x => { x.dur = Math.max(0, v); }), 'Duración (s)'));
+    if (a.type === 'script') { const t = h('textarea', { class: 's3-code', rows: '3', spellcheck: 'false', 'aria-label': 'Código' }, a.code ?? 'self?.impulse(0, 6, 0);'); t.addEventListener('keydown', e => e.stopPropagation()); t.addEventListener('change', () => ua(x => { x.code = t.value; })); p.push(t); }
+    p.push(h('button', { type: 'button', class: 'icon xs', title: 'Quitar acción', 'aria-label': 'Quitar acción', html: '×', on: { click: () => up(x => { x.do.splice(i, 1); }) } }));
+    return h('div', { class: 's3-ruleact' }, h('b', null, i ? 'y ' : 'hacer '), ...p);
+  });
+  const name = txt(rule.name, v => up(x => { x.name = v.slice(0, 40) || x.name; }), 'Nombre de la regla', 140);
+  const en = h('input', { type: 'checkbox', checked: rule.enabled, title: 'Activa' }); en.addEventListener('change', () => up(x => { x.enabled = en.checked; }));
+  const once = h('input', { type: 'checkbox', checked: rule.once, title: 'Sólo la primera vez' }); once.addEventListener('change', () => up(x => { x.once = once.checked; }));
+  void r;
+  return h('div', { class: `s3-rule${rule.enabled ? '' : ' off'}` },
+    h('div', { class: 's3-rulehead' }, en, name, h('label', { class: 'mo-checkrow', title: 'Sólo la primera vez' }, once, h('span', null, '1 vez')), h('button', { type: 'button', class: 'icon xs', title: 'Borrar regla', 'aria-label': 'Borrar regla', html: '🗑', on: { click: () => s.removeRule(rule.id) } })),
+    when, ...acts,
+    h('button', { type: 'button', class: 'btn xs', on: { click: () => up(x => { x.do.push({ type: 'impulse', target: '', v: [0, 5, 0] }); }) } }, '+ Acción'));
+}
+export { defaultFx, defaultCtrl };

@@ -32,6 +32,7 @@ import * as animModel from '../anim/model';
 import { Thumbnails } from './thumbnails';
 import { normalizeLayout, Toolbar } from './Toolbar';
 import { normalizeMotionPrefs } from './motion/prefs';
+import { normalizePrefs3 } from '../studio3d/prefs';
 import { openNewProject } from './NewProjectDialog';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -73,6 +74,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   };
   // Vídeo (YOSADRAW MOTION): tamaños de paneles, calidad de vista previa, atajos y exportación.
   const motionPrefs = normalizeMotionPrefs(saved?.motion);
+  const prefs3 = normalizePrefs3(saved?.s3d);
   const applyTouch = () => {
     engine.fingerMode = touch.finger; engine.holdToPick = touch.hold;
     Object.assign(engine.inputTuning, { touchBoost: touch.touchBoost, penBoost: touch.penBoost, fingerPressure: touch.fingerPressure, cleanup: touch.cleanup });
@@ -80,7 +82,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   applyTouch();
 
   // ---------- Guardado de preferencias ----------
-  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, anim: animPrefs, motion: motionPrefs, palettes: palettePrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
+  const snapshot = () => ({ version: 1, tools: mgr.toJSON(), toolbar: layout, tab, export: exportOpts, touch, effects: fxPrefs, anim: animPrefs, motion: motionPrefs, s3d: prefs3, palettes: palettePrefs, gallery: gallery.prefs, session: { autoSave: session.prefs.autoSave, autoSaveMinutes: session.prefs.autoSaveMinutes } });
   let saveTimer = 0;
   const save = () => {
     clearTimeout(saveTimer);
@@ -350,12 +352,12 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
   function projectMenu(anchor: HTMLElement) {
     const e = session.entry;
     if (!e) return;
-    const video = !!engine.doc.motion;
+    const video = !!engine.doc.motion, is3d = !!engine.doc.s3d;
     const items: [string, () => void][] = [
       ['Guardar', () => void projectAction('save')], ['Guardar como…', () => void projectAction('saveAs')],
       ['Renombrar…', () => void gallery.renameOpen()], ['Historial de versiones…', () => void gallery.versions(projects.get(e.id)!)],
       ['Información', () => void gallery.info(projects.get(e.id)!)],
-      ...(video ? [['Exportar vídeo…', () => void ensureMotion().then(m => m.exp.show())]] as [string, () => void][] : [
+      ...(is3d ? [['Render…', () => s3?.ui.renderDialog()], ['Tutorial: Tu primera casa', () => s3?.ui.tutorial()]] as [string, () => void][] : video ? [['Exportar vídeo…', () => void ensureMotion().then(m => m.exp.show())]] as [string, () => void][] : [
         ['Exportar imagen…', () => void exportDialog.show()],
         ['Importar imagen como capa…', () => void pickAndImport(engine, mgr)], ['Añadir imagen de referencia…', () => void refs.add()],
         ['Enviar a YOSADRAW MOTION…', () => void sendToMotion()],
@@ -491,6 +493,48 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     } catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }
   }
 
+  // ---------- 3D: YOSADRAW 3D Studio ----------
+  // Igual que el vídeo: Three.js sólo se descarga al abrir un proyecto 3D.
+  type S3Mod = ReturnType<typeof import('../studio3d/index').createStudio3D>;
+  let s3: S3Mod | null = null;
+  let s3Loading: Promise<S3Mod> | null = null;
+  const ensure3D = () => (s3Loading ??= import('../studio3d/index').then(({ createStudio3D }) => {
+    const m = createStudio3D({
+      engine, projects, prefs: prefs3, persist: save,
+      ui: {
+        save: () => void projectAction('save'), gallery: () => void toGallery(), projectMenu: a => projectMenu(a), name: () => session.entry?.name ?? '3D',
+        projects, painter, sendTo2D: (c, name, reference) => send3DTo2D(c, name, reference),
+      },
+    });
+    document.body.append(m.ui.el);
+    session.s3dThumb = () => m.thumbnail();
+    return (s3 = m);
+  }));
+  session.on('state', st => { if (s3?.studio.active) s3.ui.setDirty(st.dirty, st.entry?.name ?? '3D'); });
+  function set3DMode() {
+    const on = !!engine.doc.s3d;
+    document.body.classList.toggle('s3d-mode', on);
+    if (on) void ensure3D().then(m => { if (engine.doc.s3d && m.studio.doc !== engine.doc) m.studio.open(engine.doc); }).catch(err => toast(`No se pudo abrir el editor 3D: ${err instanceof Error ? err.message : String(err)}`, 'error'));
+    else if (s3?.studio.active) s3.studio.close();
+  }
+  engine.on('document', set3DMode);
+  /** Render del 3D → proyecto de dibujo nuevo (con capa de referencia bloqueada y una capa para dibujar, si se pide). */
+  async function send3DTo2D(c: HTMLCanvasElement, name: string, reference: boolean) {
+    if (session.dirty && !(await gallery.save())) return;
+    const blob = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png'));
+    if (!blob) return;
+    try {
+      await session.createFromImage(new File([blob], `${name}.png`, { type: 'image/png' }));
+      gallery.hide();
+      const doc = engine.doc, base = doc.layers[0];
+      if (reference && base) {
+        engine.exec(doc.cmdLayerProps(base.id, { name: 'Referencia 3D', opacity: 0.45, locked: true }, 'Capa de referencia'));
+        engine.exec(doc.cmdAddLayer(base.id));
+      }
+      toast(reference ? 'Dibuja encima: la capa «Referencia 3D» está bloqueada y semitransparente' : 'El render está en un dibujo nuevo', 'ok');
+    } catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }
+  }
+
   // Sin proyecto abierto se empieza en la galería.
   blank();
   gallery.show();
@@ -506,6 +550,7 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
     if (t instanceof HTMLSelectElement && e.key.startsWith('Arrow')) return;
     // Editor de vídeo: sus propios atajos (configurables).
     if (mo?.motion.active) { if (!(t instanceof HTMLInputElement && t.type === 'range' && e.key.startsWith('Arrow')) && mo.ui.handleKey(e)) { e.preventDefault(); e.stopPropagation(); } return; }
+    if (s3?.studio.active) { if (!(t instanceof HTMLInputElement && t.type === 'range') && s3.ui.handleKey(e)) { e.preventDefault(); e.stopPropagation(); } return; }
     if (e.code === 'Space') { e.preventDefault(); engine.setSpacePan(true); return; }
     if (t instanceof HTMLInputElement && t.type === 'range' && e.key.startsWith('Arrow')) return;
     if (mgr.handleKey(e)) { e.preventDefault(); e.stopPropagation(); }
@@ -522,5 +567,5 @@ export function mountApp({ engine, lib, painter, settings, saved, projects }: Ap
 
   mgr.select(mgr.current.id);
   syncLibraryTarget();
-  return { get motion() { return mo?.motion; }, get motionUI() { return mo?.ui; }, get motionExport() { return mo?.exp; }, ensureMotion, mgr, anim, timeline, animExport, animPanel, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
+  return { get studio3d() { return s3?.studio; }, get ui3d() { return s3?.ui; }, ensure3D, get motion() { return mo?.motion; }, get motionUI() { return mo?.ui; }, get motionExport() { return mo?.exp; }, ensureMotion, mgr, anim, timeline, animExport, animPanel, refs, dock, studio, toolbar, props, layers, color, library, thumbs, exportDialog, effects, closeTopOverlay, quick, session, gallery, projects, toGallery };
 }

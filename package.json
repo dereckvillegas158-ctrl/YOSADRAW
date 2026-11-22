@@ -1,6 +1,6 @@
 {
   "name": "yosadraw",
-  "version": "1.11.0",
+  "version": "1.13.0",
   "private": true,
   "type": "module",
   "description": "YOSADRAW: aplicación de dibujo con motor de pinceles y estabilizador de trazos",
@@ -28,10 +28,13 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/outfit": "^5.3.0",
     "@jsquash/webp": "1.5.0",
+    "@types/three": "0.169.0",
     "ag-psd": "34.1.0",
+    "cannon-es": "0.20.0",
     "electron": "45.2.1",
     "electron-builder": "26.18.0",
     "fflate": "0.8.3",
+    "three": "0.169.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"

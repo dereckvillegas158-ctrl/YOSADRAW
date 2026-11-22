@@ -1,4 +1,44 @@
-## YOSADRAW 1.11.0
+## YOSADRAW 1.13.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.13.0-x64.exe` (instalador), `YOSADRAW-1.13.0-x64-portable.exe` o `YOSADRAW-1.13.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.13.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo en 3D Studio: modo En vivo
+La escena se ejecuta como un videojuego para crear animaciones: física, personajes, disparadores, programa y efectos, todo en tiempo real. Botón **▶ En vivo** (F5); Esc para.
+- **Física:** cada objeto puede ser dinámico (cae, rebota, choca), estático (suelo, paredes), cinemático (sigue sus keyframes y empuja a los demás) o una zona que avisa cuando algo entra. Masa, rebote, rozamiento, forma de choque, gravedad y suelo infinito. Los terrenos chocan con su relieve.
+- **Control con el ratón:** agarra cualquier objeto dinámico y muévelo, sacúdelo o lánzalo (la rueda lo acerca o aleja); arrastra en el suelo para que los personajes vayan hacia el puntero.
+- **Personajes:** dirección (con flecha en el editor y «Apuntar en el visor»), velocidad, salto (Espacio), comportamiento (caminar, ir y volver, seguir al ratón, quieto), bloqueo por ejes, siempre de pie y efecto gelatina al moverse o al sacudirlos.
+- **Disparadores:** «cuando pase algo, haz algo»: al empezar, en un segundo, cada X segundos, al pulsar una tecla, al hacer clic, al chocar, al entrar en una zona, al agarrar o soltar; acciones de empujar, saltar, cambiar dirección, velocidad o comportamiento, color, luz, efecto visual, temblor de cámara, soltar copias, ocultar o mostrar, gravedad, cámara lenta, parar o código. Con plantillas para empezar.
+- **Programa (JavaScript):** `on('collide', 'Cubo', e => …)`, `every`, `after`, `obj('Nombre').impulse(…)`, `light('Foco').intensity(…)`, `fx('glitch', 0.5, 0.2)`, `shake`, `gravity`, `slowmo` y más. Los errores se muestran sin parar la escena; la primera vez se pide permiso para ejecutar el código.
+- **Efectos en tiempo real:** luz volumétrica (rayos de sol que se cortan con los objetos y con la silueta de los dibujos), conos de luz en los focos, resplandor, aberración cromática, glitch, tinte de color del entorno, viñeta y grano; calidad de sombras; luces que parpadean, laten o giran. Se cambian mientras corre la escena y se pueden ver también al editar.
+- **Dibujos en 3D:** tus dibujos de YOSADRAW (o imágenes) como carteles dentro de la escena: lo transparente se recorta, reciben las luces, las sombras y los efectos, y proyectan la sombra de su silueta; pueden mirar siempre a la cámara y tener física.
+- **Grabar:** lo que pasa en vivo se guarda como keyframes (para renderizarlo o seguir editándolo) o directamente como vídeo con los efectos.
+- **Rendimiento:** física a paso fijo con objetos que se duermen, efectos que se saltan cuando no hay ninguno activo, niveles de calidad (baja, media, alta) y calidad adaptativa que baja sola si van pocos FPS. La reproducción con keyframes ya no recalcula la geometría en cada fotograma.
+
+### Versión anterior: YOSADRAW 1.12.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.12.0-x64.exe` (instalador), `YOSADRAW-1.12.0-x64-portable.exe` o `YOSADRAW-1.12.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.12.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo: YOSADRAW 3D Studio
+Un editor 3D completo dentro de YOSADRAW: «Nuevo proyecto → 3D». Pensado para quien nunca ha modelado.
+- **Visor 3D:** girar (botón central o Alt + clic, o la mano para usar el botón izquierdo), acercar con la rueda, desplazar (Mayús + central o clic derecho), perspectiva u ortográfica, vistas de frente, lado y arriba, encuadrar lo elegido (F) o toda la escena, cuadrícula y ejes X, Y, Z que se pueden ocultar.
+- **Formas básicas:** cubo, esfera, cilindro, cono, toroide, plano, cápsula y pirámide. Un clic en el suelo las pone; arrastrando se dibuja la base y luego la altura. Sus medidas se cambian después en el panel.
+- **Transformar:** mover, rotar y escalar con gizmos por eje (G, R, S), valores exactos, límite de eje (X, Y, Z), ajuste a la cuadrícula, duplicar, eliminar, alinear, repartir, apoyar en el suelo, agrupar y desagrupar.
+- **Modelado (Tab):** elegir vértices, aristas o caras con clic o rectángulo; extruir (también por regiones), inset, biselar, subdividir y suavizar (Catmull-Clark), fusionar vértices, borrar, empujar, invertir normales, abrir agujeros y unir dos caras con un túnel. Todo se puede deshacer.
+- **Construir sin modelar:** escaleras, paredes (se dibujan arrastrando, con puerta y ventanas), puertas, ventanas, tejados, columnas, muebles (mesa, silla, estantería, cama, sofá), terrenos y árboles, con sus medidas y proporciones editables; «Casa de ejemplo» hace una casa completa con un clic. Construcción por bloques (clic pone, Mayús + clic quita).
+- **Materiales:** color, rugosidad, metálico, transparencia, emisión y estilo de dibujo animado; texturas de imagen o de un **dibujo de YOSADRAW** (se actualiza si lo editas) y **pintar sobre el modelo** en vivo; un material distinto en cada cara; biblioteca de madera, metal, plástico, vidrio, piedra, ladrillo, tela, naturaleza y estilizados; favoritos para todos tus proyectos.
+- **Luces y render:** sol, luz puntual, foco, ambiental y de entorno, con color, intensidad y sombras; exposición, niebla y fondo. Modos de vista sólido, alámbrico, materiales y render. Render de alta calidad a cualquier tamaño, con calidad de sombras y antialiasing, y fondo transparente.
+- **Escenas:** jerarquía con grupos, carpetas, ocultar, bloquear, renombrar, arrastrar para organizar y buscar; varias escenas por proyecto y plantillas de escena que se reutilizan en otros proyectos.
+- **Animación 3D:** keyframes (I) de posición, rotación, escala, opacidad, materiales, luces y cámaras con su propia línea de tiempo, reproducción, copiar y pegar entre objetos y curvas lineal, Bézier, Ease In, Ease Out, Ease In-Out, Smooth y suavizado automático. No afecta a las animaciones 2D.
+- **Cámaras:** varias cámaras, cámara activa, campo de visión y distancia focal, ver por la cámara, colocarla donde miras, y moverla con keyframes.
+- **Exportar e importar:** GLB y glTF (con materiales, texturas y animación), OBJ (+ .mtl), STL, PNG, MP4 y GIF. Importa GLB, glTF, OBJ y STL como objetos editables. Envía un render al lienzo 2D o úsalo como capa de referencia para dibujar encima.
+- **Asistente 3D:** explica paso a paso la herramienta que usas y resalta dónde pulsar; tutorial guiado «Tu primera casa».
+- Los proyectos 3D se guardan en la galería como cualquier otro (guardado automático y recuperación). Three.js sólo se carga al abrir un proyecto 3D: dibujar sigue igual de ligero.
+
+### Versión anterior: YOSADRAW 1.11.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.11.0-x64.exe` (instalador), `YOSADRAW-1.11.0-x64-portable.exe` o `YOSADRAW-1.11.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

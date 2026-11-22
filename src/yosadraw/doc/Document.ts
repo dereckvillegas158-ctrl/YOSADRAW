@@ -4,6 +4,7 @@ import { selectionBounds, type Selection } from './Selection';
 import { transformAABB, type Mat } from '../engine/ViewTransform';
 import type { Animation, Cel } from '../anim/model';
 import type { Motion } from '../motion/model';
+import type { Studio3 } from '../studio3d/model';
 import type { Folder } from './folders';
 
 export interface Layer {
@@ -88,6 +89,8 @@ export class Document {
   anim: Animation | null = null;
   /** Proyecto de vídeo de YOSADRAW MOTION (null = dibujo o animación). */
   motion: Motion | null = null;
+  /** Proyecto 3D de YOSADRAW 3D Studio (null = otro tipo de proyecto). */
+  s3d: Studio3 | null = null;
   /** Carpetas de capas (dibujo; en una animación se usan los grupos de pistas). */
   folders: Folder[] = [];
   private nextItem = 1;
