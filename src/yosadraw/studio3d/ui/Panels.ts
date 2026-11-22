@@ -13,7 +13,7 @@ import type { Studio3D } from '../Studio3D';
 import { canvasToUrl, fileToDataUrl } from '../textures';
 import type { View3D } from '../View3D';
 import { I3 } from './icons3';
-import { livePanel, physicsSection } from './LivePanel';
+import { STYLE_PRESETS, livePanel, physicsSection } from './LivePanel';
 
 type Sync = () => void;
 const PRIM_ICON: Record<PrimType, string> = { box: I3.cube, sphere: I3.sphere, cylinder: I3.cylinder, cone: I3.cone, torus: I3.torus, plane: I3.plane, capsule: I3.capsule, pyramid: I3.pyramid };
@@ -532,6 +532,8 @@ export class Inspector3 extends Rows {
       this.select('Calidad', String(r.quality), [['1', 'Rápida'], ['2', 'Buena (antialiasing ×1,5)'], ['3', 'Máxima (×2)']], v => s.edit('Calidad', st => { st.render.quality = Number(v) as 1; })),
       this.select('Sombras', String(r.shadows), [['0', 'Sin sombras'], ['1', 'Básicas'], ['2', 'Buenas'], ['3', 'Muy nítidas']], v => s.edit('Sombras', st => { st.render.shadows = Number(v) as 1; })),
       this.check('Fondo transparente', r.transparent, v => s.edit('Transparente', st => { st.render.transparent = v; })),
+      this.check('Con los efectos y el estilo (shaders) de la escena', r.fx !== false, v => s.edit('Efectos en el render', st => { st.render.fx = v; })),
+      this.select('Estilo', '', [['', 'Elegir estilo (shaders)…'], ...STYLE_PRESETS.map(([l], i) => [String(i), l] as [string, string])], v => { const p = STYLE_PRESETS[Number(v)]; if (v && p) s.setFx(p[1]); }),
       this.btns(['Renderizar…', () => this.deps.renderDialog()]));
     this.sec('Animación',
       this.plainNum('Duración', sc.dur, v => s.setDuration(v), { min: 0.1, step: 0.5, unit: 's' }),

@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { valueAt } from '../motion/keys';
 import { toast } from '../ui/dom';
 import * as M from './mesh';
-import { effLocked, effVisible, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
+import { defaultFx, effLocked, effVisible, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
 import { round, type Studio3D } from './Studio3D';
 import { canvasToUrl, TexCache } from './textures';
 import { FxPipeline, volumeCone } from './live/fx';
@@ -1026,7 +1026,7 @@ export class View3D {
    * Render de la escena con su cámara activa (o la vista si no tiene) a `w` × `h`:
    * sombras y antialiasing según la calidad; fondo transparente opcional.
    */
-  renderImage(w: number, h: number, o: { quality?: 1 | 2 | 3; shadows?: 0 | 1 | 2 | 3; transparent?: boolean; time?: number; useView?: boolean } = {}): HTMLCanvasElement {
+  renderImage(w: number, h: number, o: { quality?: 1 | 2 | 3; shadows?: 0 | 1 | 2 | 3; transparent?: boolean; time?: number; useView?: boolean; fx?: boolean } = {}): HTMLCanvasElement {
     const s = this.s, prev = s.prefs.shading;
     const q = o.quality ?? 2, sh = o.shadows ?? 2;
     const max = Math.min(this.renderer.capabilities.maxTextureSize, 8192);
@@ -1046,15 +1046,21 @@ export class View3D {
     if (o.transparent) this.scene.background = null;
     let cam: T.Camera | null = o.useView ? null : this.sceneCamFor(W / H);
     if (!cam) { const c = this.persp.clone(); c.aspect = W / H; c.updateProjectionMatrix(); cam = c; }
-    const rt = new T.WebGLRenderTarget(W, H, { samples: 4, colorSpace: T.SRGBColorSpace, type: T.UnsignedByteType });
-    this.renderer.setRenderTarget(rt);
-    this.renderer.setClearColor(0x000000, 0);
-    this.renderer.clear();
-    this.renderer.render(this.scene, cam);
-    const px = new Uint8Array(W * H * 4);
-    this.renderer.readRenderTargetPixels(rt, 0, 0, W, H, px);
-    this.renderer.setRenderTarget(null);
-    rt.dispose();
+    // Efectos y estilo (shaders) de la escena, si están activados para el render.
+    const fx = (o.fx ?? s.s.render.fx !== false) ? { ...defaultFx(), ...(s.scene.fx ?? {}) } : null;
+    let px: Uint8Array | null = null, styled: HTMLCanvasElement | null = null;
+    if (fx && FxPipeline.active(fx)) styled = this.renderFx(cam, fx, W, H, o.time ?? t0);
+    else {
+      const rt = new T.WebGLRenderTarget(W, H, { samples: 4, colorSpace: T.SRGBColorSpace, type: T.UnsignedByteType });
+      this.renderer.setRenderTarget(rt);
+      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.clear();
+      this.renderer.render(this.scene, cam);
+      px = new Uint8Array(W * H * 4);
+      this.renderer.readRenderTargetPixels(rt, 0, 0, W, H, px);
+      this.renderer.setRenderTarget(null);
+      rt.dispose();
+    }
     // Volver como estaba.
     s.prefs.shading = prev;
     s.s.time = t0;
@@ -1062,13 +1068,42 @@ export class View3D {
     this.mats.clear();
     this.sync();
     // Píxeles (de abajo arriba) → lienzo; reducir si se renderizó más grande (antialiasing).
-    const big = document.createElement('canvas'); big.width = W; big.height = H;
-    const img = new ImageData(W, H);
-    for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
-    big.getContext('2d')!.putImageData(img, 0, 0);
+    let big = styled;
+    if (!big) {
+      big = document.createElement('canvas'); big.width = W; big.height = H;
+      const img = new ImageData(W, H);
+      for (let y = 0; y < H; y++) img.data.set(px!.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
+      big.getContext('2d')!.putImageData(img, 0, 0);
+    }
     if (W === w && H === h) return big;
     const out = document.createElement('canvas'); out.width = w; out.height = h;
     const g = out.getContext('2d')!; g.imageSmoothingQuality = 'high'; g.drawImage(big, 0, 0, w, h);
+    return out;
+  }
+  /**
+   * Render con la cadena de efectos a W × H exactos: se dibuja en el lienzo del
+   * visor a ese tamaño (sin escalar por la pantalla) y se copia; luego se deja como estaba.
+   */
+  private renderFx(cam: T.Camera, fx: Fx3, W: number, H: number, time: number): HTMLCanvasElement {
+    const r = this.renderer, pr = r.getPixelRatio(), size = r.getSize(new T.Vector2());
+    const gl = r.getContext();
+    r.setPixelRatio(1);
+    r.setSize(W, H, false);
+    // Si el equipo no admite un lienzo tan grande, se usa el mayor posible.
+    const dw = gl.drawingBufferWidth, dh = gl.drawingBufferHeight;
+    const p = new FxPipeline(r, this.scene, cam, 1);
+    p.setQuality('high');
+    p.setSize(dw, dh);
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    try {
+      r.setClearColor(0x000000, 0);
+      p.render(this.scene, cam, { ...fx, adaptive: false }, time, this.sunDir());
+      out.getContext('2d')!.drawImage(r.domElement, 0, 0, dw, dh, 0, 0, W, H);
+    } finally {
+      p.dispose();
+      r.setPixelRatio(pr);
+      r.setSize(size.x, size.y, false);
+    }
     return out;
   }
   private sceneCamFor(aspect: number): T.PerspectiveCamera | null {

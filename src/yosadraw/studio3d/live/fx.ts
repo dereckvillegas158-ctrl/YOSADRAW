@@ -60,6 +60,90 @@ const FINAL = {
     }`,
 };
 
+/**
+ * Estilo (después de la salida a color de pantalla): «squiggle vision» (las líneas
+ * tiemblan a pocos fotogramas por segundo, como dibujadas a mano), contorno de
+ * tinta, pintura al óleo (Kuwahara), posterizado, semitono de cómic, píxeles,
+ * papel y líneas de TV.
+ */
+const STYLE = {
+  uniforms: {
+    tDiffuse: { value: null }, res: { value: new T.Vector2(1, 1) }, time: { value: 0 },
+    squiggle: { value: 0 }, squigFps: { value: 8 }, squigSize: { value: 40 }, ink: { value: 0 }, inkColor: { value: new T.Color('#1a1420') },
+    posterize: { value: 0 }, halftone: { value: 0 }, pixel: { value: 0 }, paint: { value: 0 }, paper: { value: 0 }, scan: { value: 0 },
+  },
+  vertexShader: VERT,
+  fragmentShader: `uniform sampler2D tDiffuse; uniform vec2 res; uniform float time, squiggle, squigFps, squigSize, ink, posterize, halftone, pixel, paint, paper, scan; uniform vec3 inkColor; varying vec2 vUv;
+    float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
+    float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += vn(p) * a; p *= 2.03; a *= 0.5; } return s; }
+    float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+    vec4 tex(vec2 uv){ return texture2D(tDiffuse, clamp(uv, 0.0, 1.0)); }
+    vec3 kuwahara(vec2 uv, float r){
+      vec2 px = r / res; vec3 m[4]; vec3 s2[4];
+      for (int k = 0; k < 4; k++) { m[k] = vec3(0.0); s2[k] = vec3(0.0); }
+      for (int j = 0; j <= 3; j++) for (int i = 0; i <= 3; i++) {
+        vec2 o = vec2(float(i), float(j)) * px / 3.0;
+        vec3 a = tex(uv + vec2(-o.x, -o.y)).rgb, b = tex(uv + vec2(o.x, -o.y)).rgb, c = tex(uv + vec2(-o.x, o.y)).rgb, d = tex(uv + o).rgb;
+        m[0] += a; s2[0] += a * a; m[1] += b; s2[1] += b * b; m[2] += c; s2[2] += c * c; m[3] += d; s2[3] += d * d;
+      }
+      vec3 best = vec3(0.0); float bv = 1e9;
+      for (int k = 0; k < 4; k++) { vec3 mu = m[k] / 16.0; vec3 v = abs(s2[k] / 16.0 - mu * mu); float vs = v.r + v.g + v.b; if (vs < bv) { bv = vs; best = mu; } }
+      return best;
+    }
+    void main(){
+      vec2 uv = vUv;
+      // Píxeles grandes.
+      if (pixel > 0.0) { vec2 cell = vec2(1.0 + pixel * 15.0) / res; uv = (floor(uv / cell) + 0.5) * cell; }
+      // Squiggle: desplazamiento con ruido que cambia a saltos (squigFps).
+      if (squiggle > 0.0) {
+        float fr = floor(time * squigFps);
+        vec2 q = uv * res / max(4.0, squigSize) + vec2(fr * 7.13, fr * 3.71);
+        uv += (vec2(vn(q), vn(q + 19.7)) - 0.5) * squiggle * 7.0 / res * (res.y / 720.0 + 0.5);
+      }
+      vec4 base = tex(uv);
+      vec3 col = paint > 0.0 ? kuwahara(uv, 1.0 + paint * 7.0 * res.y / 1080.0) : base.rgb;
+      if (posterize > 0.0) { float lv = mix(24.0, 3.0, posterize); col = floor(col * lv + 0.5) / lv; }
+      // Semitono: puntos en rejilla girada 45° (más grandes donde es más oscuro).
+      if (halftone > 0.0) {
+        float cs = max(3.0, res.y / 150.0);
+        vec2 p = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (vUv * res) / cs;
+        float d = length(fract(p) - 0.5);
+        float r = sqrt(clamp(1.0 - lum(col), 0.0, 1.0)) * 0.62;
+        float dotm = 1.0 - smoothstep(r - 0.06, r + 0.06, d);
+        col = mix(col, mix(min(col * 1.15 + 0.05, 1.0), col * 0.3, dotm), halftone);
+      }
+      // Tinta: bordes (Sobel de luminancia y de alfa) del color de tinta.
+      if (ink > 0.0) {
+        vec2 px = (1.0 + ink * 1.5 * res.y / 1080.0) / res;
+        float tl = lum(tex(uv + px * vec2(-1.0, 1.0)).rgb), t = lum(tex(uv + px * vec2(0.0, 1.0)).rgb), tr = lum(tex(uv + px * vec2(1.0, 1.0)).rgb);
+        float l = lum(tex(uv + px * vec2(-1.0, 0.0)).rgb), r = lum(tex(uv + px * vec2(1.0, 0.0)).rgb);
+        float bl = lum(tex(uv + px * vec2(-1.0, -1.0)).rgb), b = lum(tex(uv + px * vec2(0.0, -1.0)).rgb), br = lum(tex(uv + px * vec2(1.0, -1.0)).rgb);
+        float gx = tr + 2.0 * r + br - tl - 2.0 * l - bl, gy = tl + 2.0 * t + tr - bl - 2.0 * b - br;
+        float aE = abs(tex(uv + px * vec2(1.0, 0.0)).a - tex(uv - px * vec2(1.0, 0.0)).a) + abs(tex(uv + px * vec2(0.0, 1.0)).a - tex(uv - px * vec2(0.0, 1.0)).a);
+        float e = smoothstep(0.12, 0.45, length(vec2(gx, gy)) + aE);
+        col = mix(col, inkColor, e * min(1.0, ink * 1.4));
+        base.a = max(base.a, e * ink);
+      }
+      // Papel: fibras y manchas suaves, tono cálido.
+      if (paper > 0.0) {
+        vec2 pp = vUv * res / (res.y / 720.0);
+        float n = fbm(pp / 90.0) * 0.6 + vn(pp / 2.5) * 0.4;
+        col *= mix(vec3(1.0), vec3(0.99, 0.95, 0.86) * (0.9 + 0.18 * n), paper);
+      }
+      // Líneas de TV.
+      if (scan > 0.0) {
+        float y = vUv.y * res.y;
+        col *= 1.0 - scan * 0.32 * (0.5 + 0.5 * sin(y * 3.14159 / max(1.0, res.y / 540.0)));
+        col *= 1.0 - scan * 0.12 * step(0.5, fract(vUv.y * 3.0 - time * 0.35)) * 0.5;
+        col = mix(col, col * vec3(1.06, 0.98, 1.04), scan * 0.5);
+      }
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), base.a);
+    }`,
+};
+const STYLE_KEYS = ['squiggle', 'ink', 'posterize', 'halftone', 'pixel', 'paint', 'paper', 'scan'] as const;
+
 /** Pase de rayos volumétricos: oclusión a baja resolución y desenfoque radial. */
 class GodRaysPass extends Pass {
   occ = new T.WebGLRenderTarget(1, 1);
@@ -133,13 +217,15 @@ export class FxPipeline {
   private god: GodRaysPass;
   private bloom: UnrealBloomPass;
   private final: ShaderPass;
+  private style: ShaderPass;
   private quality: Quality = 'medium';
   private w = 1; private h = 1;
   /** FPS medidos (para bajar la calidad sola). */
   fps = 60;
   private frames = 0; private t0 = performance.now(); private slow = 0;
-  constructor(renderer: T.WebGLRenderer, scene: T.Scene, camera: T.Camera) {
-    this.composer = new EffectComposer(renderer, new T.WebGLRenderTarget(1, 1, { type: T.HalfFloatType }));
+  /** `fixedRatio`: resolución exacta (renders), sin mirar la pantalla. */
+  constructor(renderer: T.WebGLRenderer, scene: T.Scene, camera: T.Camera, private fixedRatio = 0) {
+    this.composer = new EffectComposer(renderer, new T.WebGLRenderTarget(1, 1, { type: T.HalfFloatType, samples: fixedRatio ? 4 : 0 }));
     this.renderPass = new RenderPass(scene, camera);
     this.god = new GodRaysPass(scene, camera, QUALITY.medium.samples);
     this.bloom = new UnrealBloomPass(new T.Vector2(256, 256), 0.6, 0.4, 0.85);
@@ -149,9 +235,13 @@ export class FxPipeline {
     this.composer.addPass(this.bloom);
     this.composer.addPass(this.final);
     this.composer.addPass(new OutputPass());
+    this.style = new ShaderPass(STYLE);
+    this.composer.addPass(this.style);
   }
+  /** ¿Hay algún efecto de estilo (shader) activo? */
+  static styled(f: Fx3) { return STYLE_KEYS.some(k => (f[k] ?? 0) > 0); }
   /** ¿Hay algún efecto que procesar? */
-  static active(f: Fx3) { return f.godrays > 0 || f.bloom > 0 || f.chroma > 0 || f.glitch > 0 || f.tintAmt > 0 || f.vignette > 0 || f.grain > 0; }
+  static active(f: Fx3) { return f.godrays > 0 || f.bloom > 0 || f.chroma > 0 || f.glitch > 0 || f.tintAmt > 0 || f.vignette > 0 || f.grain > 0 || FxPipeline.styled(f); }
   setQuality(q: Quality) {
     if (q === this.quality) return;
     this.quality = q;
@@ -162,13 +252,14 @@ export class FxPipeline {
   setSize(w: number, h: number) {
     this.w = w; this.h = h;
     const q = QUALITY[this.quality];
-    const pr = Math.min(window.devicePixelRatio || 1, q.ratio);
+    const pr = this.fixedRatio || Math.min(window.devicePixelRatio || 1, q.ratio);
     this.composer.setPixelRatio(pr);
     this.composer.setSize(w, h);
     this.god.scale = q.occ;
     this.god.setSize(w * pr, h * pr);
     this.bloom.resolution.set(w * pr * q.bloomRes, h * pr * q.bloomRes);
     this.final.uniforms.res.value.set(w * pr, h * pr);
+    this.style.uniforms.res.value.set(w * pr, h * pr);
   }
   /** Dibuja con efectos. `sunDir` = dirección hacia la luz principal (null = sin rayos). */
   render(scene: T.Scene, camera: T.Camera, f: Fx3, time: number, sunDir: T.Vector3 | null) {
@@ -180,6 +271,10 @@ export class FxPipeline {
     const u = this.final.uniforms;
     u.tRays.value = this.god.rays.texture; u.rays.value = this.god.enabled ? f.godrays : 0; u.rayColor.value.set(f.godColor);
     u.chroma.value = f.chroma; u.glitch.value = f.glitch; u.time.value = time; u.tint.value.set(f.tint); u.tintAmt.value = f.tintAmt; u.vignette.value = f.vignette; u.grain.value = f.grain;
+    const st = this.style.uniforms;
+    this.style.enabled = FxPipeline.styled(f);
+    for (const k of STYLE_KEYS) st[k].value = f[k] ?? 0;
+    st.time.value = time; st.squigFps.value = f.squigFps ?? 8; st.squigSize.value = f.squigSize ?? 40; st.inkColor.value.set(f.inkColor ?? '#1a1420');
     this.composer.render();
     this.tick(f);
   }

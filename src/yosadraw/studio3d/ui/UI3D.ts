@@ -348,7 +348,7 @@ export class UI3D {
     const b = (label: string, title: string, run: () => void, cls = 'btn sm') => h('button', { type: 'button', class: cls, title, on: { click: run } }, label);
     const slow = h('select', { class: 'mo-sel', 'aria-label': 'Velocidad', title: 'Cámara lenta' }, ...[[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [2, '2×']].map(([v, l]) => h('option', { value: String(v) }, String(l))));
     slow.addEventListener('change', () => { live.timescale = Number(slow.value); });
-    const slider = (k: 'godrays' | 'bloom' | 'chroma' | 'glitch' | 'tintAmt', label: string, max: number) => {
+    const slider = (k: 'godrays' | 'bloom' | 'chroma' | 'glitch' | 'tintAmt' | 'squiggle' | 'ink', label: string, max: number) => {
       const r = h('input', { type: 'range', min: '0', max: String(max), step: '0.01', value: String(live.fx[k]), 'aria-label': label, title: label });
       r.addEventListener('input', () => { live.fx[k] = Number(r.value); });
       r.addEventListener('change', () => s.setFx({ [k]: Number(r.value) }));
@@ -361,7 +361,7 @@ export class UI3D {
         b(live.recording ? '● Grabando…' : '● Grabar keyframes', 'Graba lo que pasa (física y personajes) para guardarlo como animación', () => { if (live.recording) void this.saveRec(); else live.startRec(); this.renderHud(); }, `btn sm${live.recording ? ' s3-rec' : ''}`),
         b(this.video ? '⏺ Parar vídeo' : '⏺ Grabar vídeo', 'Graba en vídeo lo que se ve, con los efectos', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
         slow, h('span', { class: 's3-fps' })),
-      h('div', { class: 's3-hudrow s3-hudfx' }, slider('godrays', 'Luz volumétrica', 2), slider('bloom', 'Resplandor', 3), slider('chroma', 'Aberración', 3), slider('glitch', 'Glitch', 1), slider('tintAmt', 'Tinte', 1)),
+      h('div', { class: 's3-hudrow s3-hudfx' }, slider('godrays', 'Luz volumétrica', 2), slider('bloom', 'Resplandor', 3), slider('chroma', 'Aberración', 3), slider('glitch', 'Glitch', 1), slider('tintAmt', 'Tinte', 1), slider('squiggle', 'Squiggle', 1), slider('ink', 'Tinta', 1)),
       h('div', { class: 's3-hudlog' }),
       h('div', { class: 's3-hudhelp' }, 'Arrastra lo dinámico para agarrarlo y sacudirlo (rueda: acercar o alejar) · arrastra en el suelo para guiar a los personajes «hacia el ratón» · Espacio: saltar · botón central: girar la vista · Esc: parar'));
     this.hud.hidden = false;
