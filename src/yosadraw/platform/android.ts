@@ -68,7 +68,7 @@ export function installAndroidBridge() {
 
   const bridge: DesktopBridge = {
     platform: 'android',
-    version: '1.15.1',
+    version: '1.15.2',
     loadLibrary: async () => (await files.readText({ name: 'library.json' })).data,
     saveLibrary: json => files.writeText({ name: 'library.json', data: json }),
     loadSettings: async () => (await files.readText({ name: 'settings.json' })).data,

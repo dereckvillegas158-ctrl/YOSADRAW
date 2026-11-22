@@ -1,4 +1,13 @@
-## YOSADRAW 1.15.1
+## YOSADRAW 1.15.2
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.15.2-x64.exe` (instalador), `YOSADRAW-1.15.2-x64-portable.exe` o `YOSADRAW-1.15.2-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.15.2.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### «Siempre de pie» y la inclinación de frente, juntos
+- Un personaje con **Siempre de pie (no vuelca)** ahora también se inclina de frente al arrastrarlo con el ratón (desde el punto donde lo agarras, sin dejar de mirar al frente). Al soltarlo se balancea y vuelve a quedar de pie: nunca se cae ni vuelca, y sigue caminando, saltando y respondiendo a sus teclas de actor como siempre.
+
+### Versión anterior: YOSADRAW 1.15.1
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.15.1-x64.exe` (instalador), `YOSADRAW-1.15.1-x64-portable.exe` o `YOSADRAW-1.15.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
