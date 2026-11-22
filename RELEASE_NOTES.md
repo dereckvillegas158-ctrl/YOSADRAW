@@ -1,4 +1,14 @@
-## YOSADRAW 1.15.0
+## YOSADRAW 1.15.1
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.15.1-x64.exe` (instalador), `YOSADRAW-1.15.1-x64-portable.exe` o `YOSADRAW-1.15.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.15.1.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Arrastre más vivo en el modo En vivo
+- **Los dibujos se inclinan de frente al arrastrarlos:** al mover el ratón hacia un lado, el dibujo gira en su propio plano (como una hoja agarrada por arriba: la parte de abajo se queda atrás), sin dejar de mirar al frente y sin necesitar «mirar a la cámara». Al parar oscila un poco y al soltarlo vuelve a ponerse derecho. Cuanto más **Balanceo al arrastrar**, más se inclina.
+- Nueva opción en Objeto → Física y control: **Al arrastrarlo con el ratón**: «Se inclina de frente» (por defecto en los dibujos) o «Gira libre en 3D» (por defecto en los demás objetos, como hasta ahora).
+
+### Versión anterior: YOSADRAW 1.15.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.15.0-x64.exe` (instalador), `YOSADRAW-1.15.0-x64-portable.exe` o `YOSADRAW-1.15.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

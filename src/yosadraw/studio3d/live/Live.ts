@@ -47,7 +47,11 @@ export class Live {
   private handlers = new Map<string, ((e: { a?: string; b?: string; key?: string }) => void)[]>();
   private timers: { at: number; every: number; fn: () => void }[] = [];
   private pairCool = new Map<string, number>();
-  private grab: { info: BodyInfo; joint: C.PointToPointConstraint; mouse: C.Body; dist: number; plane: T.Plane } | null = null;
+  private grab: {
+    info: BodyInfo; joint: C.PointToPointConstraint; mouse: C.Body; dist: number; plane: T.Plane;
+    /** Inclinación de frente (como una hoja): giro en su plano, muelle y velocidad del ratón. */
+    face: { q0: T.Quaternion; roll: number; rollV: number; vel: number; prev: T.Vector3; side: number } | null;
+  } | null = null;
   private steer = false;
   private spawned: string[] = [];
   private shakeAmt = 0; private shakeEnd = 0;
@@ -280,6 +284,7 @@ export class Live {
         const k = (grabbed ? 4 : 7) * m, d = (grabbed ? 1.4 : 0.9) * m;
         body.torque.vadd(new C.Vec3(axis.x * k - body.angularVelocity.x * d, axis.y * k - body.angularVelocity.y * d * 0.3, axis.z * k - body.angularVelocity.z * d), body.torque);
       }
+      if (grabbed && this.grab!.face) { this.faceRoll(b, this.grab!.face); continue; }
       if (grabbed && ph.swing > 0) {
         // Balanceo: la parte de abajo se queda atrás al arrastrar.
         const v = body.velocity;
@@ -289,6 +294,32 @@ export class Live {
       }
     }
   }
+  /** ¿Se inclina de frente al arrastrarlo? (por defecto, los dibujos). */
+  private faces(b: BodyInfo) { return b.ph.turn ? b.ph.turn === 'face' : !!b.obj.card; }
+  /**
+   * Inclinación de frente: el objeto gira sólo alrededor del eje de la vista (sigue
+   * mirando hacia donde miraba) y se balancea como una hoja agarrada: al mover el
+   * ratón hacia un lado la parte que no se agarra se queda atrás, y al parar oscila
+   * y vuelve. Muelle amortiguado, a paso fijo.
+   */
+  private faceRoll(b: BodyInfo, f: NonNullable<NonNullable<Live['grab']>['face']>) {
+    const camQ = this.view.liveCamera.quaternion;
+    const fwd = new T.Vector3(0, 0, -1).applyQuaternion(camQ), right = new T.Vector3(1, 0, 0).applyQuaternion(camQ);
+    const mp = this.grab!.mouse.position, cur = new T.Vector3(mp.x, mp.y, mp.z);
+    const v = cur.clone().sub(f.prev).dot(right) / STEP;
+    f.prev.copy(cur);
+    f.vel += (v - f.vel) * 0.25;
+    const sw = Math.max(0.05, b.ph.swing);
+    // Agarrado por arriba, la parte de abajo se queda atrás (y al revés si se agarra por abajo).
+    const target = Math.max(-1.1, Math.min(1.1, f.vel * 0.11 * sw)) * f.side;
+    const k = 55, c = 4.2 + (1 - Math.min(1, sw)) * 4;
+    f.rollV += (-(f.roll - target) * k - f.rollV * c) * STEP;
+    f.roll = Math.max(-1.4, Math.min(1.4, f.roll + f.rollV * STEP));
+    const q = new T.Quaternion().setFromAxisAngle(fwd, f.roll).multiply(f.q0);
+    b.body.quaternion.set(q.x, q.y, q.z, q.w);
+    b.body.angularVelocity.set(0, 0, 0);
+  }
+
   // ---------------------------------------------------------------- actores
 
   /** Teclas de un actor («1», «1, q», «z x»…), en minúsculas. */
@@ -429,7 +460,14 @@ export class Live {
       info.body.wakeUp();
       const cam = v.liveCamera;
       const n = new T.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-      this.grab = { info, joint, mouse, dist: 0, plane: new T.Plane().setFromNormalAndCoplanarPoint(n, p) };
+      // De frente: no gira por la física; la inclinación la lleva faceRoll.
+      let face: NonNullable<Live['grab']>['face'] = null;
+      if (this.faces(info)) {
+        const bq = info.body.quaternion;
+        info.body.fixedRotation = true; info.body.updateMassProperties();
+        face = { q0: new T.Quaternion(bq.x, bq.y, bq.z, bq.w), roll: 0, rollV: 0, vel: 0, prev: p.clone(), side: local.y >= 0 ? 1 : -1 };
+      }
+      this.grab = { info, joint, mouse, dist: 0, plane: new T.Plane().setFromNormalAndCoplanarPoint(n, p), face };
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       this.emit('grab', { a: info.id });
       v.controls.enabled = false;
@@ -457,6 +495,13 @@ export class Live {
       this.world.removeConstraint(this.grab.joint);
       this.world.removeBody(this.grab.mouse);
       this.grab.info.free = this.time + 0.6;
+      const f = this.grab.face, body = this.grab.info.body;
+      if (f) {
+        // Al soltarlo sigue oscilando con el giro que llevaba y luego se endereza.
+        body.fixedRotation = false; body.updateMassProperties();
+        const fwd = new T.Vector3(0, 0, -1).applyQuaternion(this.view.liveCamera.quaternion).multiplyScalar(f.rollV);
+        body.angularVelocity.set(fwd.x, fwd.y, fwd.z);
+      }
       this.emit('release', { a: this.grab.info.id });
       this.grab = null;
     }

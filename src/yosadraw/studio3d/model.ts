@@ -67,6 +67,12 @@ export interface Phys3 {
   swing: number;
   /** Flota (sin gravedad): se queda donde lo sueltas y vuelve a ponerse derecho. */
   float: boolean;
+  /**
+   * Al arrastrarlo: «face» = se inclina en su plano sin dejar de mirar hacia donde
+   * mira (como una hoja agarrada); «free» = gira libre en 3D. Sin valor: los
+   * dibujos (carteles) «face» y lo demás «free».
+   */
+  turn?: 'face' | 'free';
 }
 export type Behavior = 'walk' | 'mouse' | 'patrol' | 'idle';
 export interface Ctrl3 {
