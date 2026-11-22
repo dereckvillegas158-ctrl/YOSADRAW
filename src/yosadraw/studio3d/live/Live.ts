@@ -60,10 +60,17 @@ export class Live {
   onLog: (l: LiveLog) => void = () => {};
   onState: () => void = () => {};
   private keyFn = (e: KeyboardEvent) => this.key(e);
+  private keyUpFn = (e: KeyboardEvent) => { this.held.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key); };
+  /** Actor que se controla ahora (con su tecla); los demás actores esperan. */
+  private actor: BodyInfo | null = null;
+  /** Teclas de movimiento pulsadas (WASD / flechas) para el actor. */
+  private held = new Set<string>();
+  /** Tecla H: ocultar o mostrar la interfaz (la pone la interfaz). */
+  onToggleUi: () => void = () => {};
 
   constructor(private s: Studio3D, private view: View3D) {
     const fx = { ...defaultFx(), ...(s.scene.fx ?? {}) };
-    this.hooks = { world: new Map(), hidden: new Set(), lightK: new Map(), lightColor: new Map(), matColor: new Map(), shake: new T.Vector3(), fx, time: 0 };
+    this.hooks = { world: new Map(), hidden: new Set(), lightK: new Map(), lightColor: new Map(), matColor: new Map(), shake: new T.Vector3(), fx, time: 0, actor: null };
   }
   get fx() { return this.hooks.fx; }
   get bodyCount() { return this.bodies.size; }
@@ -96,6 +103,7 @@ export class Live {
     this.time = 0;
     this.running = true;
     window.addEventListener('keydown', this.keyFn, true);
+    window.addEventListener('keyup', this.keyUpFn, true);
     this.emit('start', {});
     this.last = performance.now();
     this.raf = requestAnimationFrame(t => this.loop(t));
@@ -106,6 +114,8 @@ export class Live {
     this.running = false;
     cancelAnimationFrame(this.raf);
     window.removeEventListener('keydown', this.keyFn, true);
+    window.removeEventListener('keyup', this.keyUpFn, true);
+    this.held.clear();
     this.view.resetLive();
     this.onState();
   }
@@ -227,7 +237,8 @@ export class Live {
       const a = c.dir * D2R;
       const fwd = new T.Vector3(Math.cos(a), 0, -Math.sin(a));
       let want = new T.Vector3();
-      if (c.behavior === 'walk') want = fwd.clone().multiplyScalar(c.speed);
+      if (this.actorKeys(b).length) want = this.actorWant(b, c);
+      else if (c.behavior === 'walk') want = fwd.clone().multiplyScalar(c.speed);
       else if (c.behavior === 'patrol') {
         const off = new T.Vector3(b.body.position.x - b.origin.x, 0, b.body.position.z - b.origin.z).dot(fwd);
         if (off > c.dist) b.patrolSign = -1; else if (off < 0) b.patrolSign = 1;
@@ -278,6 +289,61 @@ export class Live {
       }
     }
   }
+  // ---------------------------------------------------------------- actores
+
+  /** Teclas de un actor («1», «1, q», «z x»…), en minúsculas. */
+  private actorKeys(b: BodyInfo): string[] {
+    const k = b.ctrl?.keys?.trim();
+    if (!k) return [];
+    return k.split(/[\s,;]+/).filter(Boolean).map(x => (x.length === 1 ? x.toLowerCase() : x));
+  }
+  /** Actores de la escena (para la barra del modo En vivo). */
+  actors(): { id: string; name: string; keys: string; active: boolean }[] {
+    return [...this.bodies.values()].filter(b => this.actorKeys(b).length).map(b => ({ id: b.id, name: b.obj.name, keys: this.actorKeys(b).join(', ').toUpperCase(), active: this.actor === b }));
+  }
+  /** Elige el actor que se controla (null = ninguno). */
+  selectActor(id: string | null) {
+    const b = id ? this.bodies.get(id) ?? null : null;
+    if (b && !this.actorKeys(b).length) return;
+    if (this.actor && this.actor !== b) this.actor.target = null;
+    this.actor = b;
+    this.hooks.actor = b?.id ?? null;
+    if (b) { b.target = null; b.body.wakeUp(); this.log(`🎮 Controlas a «${b.obj.name}»`); }
+    this.onState();
+  }
+  get activeActor() { return this.actor?.id ?? null; }
+  /** Hacia dónde quiere ir un actor: el elegido sigue las teclas o el clic; los demás esperan o vuelven a su sitio. */
+  private actorWant(b: BodyInfo, c: Ctrl3): T.Vector3 {
+    const pos = b.body.position;
+    const toward = (x: number, z: number, stop: number) => {
+      const d = new T.Vector3(x - pos.x, 0, z - pos.z), L = d.length();
+      return L > stop ? d.multiplyScalar(Math.min(c.speed, L * 3) / L) : null;
+    };
+    if (b === this.actor) {
+      const h = this.held;
+      const f = new T.Vector3(0, 0, -1).applyQuaternion(this.view.liveCamera.quaternion); f.y = 0;
+      if (f.lengthSq() < 1e-6) f.set(0, 0, -1);
+      f.normalize();
+      const r = new T.Vector3().crossVectors(f, new T.Vector3(0, 1, 0));
+      const mv = new T.Vector3();
+      if (h.has('w') || h.has('ArrowUp')) mv.add(f);
+      if (h.has('s') || h.has('ArrowDown')) mv.sub(f);
+      if (h.has('d') || h.has('ArrowRight')) mv.add(r);
+      if (h.has('a') || h.has('ArrowLeft')) mv.sub(r);
+      if (mv.lengthSq() > 0) { b.target = null; return mv.normalize().multiplyScalar(c.speed); }
+      if (b.target) { const w = toward(b.target.x, b.target.z, 0.25); if (w) return w; if (!this.steer) b.target = null; }
+      return new T.Vector3();
+    }
+    if (c.rest === 'return') return toward(b.origin.x, b.origin.z, 0.15) ?? new T.Vector3();
+    return new T.Vector3();
+  }
+  /** Punto de la escena bajo el puntero (suelo, objetos, paredes) para mandar allí al actor. */
+  private pointAt(e: PointerEvent, skip: string): T.Vector3 | null {
+    const v = this.view;
+    const hits = v.rayAt(e).intersectObjects(v.rootNode.children, true).filter(h => (h.object as T.Mesh).isMesh && h.object.visible && h.object.userData.oid && h.object.userData.oid !== skip && !h.object.userData.helper);
+    return hits[0]?.point.clone() ?? v.groundAt(e);
+  }
+
   /** ¿Apoyado en algo? (algún contacto con la normal hacia arriba). */
   private groundedAt(b: BodyInfo): boolean {
     for (const c of this.world.contacts) {
@@ -340,6 +406,12 @@ export class Live {
     if (!this.running) return false;
     if (e.button !== 0) return false;
     const v = this.view;
+    // Con un actor elegido, el clic sólo lo mueve a él (no agarra ni elige nada).
+    if (this.actor && this.fx.actorClick !== false) {
+      const p = this.pointAt(e, this.actor.id);
+      if (p) { this.actor.target = p; this.steer = true; (e.target as HTMLElement).setPointerCapture(e.pointerId); v.controls.enabled = false; }
+      return true;
+    }
     // Agarrar un objeto con física (o un personaje): queda unido al puntero con un muelle.
     const hits = v.rayAt(e).intersectObjects([...this.bodies.keys()].map(id => v.nodeOf(id)?.mesh).filter((m): m is T.Mesh => !!m), false);
     const hit = hits[0];
@@ -376,6 +448,7 @@ export class Live {
       if (v.rayAt(e).ray.intersectPlane(this.grab.plane, p)) this.grab.mouse.position.set(p.x, p.y, p.z);
       return;
     }
+    if (this.steer && this.actor && this.fx.actorClick !== false) { const p = this.pointAt(e, this.actor.id); if (p) this.actor.target = p; return; }
     if (this.steer) { const g = v.groundAt(e); if (g) for (const b of this.bodies.values()) if (b.ctrl?.behavior === 'mouse') b.target = g.clone(); }
   }
   private up() {
@@ -406,8 +479,16 @@ export class Live {
     const t = e.target as HTMLElement;
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color'].includes(t.type))) return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    // Espacio: saltan los personajes (si no hay una regla propia para el espacio).
-    if (k === ' ' && !this.rules.some(r => r.on.type === 'key' && r.on.key === ' ')) for (const b of this.bodies.values()) if (b.ctrl) this.jump(b, b.ctrl.jump);
+    const ruleKey = (x: string) => this.rules.some(r => r.on.type === 'key' && (r.on.key ?? '').toLowerCase() === x) || this.handlers.has(`key:${x}`);
+    const actorOf = [...this.bodies.values()].find(b => this.actorKeys(b).includes(k));
+    // H: ocultar o mostrar la interfaz (si ninguna regla ni actor usa la H).
+    if (k === 'h' && !actorOf && !ruleKey('h') && !e.repeat) { e.preventDefault(); e.stopPropagation(); this.onToggleUi(); return; }
+    // Tecla de un actor: pasa a controlarse ese; el anterior se queda quieto o vuelve a su sitio.
+    if (actorOf && !e.repeat && this.actor !== actorOf) this.selectActor(actorOf.id);
+    // WASD / flechas: mueven al actor elegido.
+    if (this.actor && ['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) this.held.add(k);
+    // Espacio: saltan los personajes (si no hay una regla propia para el espacio); con un actor elegido, sólo él.
+    if (k === ' ' && !this.rules.some(r => r.on.type === 'key' && r.on.key === ' ')) { if (this.actor) this.jump(this.actor, this.actor.ctrl?.jump ?? 5); else for (const b of this.bodies.values()) if (b.ctrl) this.jump(b, b.ctrl.jump); }
     this.emit('key', { key: k });
     e.preventDefault(); e.stopPropagation();
   }

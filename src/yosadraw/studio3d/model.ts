@@ -38,10 +38,21 @@ export interface Obj3 {
   /** Personaje controlable (dirección, velocidad, comportamiento). */
   ctrl?: Ctrl3;
   /** Dibujo en 3D: cartel que mira a la cámara (sólo gira en Y). */
-  card?: { billboard: boolean };
+  card?: { billboard: boolean; /** Grosor (volumen 3D del dibujo, en m; 0 = plano). */ depth?: number };
+  /** Estilo propio (shaders) sólo para este objeto: se ve en los modos Materiales y Render, en vivo y en los renders. */
+  style?: ObjStyle;
   /** Comportamiento de una luz en vivo. */
   lightFx?: 'none' | 'flicker' | 'pulse' | 'orbit';
 }
+/** Estilo (shaders) de un objeto concreto. */
+export interface ObjStyle {
+  squiggle: number; squigFps: number; squigSize: number;
+  ink: number; inkColor: string; posterize: number; halftone: number; pixel: number; paint: number; scan: number;
+}
+export const STYLE_KEYS = ['squiggle', 'ink', 'posterize', 'halftone', 'pixel', 'paint', 'scan'] as const;
+export const defaultObjStyle = (): ObjStyle => ({ squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, scan: 0 });
+/** ¿Tiene algún efecto de estilo activo? */
+export const styled = (st: ObjStyle | undefined | null) => !!st && STYLE_KEYS.some(k => (st[k] ?? 0) > 0);
 export type BodyType = 'none' | 'dynamic' | 'kinematic' | 'static';
 export interface Phys3 {
   body: BodyType; mass: number; bounce: number; friction: number;
@@ -71,6 +82,10 @@ export interface Ctrl3 {
   lock: { x: boolean; y: boolean; z: boolean };
   /** Gelatina: cuánto se estira y aplasta al moverse o sacudirlo (0..1). */
   wobble: number;
+  /** Actor: teclas que lo eligen en vivo (p. ej. «1» o «1, q»); vacío = no es actor. */
+  keys?: string;
+  /** Actor sin control: se queda quieto o vuelve a su sitio. */
+  rest?: 'stay' | 'return';
 }
 export const defaultPhys = (body: BodyType = 'dynamic'): Phys3 => ({ body, mass: 1, bounce: 0.2, friction: 0.4, shape: 'auto', grab: true, zone: false, jelly: 0.3, swing: 0.5, float: false });
 /** Física de un dibujo (cartel): flota, se balancea y tiene gelatina al arrastrarlo. */
@@ -96,8 +111,12 @@ export interface Fx3 {
   gravity: number;
   /** Suelo infinito para la física (y = 0). */
   ground: boolean;
+  /** Volumen: oclusión ambiental (sombras de contacto en rincones y uniones). */
+  ao: number;
+  /** En vivo: con un actor elegido, el clic sólo mueve al actor (no agarra objetos). */
+  actorClick: boolean;
 }
-export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, paper: 0, scan: 0, gravity: 9.81, ground: true });
+export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, paper: 0, scan: 0, gravity: 9.81, ground: true, ao: 0, actorClick: true });
 
 /** Disparador: cuando pasa algo, se hacen acciones. */
 export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release';
@@ -429,6 +448,8 @@ export function normalizeStudio(v: unknown): Studio3 | null {
     for (const o of sc.objects) {
       if (o.phys !== undefined) o.phys = isObj(o.phys) ? { ...defaultPhys(), ...o.phys } : undefined;
       if (o.ctrl !== undefined) o.ctrl = isObj(o.ctrl) ? { ...defaultCtrl(), ...o.ctrl, lock: { ...defaultCtrl().lock, ...(isObj(o.ctrl.lock) ? o.ctrl.lock : {}) } } : undefined;
+      if (o.style !== undefined) o.style = isObj(o.style) ? { ...defaultObjStyle(), ...o.style } : undefined;
+      if (o.style === undefined) delete o.style;
       if (o.phys === undefined) delete o.phys;
       if (o.ctrl === undefined) delete o.ctrl;
     }

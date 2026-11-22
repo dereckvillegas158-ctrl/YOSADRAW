@@ -317,6 +317,7 @@ export class UI3D {
     this.live = live;
     live.onState = () => this.syncHud();
     live.onLog = l => this.hudLog(l.msg, l.error);
+    live.onToggleUi = () => this.toggleClean();
     live.start(runScript);
     this.el.classList.add('s3-playing');
     this.renderHud();
@@ -332,7 +333,7 @@ export class UI3D {
   private async afterStop() {
     const live = this.live;
     if (!live) return;
-    this.el.classList.remove('s3-playing');
+    this.el.classList.remove('s3-playing', 's3-clean');
     this.hud.hidden = true;
     this.playBtn.innerHTML = '▶ <span>En vivo</span>';
     if (live.recording) {
@@ -360,7 +361,9 @@ export class UI3D {
         b(live.paused ? '▶ Seguir' : '❚❚ Pausa', 'Pausa', () => { live.togglePause(); this.renderHud(); }),
         b(live.recording ? '● Grabando…' : '● Grabar keyframes', 'Graba lo que pasa (física y personajes) para guardarlo como animación', () => { if (live.recording) void this.saveRec(); else live.startRec(); this.renderHud(); }, `btn sm${live.recording ? ' s3-rec' : ''}`),
         b(this.video ? '⏺ Parar vídeo' : '⏺ Grabar vídeo', 'Graba en vídeo lo que se ve, con los efectos', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
-        slow, h('span', { class: 's3-fps' })),
+        slow, b('⛶ Ocultar interfaz', 'Ocultar la interfaz para jugar con la escena a pantalla completa (H)', () => this.toggleClean()), h('span', { class: 's3-fps' })),
+      h('div', { class: 's3-hudrow s3-hudmin' }, b('■', 'Parar (Esc)', () => void this.stopLive(), 'btn sm primary'), b('Mostrar interfaz (H)', 'Volver a ver los paneles', () => this.toggleClean())),
+      h('div', { class: 's3-hudrow s3-actors', hidden: true }),
       h('div', { class: 's3-hudrow s3-hudfx' }, slider('godrays', 'Luz volumétrica', 2), slider('bloom', 'Resplandor', 3), slider('chroma', 'Aberración', 3), slider('glitch', 'Glitch', 1), slider('tintAmt', 'Tinte', 1), slider('squiggle', 'Squiggle', 1), slider('ink', 'Tinta', 1)),
       h('div', { class: 's3-hudlog' }),
       h('div', { class: 's3-hudhelp' }, 'Arrastra lo dinámico para agarrarlo y sacudirlo (rueda: acercar o alejar) · arrastra en el suelo para guiar a los personajes «hacia el ratón» · Espacio: saltar · botón central: girar la vista · Esc: parar'));
@@ -373,7 +376,21 @@ export class UI3D {
     if (!live.running) { void this.afterStop(); return; }
     this.playBtn.innerHTML = live.running ? '■ <span>Parar</span>' : '▶ <span>En vivo</span>';
     const fps = this.hud.querySelector('.s3-fps');
-    if (fps) { const tick = () => { if (!this.live?.running) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos · ${live.time.toFixed(1)} s`; setTimeout(tick, 500); }; tick(); }
+    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos · ${live.time.toFixed(1)} s`; setTimeout(tick, 500); }; tick(); }
+    // Actores: quién se controla (clic en uno para elegirlo; en el activo, para soltarlo).
+    const bar = this.hud.querySelector<HTMLElement>('.s3-actors');
+    if (bar) {
+      const list = live.actors();
+      bar.hidden = !list.length;
+      bar.replaceChildren(...(list.length ? [h('span', { class: 'mo-unit' }, 'Actores:')] : []), ...list.map(a => h('button', { type: 'button', class: `btn sm${a.active ? ' primary' : ''}`, title: a.active ? 'Soltar el control' : `Controlar a «${a.name}» (${a.keys})`, on: { click: () => live.selectActor(a.active ? null : a.id) } }, `${a.keys} · ${a.name}`)));
+      if (list.length && !list.some(a => a.active)) bar.append(h('span', { class: 'mo-unit' }, 'pulsa su tecla para controlarlo'));
+    }
+  }
+  /** Ocultar la interfaz en vivo (sólo la escena, a pantalla completa) o volver a mostrarla. */
+  private toggleClean() {
+    if (!this.live?.running) return;
+    this.el.classList.toggle('s3-clean');
+    this.view.el.focus?.();
   }
   private hudLog(msg: string, error = false) {
     const el = this.hud.querySelector('.s3-hudlog');

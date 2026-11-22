@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { valueAt } from '../motion/keys';
 import { toast } from '../ui/dom';
 import * as M from './mesh';
-import { defaultFx, effLocked, effVisible, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
+import { defaultFx, effLocked, effVisible, styled, type ObjStyle, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
 import { round, type Studio3D } from './Studio3D';
 import { canvasToUrl, TexCache } from './textures';
 import { CONE_STEPS, FxPipeline, coneLight, volumeCone } from './live/fx';
@@ -16,9 +16,13 @@ export interface LiveHooks {
   world: Map<string, T.Matrix4>; hidden: Set<string>;
   lightK: Map<string, number>; lightColor: Map<string, string>; matColor: Map<string, string>;
   shake: T.Vector3; fx: Fx3; time: number;
+  /** Actor que se controla ahora (se marca con un aro en el suelo). */
+  actor?: string | null;
 }
 
 const D2R = Math.PI / 180;
+/** Sin efectos de escena (render sin «efectos y estilo»): sólo la calidad. */
+const STYLE_OFF_FX = (f: Partial<Fx3> | undefined): Partial<Fx3> => ({ quality: f?.quality ?? 'medium' });
 const ORANGE = new T.Color('#ffa63d'), ACTIVE = new T.Color('#ffd27a');
 
 interface Node3 {
@@ -31,6 +35,8 @@ interface Node3 {
   /** Intensidad de la luz según el proyecto (el modo En vivo la multiplica). */
   baseI?: number; baseColor?: string;
   cone?: T.Mesh; arrow?: T.ArrowHelper;
+  /** Capas del grosor de un dibujo (volumen). */
+  slices?: T.Mesh[]; slicesSig?: string;
 }
 
 /** Firma rápida de una malla (para no reconstruir la geometría si no cambió). */
@@ -145,7 +151,8 @@ export class View3D {
     this.tex.onLoad = () => { this.mats.clear(); this.sync(); };
     // Eventos.
     this.el.addEventListener('pointerdown', e => this.navMode(e), { capture: true });
-    cv.addEventListener('pointerdown', e => { if (this.liveInput?.down(e)) return; this.down(e); });
+    // En vivo no se elige ni se mueve nada del proyecto: el ratón es para la escena.
+    cv.addEventListener('pointerdown', e => { if (this.liveInput) { this.liveInput.down(e); return; } this.down(e); });
     cv.addEventListener('pointermove', e => { if (this.liveInput) { this.liveInput.move(e); return; } this.move(e); });
     cv.addEventListener('pointerup', e => { if (this.liveInput) { this.liveInput.up(e); return; } this.up(e); });
     cv.addEventListener('wheel', e => { if (this.liveInput?.wheel(e)) { e.preventDefault(); e.stopImmediatePropagation(); } }, { capture: true, passive: false });
@@ -270,16 +277,56 @@ export class View3D {
     // Temblor de cámara (sólo al dibujar).
     const sh = live?.shake;
     if (sh && sh.lengthSq() > 0) cam.position.add(sh);
-    if (fx && FxPipeline.active(fx)) {
+    // Estilos propios de los objetos: en los modos Materiales y Render (y en vivo).
+    const objStyles = live || this.mode === 'material' || this.mode === 'render' ? this.styleSlots() : this.styleSlots(true);
+    this.actorRing(live);
+    if (FxPipeline.needed(fx, objStyles.length)) {
+      const f = fx ?? { ...defaultFx(), quality: this.s.scene.fx?.quality ?? 'medium', adaptive: this.s.scene.fx?.adaptive ?? true };
       if (!this.fxp) { this.fxp = new FxPipeline(this.renderer, this.scene, cam); this.fxp.setSize(this.el.clientWidth || 1, this.el.clientHeight || 1); }
-      if (this.fxp.currentQuality !== fx.quality && !fx.adaptive) this.fxp.setQuality(fx.quality);
-      this.fxp.render(this.scene, cam, fx, live?.time ?? performance.now() / 1000, this.sunDir());
+      if (this.fxp.currentQuality !== f.quality && !f.adaptive) this.fxp.setQuality(f.quality);
+      this.fxp.render(this.scene, cam, f, live?.time ?? performance.now() / 1000, this.sunDir(), objStyles);
+      // Al editar, el squiggle de los objetos sigue temblando (a su ritmo, sin gastar más).
+      const fps = Math.max(0, ...objStyles.filter(x => x.squiggle > 0).map(x => x.squigFps), fx && fx.squiggle > 0 ? fx.squigFps : 0);
+      if (!live && fps > 0 && !this.boil) this.boil = window.setTimeout(() => { this.boil = 0; this.request(); }, 1000 / Math.min(30, fps));
     } else {
       this.renderer.render(this.scene, cam);
       if (fx && this.fxp) this.fxp.tick(fx);
     }
     if (sh && sh.lengthSq() > 0) cam.position.sub(sh);
     this.hud.textContent = this.hudText();
+  }
+  private boil = 0;
+  /**
+   * Ranuras de estilo: cada objeto visible con estilo propio recibe un número (en
+   * sus mallas) para la máscara de la cadena de efectos. `clear` = ninguno.
+   */
+  private styleSlots(clear = false): ObjStyle[] {
+    const out: ObjStyle[] = [];
+    for (const o of this.s.scene.objects) {
+      const n = this.nodes.get(o.id);
+      if (!n?.mesh) continue;
+      let slot = 0;
+      if (!clear && styled(o.style) && n.node.visible && out.length < 15) { out.push(o.style!); slot = out.length; }
+      n.mesh.userData.styleSlot = slot;
+      for (const m of n.slices ?? []) m.userData.styleSlot = slot;
+    }
+    return out;
+  }
+  private ring: T.Mesh | null = null;
+  /** Aro bajo el actor que se controla en vivo. */
+  private actorRing(live: LiveHooks | null) {
+    const n = live?.actor ? this.nodes.get(live.actor) : null;
+    if (!n?.mesh) { if (this.ring) this.ring.visible = false; return; }
+    if (!this.ring) {
+      this.ring = new T.Mesh(new T.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ color: '#5ad1ff', transparent: true, opacity: 0.85, depthWrite: false, side: T.DoubleSide }));
+      this.ring.userData.noOcclude = true; this.ring.raycast = () => undefined; this.ring.renderOrder = 5;
+      this.scene.add(this.ring);
+    }
+    const b = new T.Box3().setFromObject(n.mesh);
+    const c = b.getCenter(new T.Vector3()), sz = b.getSize(new T.Vector3());
+    this.ring.position.set(c.x, b.min.y + 0.03, c.z);
+    this.ring.scale.setScalar(Math.max(0.35, Math.max(sz.x, sz.z) * 0.75));
+    this.ring.visible = true;
   }
   /** FPS medidos con efectos (o 0 sin medir). */
   get fps() { return this.fxp?.fps ?? 0; }
@@ -354,6 +401,28 @@ export class View3D {
     this.nodes.clear();
     this.mats.forEach(m => m.dispose()); this.mats.clear();
     this.overlay.clear();
+  }
+  /** Grosor de un dibujo: capas recortadas una tras otra (las de dentro, más oscuras). */
+  private syncSlices(n: Node3, o: Obj3, ms: T.Material[], shadows: boolean) {
+    const d = o.card ? Math.max(0, Math.min(2, o.card.depth ?? 0)) : 0;
+    const N = d > 0 ? Math.max(4, Math.min(24, Math.round(d * 60))) : 0;
+    const sig = `${N}|${d}|${n.sig}|${ms.map(m => m.uuid).join(',')}`;
+    if (sig !== n.slicesSig) {
+      for (const m of n.slices ?? []) { m.removeFromParent(); for (const x of [m.material].flat()) if (!ms.includes(x) && x.name === 'slice') x.dispose(); }
+      n.slices = [];
+      if (N) {
+        const dark = ms.map(m => { const c = (m as T.MeshStandardMaterial).clone(); c.color?.multiplyScalar(0.62); c.name = 'slice'; return c; });
+        for (let i = 0; i <= N; i++) {
+          const z = -d / 2 + (d * i) / N;
+          if (Math.abs(z) < 1e-6) continue;
+          const sl = new T.Mesh(n.mesh!.geometry, i === 0 || i === N ? ms : dark);
+          sl.position.z = z; sl.userData.oid = o.id; sl.userData.slice = true; sl.raycast = () => undefined;
+          n.node.add(sl); n.slices.push(sl);
+        }
+      }
+      n.slicesSig = sig;
+    }
+    for (const sl of n.slices ?? []) { sl.castShadow = shadows && o.castShadow !== false; sl.receiveShadow = shadows; sl.customDepthMaterial = n.mesh!.customDepthMaterial; }
   }
   private disposeNode(n: Node3) {
     n.node.removeFromParent();
@@ -452,6 +521,7 @@ export class View3D {
         const cutMap = (ms.find(x => (x as T.MeshStandardMaterial).alphaTest > 0 && (x as T.MeshStandardMaterial).map) as T.MeshStandardMaterial | undefined)?.map ?? null;
         if (cutMap) { const dm = n.mesh!.customDepthMaterial as T.MeshDepthMaterial | undefined; if (!dm || dm.map !== cutMap) n.mesh!.customDepthMaterial = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, map: cutMap, alphaTest: 0.5 }); }
         else if (n.mesh!.customDepthMaterial) n.mesh!.customDepthMaterial = undefined;
+        this.syncSlices(n, o, ms, mode === 'render');
         // Zonas: se ven al editar (semitransparentes), no en vivo.
         if (o.phys?.zone) n.mesh!.visible = !this.live;
         else n.mesh!.visible = true;
@@ -459,7 +529,7 @@ export class View3D {
         n.mesh!.castShadow = o.castShadow !== false && mode === 'render' && !ms.every(x => x.transparent && x.opacity < 0.6);
         n.mesh!.receiveShadow = mode === 'render';
         // Contorno de selección (aristas marcadas).
-        const on = sel.has(o.id) && s.mode === 'object';
+        const on = sel.has(o.id) && s.mode === 'object' && !this.live;
         if (on && n.outlineSig !== n.sig) {
           n.outline?.geometry.dispose(); n.outline?.removeFromParent();
           n.outline = new T.LineSegments(new T.EdgesGeometry(n.mesh!.geometry, 25), new T.LineBasicMaterial({ color: ORANGE, depthTest: false, transparent: true, opacity: 0.9 }));
@@ -628,7 +698,7 @@ export class View3D {
       }
       this.proxy.updateMatrixWorld(true);
     }
-    this.tc.enabled = show;
+    this.tc.enabled = show && !this.live;
     this.tc.getHelper().visible = show;
     this.request();
   }
@@ -1049,19 +1119,10 @@ export class View3D {
     if (!cam) { const c = this.persp.clone(); c.aspect = W / H; c.updateProjectionMatrix(); cam = c; }
     // Efectos y estilo (shaders) de la escena, si están activados para el render.
     const fx = (o.fx ?? s.s.render.fx !== false) ? { ...defaultFx(), ...(s.scene.fx ?? {}) } : null;
-    let px: Uint8Array | null = null, styled: HTMLCanvasElement | null = null;
-    if (fx && FxPipeline.active(fx)) styled = this.renderFx(cam, fx, W, H, o.time ?? t0);
-    else {
-      const rt = new T.WebGLRenderTarget(W, H, { samples: 4, colorSpace: T.SRGBColorSpace, type: T.UnsignedByteType });
-      this.renderer.setRenderTarget(rt);
-      this.renderer.setClearColor(0x000000, 0);
-      this.renderer.clear();
-      this.renderer.render(this.scene, cam);
-      px = new Uint8Array(W * H * 4);
-      this.renderer.readRenderTargetPixels(rt, 0, 0, W, H, px);
-      this.renderer.setRenderTarget(null);
-      rt.dispose();
-    }
+    // Todo render pasa por la misma cadena (tono y exposición como en la vista); los
+    // efectos que no están activos no cuestan nada.
+    const objStyles = this.styleSlots();
+    const big0 = this.renderFx(cam, fx ?? { ...defaultFx(), ...STYLE_OFF_FX(s.scene.fx) }, W, H, o.time ?? t0, objStyles);
     // Volver como estaba.
     s.prefs.shading = prev;
     s.s.time = t0;
@@ -1069,13 +1130,7 @@ export class View3D {
     this.mats.clear();
     this.sync();
     // Píxeles (de abajo arriba) → lienzo; reducir si se renderizó más grande (antialiasing).
-    let big = styled;
-    if (!big) {
-      big = document.createElement('canvas'); big.width = W; big.height = H;
-      const img = new ImageData(W, H);
-      for (let y = 0; y < H; y++) img.data.set(px!.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
-      big.getContext('2d')!.putImageData(img, 0, 0);
-    }
+    const big = big0;
     if (W === w && H === h) return big;
     const out = document.createElement('canvas'); out.width = w; out.height = h;
     const g = out.getContext('2d')!; g.imageSmoothingQuality = 'high'; g.drawImage(big, 0, 0, w, h);
@@ -1085,7 +1140,7 @@ export class View3D {
    * Render con la cadena de efectos a W × H exactos: se dibuja en el lienzo del
    * visor a ese tamaño (sin escalar por la pantalla) y se copia; luego se deja como estaba.
    */
-  private renderFx(cam: T.Camera, fx: Fx3, W: number, H: number, time: number): HTMLCanvasElement {
+  private renderFx(cam: T.Camera, fx: Fx3, W: number, H: number, time: number, objStyles: ObjStyle[] = []): HTMLCanvasElement {
     const r = this.renderer, pr = r.getPixelRatio(), size = r.getSize(new T.Vector2());
     const gl = r.getContext();
     r.setPixelRatio(1);
@@ -1098,7 +1153,7 @@ export class View3D {
     const out = document.createElement('canvas'); out.width = W; out.height = H;
     try {
       r.setClearColor(0x000000, 0);
-      p.render(this.scene, cam, { ...fx, adaptive: false }, time, this.sunDir());
+      p.render(this.scene, cam, { ...fx, adaptive: false }, time, this.sunDir(), objStyles);
       out.getContext('2d')!.drawImage(r.domElement, 0, 0, dw, dh, 0, 0, W, H);
     } finally {
       p.dispose();
