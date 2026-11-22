@@ -33,7 +33,66 @@ export interface Obj3 {
   light?: { type: LightType; color: Prop<string>; intensity: Prop; dist: number; angle: Prop; shadow: boolean; ground: string };
   cam?: { fov: Prop; near: number; far: number };
   castShadow?: boolean;
+  /** Física en el modo En vivo. */
+  phys?: Phys3;
+  /** Personaje controlable (dirección, velocidad, comportamiento). */
+  ctrl?: Ctrl3;
+  /** Dibujo en 3D: cartel que mira a la cámara (sólo gira en Y). */
+  card?: { billboard: boolean };
+  /** Comportamiento de una luz en vivo. */
+  lightFx?: 'none' | 'flicker' | 'pulse' | 'orbit';
 }
+export type BodyType = 'none' | 'dynamic' | 'kinematic' | 'static';
+export interface Phys3 {
+  body: BodyType; mass: number; bounce: number; friction: number;
+  shape: 'auto' | 'box' | 'sphere';
+  /** Se puede agarrar y sacudir con el ratón. */
+  grab: boolean;
+  /** Zona (no choca: avisa cuando algo entra; sirve para disparadores). */
+  zone: boolean;
+}
+export type Behavior = 'walk' | 'mouse' | 'patrol' | 'idle';
+export interface Ctrl3 {
+  behavior: Behavior;
+  /** Dirección (grados en el suelo: 0 = +X, 90 = hacia el fondo, -Z). */
+  dir: number;
+  speed: number; jump: number;
+  /** Recorrido de la patrulla (m). */
+  dist: number;
+  /** Siempre de pie (no vuelca). */
+  upright: boolean;
+  /** Ejes bloqueados para su movimiento. */
+  lock: { x: boolean; y: boolean; z: boolean };
+  /** Gelatina: cuánto se estira y aplasta al moverse o sacudirlo (0..1). */
+  wobble: number;
+}
+export const defaultPhys = (body: BodyType = 'dynamic'): Phys3 => ({ body, mass: 1, bounce: 0.2, friction: 0.4, shape: 'auto', grab: true, zone: false });
+export const defaultCtrl = (): Ctrl3 => ({ behavior: 'walk', dir: 0, speed: 2, jump: 5, dist: 4, upright: true, lock: { x: false, y: false, z: false }, wobble: 0.4 });
+
+/** Efectos en tiempo real de una escena (modo En vivo y vista previa). */
+export interface Fx3 {
+  quality: 'low' | 'medium' | 'high';
+  /** Bajar la calidad sola si van pocos FPS. */
+  adaptive: boolean;
+  /** Ver los efectos también al editar. */
+  preview: boolean;
+  godrays: number; godColor: string;
+  /** Conos de luz volumétrica en los focos. */
+  cones: number;
+  bloom: number; chroma: number; glitch: number;
+  tint: string; tintAmt: number; vignette: number; grain: number;
+  shadows: 0 | 1 | 2 | 3;
+  gravity: number;
+  /** Suelo infinito para la física (y = 0). */
+  ground: boolean;
+}
+export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, gravity: 9.81, ground: true });
+
+/** Disparador: cuando pasa algo, se hacen acciones. */
+export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release';
+export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script';
+export interface Act3 { type: ActType; target: string; v?: [number, number, number]; value?: number; color?: string; param?: string; dur?: number; code?: string }
+export interface Rule3 { id: string; name: string; enabled: boolean; once: boolean; on: { type: EventType; t?: number; key?: string; a?: string; b?: string }; do: Act3[] }
 export interface Mat3 {
   id: string; name: string;
   color: Prop<string>; rough: Prop; metal: Prop; opacity: Prop; emissive: Prop<string>; emissiveI: Prop;
@@ -41,6 +100,8 @@ export interface Mat3 {
   tex: string | null; proc: string | null; texScale: number;
   /** Estilizado (sombreado de dibujo animado). */
   toon: boolean; fav: boolean;
+  /** Recorte por transparencia (dibujos: lo transparente no se ve ni hace sombra). */
+  cut?: boolean;
 }
 export interface Tex3 { id: string; name: string; src: string; project?: { id: string; rev: number } | null }
 export interface Scene3 {
@@ -48,6 +109,10 @@ export interface Scene3 {
   camera: string | null;
   env: { bg: string; transparent: boolean; envLight: number; exposure: number; fog: number };
   fps: number; dur: number;
+  /** Modo En vivo: efectos, disparadores y programa. */
+  fx?: Fx3;
+  rules?: Rule3[];
+  script?: string;
 }
 export interface RenderSet { w: number; h: number; quality: 1 | 2 | 3; shadows: 0 | 1 | 2 | 3; transparent: boolean }
 export interface Studio3 {
@@ -197,7 +262,7 @@ export function rebuild(o: Obj3) {
 // ---------------------------------------------------------------- escenas y proyecto
 
 export function newScene(name: string, mats: Mat3[]): Scene3 {
-  const sc: Scene3 = { id: sid('sc'), name, objects: [], camera: null, env: { bg: '#2b2838', transparent: false, envLight: 1, exposure: 1, fog: 0 }, fps: 30, dur: 5 };
+  const sc: Scene3 = { id: sid('sc'), name, objects: [], camera: null, env: { bg: '#2b2838', transparent: false, envLight: 1, exposure: 1, fog: 0 }, fps: 30, dur: 5, fx: defaultFx(), rules: [], script: '' };
   const sun = lightObject('dir', [4, 8, 5]);
   sun.name = 'Sol';
   const amb = lightObject('hemi', [0, 6, 0]);
@@ -346,6 +411,15 @@ export function normalizeStudio(v: unknown): Studio3 | null {
       }
       if (o.kind === 'light') { const d = lightObject(isObj(o.light) && typeof o.light.type === 'string' ? o.light.type as LightType : 'point').light!; o.light = isObj(o.light) ? { ...d, ...o.light, color: okProp(o.light.color, d.color.v), intensity: okProp(o.light.intensity, d.intensity.v), angle: okProp(o.light.angle, d.angle.v) } : d; }
       if (o.kind === 'camera') o.cam = isObj(o.cam) ? { near: isNum(o.cam.near) ? o.cam.near : 0.05, far: isNum(o.cam.far) ? o.cam.far : 2000, fov: okProp(o.cam.fov, 45) } : { fov: prop(45), near: 0.05, far: 2000 };
+    }
+    sc.fx = { ...defaultFx(), ...(isObj(sc.fx) ? sc.fx : {}) };
+    sc.rules = Array.isArray(sc.rules) ? sc.rules.filter(r => isObj(r) && isObj(r.on) && Array.isArray(r.do)).map(r => ({ ...r, id: typeof r.id === 'string' ? r.id : sid('ru'), name: typeof r.name === 'string' ? r.name : 'Regla', enabled: r.enabled !== false, once: !!r.once, do: r.do.filter(isObj) as Act3[] })) : [];
+    sc.script = typeof sc.script === 'string' ? sc.script : '';
+    for (const o of sc.objects) {
+      if (o.phys !== undefined) o.phys = isObj(o.phys) ? { ...defaultPhys(), ...o.phys } : undefined;
+      if (o.ctrl !== undefined) o.ctrl = isObj(o.ctrl) ? { ...defaultCtrl(), ...o.ctrl, lock: { ...defaultCtrl().lock, ...(isObj(o.ctrl.lock) ? o.ctrl.lock : {}) } } : undefined;
+      if (o.phys === undefined) delete o.phys;
+      if (o.ctrl === undefined) delete o.ctrl;
     }
     // Ciclos en la jerarquía: se rompen.
     for (const o of sc.objects) { let c = o.parent, k = 0; while (c && k++ < 200) { if (c === o.id) { o.parent = null; break; } c = sc.objects.find(x => x.id === c)?.parent ?? null; } }

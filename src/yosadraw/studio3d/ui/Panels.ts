@@ -13,6 +13,7 @@ import type { Studio3D } from '../Studio3D';
 import { canvasToUrl, fileToDataUrl } from '../textures';
 import type { View3D } from '../View3D';
 import { I3 } from './icons3';
+import { livePanel, physicsSection } from './LivePanel';
 
 type Sync = () => void;
 const PRIM_ICON: Record<PrimType, string> = { box: I3.cube, sphere: I3.sphere, cylinder: I3.cylinder, cone: I3.cone, torus: I3.torus, plane: I3.plane, capsule: I3.capsule, pyramid: I3.pyramid };
@@ -124,7 +125,7 @@ export class Rows {
 
 export class AddPanel {
   readonly el = h('div', { class: 'mo-insp-body s3-add' });
-  constructor(private s: Studio3D, private ui: { importModel: () => void; house: () => void; picked: () => void }) { this.render(); s.on('tool', () => this.mark()); }
+  constructor(private s: Studio3D, private ui: { importModel: () => void; card: (src: 'drawing' | 'image') => void; house: () => void; picked: () => void }) { this.render(); s.on('tool', () => this.mark()); }
   render() {
     const s = this.s;
     const grid = (items: [string, string, () => void, string][]) => h('div', { class: 's3-grid' }, ...items.map(([icon, label, run, title]) => h('button', { type: 'button', class: 's3-tile', title, on: { click: run } }, h('span', { html: icon }), h('span', null, label))));
@@ -148,6 +149,9 @@ export class AddPanel {
           (() => { const i = h('input', { type: 'number', class: 'mo-num', value: String(s.block.size), min: '0.05', step: '0.25', 'aria-label': 'Tamaño del bloque' }); i.addEventListener('keydown', e => e.stopPropagation()); i.addEventListener('change', () => { const v = Number(i.value); if (v > 0) s.block.size = v; }); return i; })())),
       h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Luces y cámaras'),
         grid([...lights.map(([t, l, ic]) => [ic, l, () => s.addLight(t), `Añadir luz: ${l}`] as [string, string, () => void, string]), [I3.cam3, 'Cámara', () => s.addCamera(), 'Añadir una cámara (para renderizar y animar el encuadre)']])),
+      h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Dibujos en 3D'),
+        h('p', { class: 'ctl-help' }, 'Tus dibujos como carteles dentro de la escena: reciben las luces, las sombras y los efectos, y proyectan la sombra de su silueta.'),
+        h('div', { class: 'mo-btnrow' }, h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.card('drawing') } }, 'Dibujo de YOSADRAW…'), h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.card('image') } }, 'Imagen como cartel…'))),
       h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Importar'),
         h('div', { class: 'mo-btnrow' }, h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.importModel() } }, 'Modelo 3D (GLB, glTF, OBJ, STL)…'))));
     this.mark();
@@ -298,10 +302,10 @@ export function editMenu(s: Studio3D, x: number, y: number) {
 export class Inspector3 extends Rows {
   readonly el: HTMLElement;
   private body: HTMLElement;
-  private tab: 'obj' | 'mat' | 'scene' = 'obj';
+  private tab: 'obj' | 'mat' | 'scene' | 'live' = 'obj';
   private matSel: string | null = null;
   private tabs: HTMLElement;
-  constructor(s: Studio3D, private view: View3D, private deps: PanelDeps & { renderDialog: () => void }) {
+  constructor(s: Studio3D, private view: View3D, private deps: PanelDeps & { renderDialog: () => void; play: () => void }) {
     const body = h('div', { class: 'mo-insp-body' });
     super(s, body);
     this.body = body;
@@ -313,16 +317,17 @@ export class Inspector3 extends Rows {
     s.on('change', l => { if (l) this.render(); else this.sync(); });
     s.on('time', () => { if (!s.playing) this.sync(); });
   }
-  setTab(t: 'obj' | 'mat' | 'scene') { this.tab = t; this.render(); }
+  setTab(t: 'obj' | 'mat' | 'scene' | 'live') { this.tab = t; this.render(); }
   render() {
     const s = this.s;
     if (!s.active) return;
     const scroll = this.body.scrollTop;
     this.syncs = [];
-    this.tabs.replaceChildren(...([['obj', 'Objeto'], ['mat', 'Material'], ['scene', 'Escena y render']] as const).map(([id, l]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(this.tab === id), on: { click: () => this.setTab(id) } }, l)));
+    this.tabs.replaceChildren(...([['obj', 'Objeto'], ['mat', 'Material'], ['live', 'Vivo'], ['scene', 'Escena']] as const).map(([id, l]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(this.tab === id), on: { click: () => this.setTab(id) } }, l)));
     this.body.replaceChildren();
     if (this.tab === 'obj') this.objPanel();
     else if (this.tab === 'mat') this.matPanel();
+    else if (this.tab === 'live') livePanel(this, s, () => this.deps.play());
     else this.scenePanel();
     this.body.scrollTop = scroll;
   }
@@ -369,6 +374,8 @@ export class Inspector3 extends Rows {
       this.check('Proyecta sombras', o.castShadow !== false, v => s.edit('Sombras', (_st, sc) => { const x = objOf(sc, id); if (x) x.castShadow = v; })),
       this.btns(['Editar geometría (Tab)', () => s.enterEdit()], ['Suavizar', () => s.subdivide(1, true), 'Subdivisión Catmull-Clark: más caras y formas redondeadas']));
     if (o.light) this.lightPanel(o);
+    if (o.kind === 'mesh' || o.kind === 'light') physicsSection(this, s, o);
+    if (o.card) this.sec('Dibujo en 3D', this.check('Mira siempre a la cámara (cartel)', o.card.billboard, v => s.edit('Cartel', (_st, sc) => { const x = objOf(sc, o.id); if (x?.card) x.card.billboard = v; })), h('p', { class: 'ctl-help' }, 'Recibe las luces, las sombras y los efectos de la escena, y proyecta la sombra de su silueta. Activa «Física» para que caiga, choque o se pueda agarrar.'));
     if (o.cam) this.camPanel(o);
     if (objs.length > 1) this.alignPanel();
     this.sec('Objeto', this.btns(['Duplicar', () => s.duplicate()], ['Agrupar', () => s.group()], o.kind === 'group' ? ['Desagrupar', () => s.ungroup()] : null, ['Eliminar', () => s.remove()]));

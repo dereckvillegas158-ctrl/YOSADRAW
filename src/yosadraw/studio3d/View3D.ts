@@ -8,6 +8,15 @@ import * as M from './mesh';
 import { effLocked, effVisible, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
 import { round, type Studio3D } from './Studio3D';
 import { canvasToUrl, TexCache } from './textures';
+import { FxPipeline, volumeCone } from './live/fx';
+import type { Fx3 } from './model';
+
+/** Lo que el modo En vivo cambia al dibujar (sin tocar el proyecto). */
+export interface LiveHooks {
+  world: Map<string, T.Matrix4>; hidden: Set<string>;
+  lightK: Map<string, number>; lightColor: Map<string, string>; matColor: Map<string, string>;
+  shake: T.Vector3; fx: Fx3; time: number;
+}
 
 const D2R = Math.PI / 180;
 const ORANGE = new T.Color('#ffa63d'), ACTIVE = new T.Color('#ffd27a');
@@ -19,6 +28,9 @@ interface Node3 {
   light?: T.Light; target?: T.Object3D;
   cam?: T.PerspectiveCamera; camHelper?: T.CameraHelper;
   pick?: T.Mesh;
+  /** Intensidad de la luz según el proyecto (el modo En vivo la multiplica). */
+  baseI?: number; baseColor?: string;
+  cone?: T.Mesh; arrow?: T.ArrowHelper;
 }
 
 /** Firma rápida de una malla (para no reconstruir la geometría si no cambió). */
@@ -74,6 +86,13 @@ export class View3D {
   private drag: null | { kind: 'rect'; x0: number; y0: number; add: boolean } | { kind: 'move'; plane: T.Plane; start: T.Vector3; base: Map<string, T.Matrix4> } | { kind: 'create'; p0: T.Vector3; p1: T.Vector3; phase: 'base' | 'height'; y0: number; h: number; y: number } | { kind: 'paint'; mat: string; texId: string; canvas: HTMLCanvasElement; last: T.Vector2 | null } | null = null;
   private gizmoStart: { P0: T.Matrix4; W: Map<string, T.Matrix4>; verts?: { ids: number[]; orig: number[]; N: T.Matrix4 } } | null = null;
   private downAt: { x: number; y: number; button: number; moved: boolean } | null = null;
+  /** Modo En vivo (lo pone el motor mientras se ejecuta). */
+  live: LiveHooks | null = null;
+  private fxp: FxPipeline | null = null;
+  /** Antes de cada dibujo en vivo (el motor avanza la simulación). */
+  onLiveFrame: ((dt: number) => void) | null = null;
+  /** Clics del modo En vivo (los gestiona el motor). */
+  liveInput: { down(e: PointerEvent): boolean; move(e: PointerEvent): void; up(e: PointerEvent): void; wheel(e: WheelEvent): boolean } | null = null;
   /** Menú contextual (lo pone la interfaz). */
   onContext: (x: number, y: number) => void = () => {};
   onPick: () => void = () => {};
@@ -126,15 +145,17 @@ export class View3D {
     this.tex.onLoad = () => { this.mats.clear(); this.sync(); };
     // Eventos.
     this.el.addEventListener('pointerdown', e => this.navMode(e), { capture: true });
-    cv.addEventListener('pointerdown', e => this.down(e));
-    cv.addEventListener('pointermove', e => this.move(e));
-    cv.addEventListener('pointerup', e => this.up(e));
+    cv.addEventListener('pointerdown', e => { if (this.liveInput?.down(e)) return; this.down(e); });
+    cv.addEventListener('pointermove', e => { if (this.liveInput) { this.liveInput.move(e); return; } this.move(e); });
+    cv.addEventListener('pointerup', e => { if (this.liveInput) { this.liveInput.up(e); return; } this.up(e); });
+    cv.addEventListener('wheel', e => { if (this.liveInput?.wheel(e)) { e.preventDefault(); e.stopImmediatePropagation(); } }, { capture: true, passive: false });
     cv.addEventListener('pointerleave', () => { this.ghost.visible = false; this.request(); });
     cv.addEventListener('contextmenu', e => e.preventDefault());
     cv.addEventListener('dblclick', e => this.dbl(e));
     new ResizeObserver(() => this.resize()).observe(this.el);
     s.on('change', () => this.sync());
-    s.on('time', () => this.sync());
+    // Al reproducir sólo cambian transformaciones y valores: no se rehace la geometría.
+    s.on('time', () => this.sync(false));
     s.on('select', () => this.sync());
     s.on('mode', () => this.sync());
     s.on('tool', () => this.syncGizmo());
@@ -148,6 +169,7 @@ export class View3D {
     const w = this.el.clientWidth, h = this.el.clientHeight;
     if (w < 2 || h < 2) return;
     this.renderer.setSize(w, h, false);
+    this.fxp?.setSize(w, h);
     this.renderer.domElement.style.width = `${w}px`; this.renderer.domElement.style.height = `${h}px`;
     this.persp.aspect = w / h; this.persp.updateProjectionMatrix();
     this.updateOrtho();
@@ -240,9 +262,78 @@ export class View3D {
     if (!this.s.active) return;
     const cam = this.throughCamera ? this.sceneCam() ?? this.camera : this.camera;
     if (this.camera === this.ortho && !this.throughCamera) this.updateOrtho();
-    this.tc.getHelper().visible = !this.throughCamera && this.tc.enabled;
-    this.renderer.render(this.scene, cam);
+    this.tc.getHelper().visible = !this.throughCamera && this.tc.enabled && !this.live;
+    const live = this.live;
+    if (live) this.applyLive(live);
+    this.billboards(cam);
+    const fx = live?.fx ?? (this.s.scene.fx?.preview && this.mode !== 'solid' && this.mode !== 'wire' ? this.s.scene.fx : null);
+    // Temblor de cámara (sólo al dibujar).
+    const sh = live?.shake;
+    if (sh && sh.lengthSq() > 0) cam.position.add(sh);
+    if (fx && FxPipeline.active(fx)) {
+      if (!this.fxp) { this.fxp = new FxPipeline(this.renderer, this.scene, cam); this.fxp.setSize(this.el.clientWidth || 1, this.el.clientHeight || 1); }
+      if (this.fxp.currentQuality !== fx.quality && !fx.adaptive) this.fxp.setQuality(fx.quality);
+      this.fxp.render(this.scene, cam, fx, live?.time ?? performance.now() / 1000, this.sunDir());
+    } else {
+      this.renderer.render(this.scene, cam);
+      if (fx && this.fxp) this.fxp.tick(fx);
+    }
+    if (sh && sh.lengthSq() > 0) cam.position.sub(sh);
     this.hud.textContent = this.hudText();
+  }
+  /** FPS medidos con efectos (o 0 sin medir). */
+  get fps() { return this.fxp?.fps ?? 0; }
+  /** Dibuja ya (el bucle del modo En vivo llama a esto en cada fotograma). */
+  renderNow() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } this.render(); }
+  /** Modo de vista real: en vivo siempre con luces y sombras. */
+  get mode() { return this.live ? 'render' : this.s.prefs.shading; }
+  /** Dirección hacia el sol (primera luz direccional visible) para los rayos volumétricos. */
+  private sunDir(): T.Vector3 | null {
+    for (const n of this.nodes.values()) {
+      const l = n.light;
+      if (!(l instanceof T.DirectionalLight) || !n.node.visible || !l.visible) continue;
+      const a = new T.Vector3().setFromMatrixPosition(l.matrixWorld), b = new T.Vector3().setFromMatrixPosition(l.target.matrixWorld);
+      return a.sub(b).normalize();
+    }
+    for (const n of this.nodes.values()) if (n.light instanceof T.SpotLight && n.node.visible) { const a = new T.Vector3().setFromMatrixPosition(n.light.matrixWorld); return a.sub(this.controls.target).normalize(); }
+    return null;
+  }
+  /** Aplica lo del modo En vivo: posiciones de la física, luces, colores y visibilidad. */
+  private applyLive(L: LiveHooks) {
+    for (const [id, W] of L.world) {
+      const n = this.nodes.get(id);
+      if (!n) continue;
+      const P = n.node.parent?.matrixWorld;
+      n.node.matrix.copy(P ? new T.Matrix4().copy(P).invert().multiply(W) : W);
+    }
+    for (const [id, n] of this.nodes) {
+      if (L.hidden.has(id)) n.node.visible = false;
+      if (n.light) {
+        const k = L.lightK.get(id);
+        n.light.intensity = (n.baseI ?? n.light.intensity) * (k ?? 1);
+        const c = L.lightColor.get(id);
+        n.light.color.set(c ?? n.baseColor ?? '#ffffff');
+        if (n.cone) { const u = (n.cone.material as T.ShaderMaterial).uniforms; u.color.value.copy(n.light.color); u.time.value = L.time; u.strength.value = L.fx.cones * Math.min(2, (n.baseI ?? 1) * (k ?? 1) / 30); }
+      }
+    }
+    if (L.matColor.size) for (const [key, m] of this.mats) { const id = key.split('|')[1]; const c = L.matColor.get(id); if (c) (m as T.MeshStandardMaterial).color?.set(c); }
+    this.root.updateMatrixWorld(true);
+  }
+  /** Carteles (dibujos) que miran a la cámara girando sólo en Y. */
+  private billboards(cam: T.Camera) {
+    const s = this.s;
+    for (const o of s.scene.objects) {
+      if (!o.card?.billboard) continue;
+      const n = this.nodes.get(o.id);
+      if (!n) continue;
+      const p = new T.Vector3(), q = new T.Quaternion(), sc = new T.Vector3();
+      n.node.matrixWorld.decompose(p, q, sc);
+      const yaw = Math.atan2(cam.position.x - p.x, cam.position.z - p.z);
+      const W = new T.Matrix4().compose(p, new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), yaw), sc);
+      const P = n.node.parent?.matrixWorld;
+      n.node.matrix.copy(P ? new T.Matrix4().copy(P).invert().multiply(W) : W);
+      n.node.updateMatrixWorld(true);
+    }
   }
   private sceneCam(): T.PerspectiveCamera | null {
     const id = this.s.scene.camera, n = id ? this.nodes.get(id) : null;
@@ -274,7 +365,7 @@ export class View3D {
 
   /** Material de Three para un material del proyecto en el tiempo actual (según el modo de vista). */
   private material(id: string, op: number): T.Material {
-    const s = this.s, mode = s.prefs.shading, t = s.time;
+    const s = this.s, mode = this.mode, t = s.time;
     const m = s.mat(id);
     const key = `${mode}|${id}|${op < 1 ? op.toFixed(3) : 1}`;
     let out = this.mats.get(key);
@@ -303,15 +394,21 @@ export class View3D {
     else if (m?.proc) map = this.tex.procedural(m.proc);
     if (map) map.repeat.set(m!.texScale, m!.texScale);
     if (mm.map !== map) { mm.map = map; mm.needsUpdate = true; }
-    mm.side = T.FrontSide;
+    // Dibujos: lo transparente se recorta (no se ve ni hace sombra) y se ven por las dos caras.
+    const cut = !!m?.cut;
+    if (mm.alphaTest !== (cut ? 0.5 : 0)) { mm.alphaTest = cut ? 0.5 : 0; mm.needsUpdate = true; }
+    mm.side = cut ? T.DoubleSide : T.FrontSide;
+    if (cut) { mm.transparent = o < 0.999; mm.depthWrite = true; }
     return out;
   }
 
   /** Actualiza la escena de Three a partir del modelo (sólo reconstruye lo que cambió). */
-  sync() {
+  sync(full = true) {
     const s = this.s;
     if (!s.active) return;
-    const sc = s.scene, t = s.time, mode = s.prefs.shading;
+    const sc = s.scene, t = s.time, mode = this.mode;
+    const fx = this.live?.fx ?? sc.fx;
+    const fxOn = !!this.live || !!sc.fx?.preview;
     const seen = new Set<string>();
     const lit = mode === 'material' || mode === 'render';
     this.rig.visible = !lit;
@@ -320,7 +417,7 @@ export class View3D {
     this.scene.background = sc.env.transparent ? null : new T.Color(sc.env.bg);
     this.scene.fog = sc.env.fog > 0 ? new T.FogExp2(sc.env.bg, sc.env.fog * 0.05) : null;
     this.renderer.toneMappingExposure = sc.env.exposure;
-    this.renderer.shadowMap.enabled = mode === 'render';
+    this.renderer.shadowMap.enabled = mode === 'render' && (fx?.shadows ?? 2) > 0;
     const sel = new Set(s.sel);
     for (const o of sc.objects) {
       seen.add(o.id);
@@ -333,7 +430,7 @@ export class View3D {
       if (n.node.parent !== (parent ?? this.root)) (parent ?? this.root).add(n.node);
       const op = valueAt(o.opacity, t);
       if (o.kind === 'mesh' && o.mesh) {
-        const sig = meshSig(o.mesh, !!o.smooth);
+        const sig = full || !n.sig ? meshSig(o.mesh, !!o.smooth) : n.sig;
         if (sig !== n.sig) {
           const tr = M.triangulate(o.mesh, !!o.smooth);
           const g = new T.BufferGeometry();
@@ -349,7 +446,15 @@ export class View3D {
           n.outlineSig = '';
         }
         const slots = Math.max(1, ...o.mesh.m.map(x => x + 1));
-        n.mesh!.material = Array.from({ length: slots }, (_, i) => this.material(o.mats?.[i] ?? o.mats?.[0] ?? '', op));
+        const ms = Array.from({ length: slots }, (_, i) => this.material(o.mats?.[i] ?? o.mats?.[0] ?? '', op));
+        n.mesh!.material = ms;
+        // Sombra con la silueta del dibujo (no un rectángulo).
+        const cutMap = (ms.find(x => (x as T.MeshStandardMaterial).alphaTest > 0 && (x as T.MeshStandardMaterial).map) as T.MeshStandardMaterial | undefined)?.map ?? null;
+        if (cutMap) { const dm = n.mesh!.customDepthMaterial as T.MeshDepthMaterial | undefined; if (!dm || dm.map !== cutMap) n.mesh!.customDepthMaterial = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, map: cutMap, alphaTest: 0.5 }); }
+        else if (n.mesh!.customDepthMaterial) n.mesh!.customDepthMaterial = undefined;
+        // Zonas: se ven al editar (semitransparentes), no en vivo.
+        if (o.phys?.zone) n.mesh!.visible = !this.live;
+        else n.mesh!.visible = true;
         n.mesh!.castShadow = o.castShadow !== false && mode === 'render';
         n.mesh!.receiveShadow = mode === 'render';
         // Contorno de selección (aristas marcadas).
@@ -362,14 +467,24 @@ export class View3D {
         }
         if (n.outline) { n.outline.visible = on; (n.outline.material as T.LineBasicMaterial).color.copy(s.one?.id === o.id ? ACTIVE : ORANGE); }
       }
-      if (o.kind === 'light' && o.light) this.syncLight(n, o, t, sel.has(o.id), lit);
+      if (o.kind === 'light' && o.light) this.syncLight(n, o, t, sel.has(o.id), lit, fxOn ? fx : null);
+      // Flecha de dirección de los personajes (al editar).
+      if (o.ctrl && this.showHelpers && !this.live) {
+        if (!n.arrow) { n.arrow = new T.ArrowHelper(new T.Vector3(1, 0, 0), new T.Vector3(), 1, '#5ad1ff', 0.3, 0.2); n.arrow.userData.helper = true; n.arrow.traverse(x => { x.raycast = () => undefined; }); this.overlay.add(n.arrow); }
+        const a = (o.ctrl.dir * Math.PI) / 180;
+        n.arrow.setDirection(new T.Vector3(Math.cos(a), 0, -Math.sin(a)));
+        n.arrow.setLength(0.8 + o.ctrl.speed * 0.35, 0.3, 0.2);
+        n.arrow.visible = o.visible;
+      } else if (n.arrow) { n.arrow.removeFromParent(); n.arrow.dispose(); n.arrow = undefined; }
       if (o.kind === 'camera' && o.cam) this.syncCam(n, o, t, sel.has(o.id), sc);
     }
-    for (const [id, n] of this.nodes) if (!seen.has(id)) { this.disposeNode(n); this.nodes.delete(id); }
+    for (const [id, n] of this.nodes) if (!seen.has(id) && !(this.live && id.includes('~'))) { if (id.includes('~')) n.node.removeFromParent(); else this.disposeNode(n); this.nodes.delete(id); }
     this.root.updateMatrixWorld(true);
+    for (const o of sc.objects) { const n = this.nodes.get(o.id); if (n?.arrow) n.arrow.position.setFromMatrixPosition(n.node.matrixWorld).setY(new T.Vector3().setFromMatrixPosition(n.node.matrixWorld).y + 0.05); }
+    if (!full) { this.request(); return; }
     for (const n of this.nodes.values()) n.camHelper?.update();
-    this.grid.visible = this.showGrid && s.s.grid.show && !this.throughCamera;
-    this.axes.visible = this.showAxes && s.s.grid.axes && !this.throughCamera;
+    this.grid.visible = this.showGrid && s.s.grid.show && !this.throughCamera && !this.live;
+    this.axes.visible = this.showAxes && s.s.grid.axes && !this.throughCamera && !this.live;
     this.syncEditOverlay();
     this.syncGizmo();
     this.request();
@@ -378,9 +493,9 @@ export class View3D {
   private pickMesh(n: Node3, geo: () => T.BufferGeometry, color: string, on: boolean) {
     if (!n.pick) { n.pick = new T.Mesh(geo(), new T.MeshBasicMaterial({ color, wireframe: false })); n.pick.userData.oid = n.node.userData.oid; n.pick.userData.helper = true; n.node.add(n.pick); }
     (n.pick.material as T.MeshBasicMaterial).color.set(on ? ORANGE : color);
-    n.pick.visible = this.showHelpers && !this.throughCamera;
+    n.pick.visible = this.showHelpers && !this.throughCamera && !this.live;
   }
-  private syncLight(n: Node3, o: Obj3, t: number, on: boolean, lit: boolean) {
+  private syncLight(n: Node3, o: Obj3, t: number, on: boolean, lit: boolean, fx: Fx3 | null = null) {
     const L = o.light!;
     const kind = { dir: T.DirectionalLight, point: T.PointLight, spot: T.SpotLight, amb: T.AmbientLight, hemi: T.HemisphereLight }[L.type];
     if (!(n.light instanceof kind)) {
@@ -400,8 +515,16 @@ export class View3D {
     if (l instanceof T.HemisphereLight) l.groundColor.set(L.ground);
     if (l instanceof T.SpotLight) { l.angle = Math.max(1, Math.min(89, valueAt(L.angle, t))) * D2R; l.penumbra = 0.35; l.distance = L.dist; l.decay = 2; }
     if (l instanceof T.PointLight) { l.distance = L.dist; l.decay = 2; }
-    l.castShadow = L.shadow && (l instanceof T.DirectionalLight || l instanceof T.SpotLight || l instanceof T.PointLight);
+    l.castShadow = L.shadow && (fx?.shadows ?? 2) > 0 && (l instanceof T.DirectionalLight || l instanceof T.SpotLight || l instanceof T.PointLight);
+    if (l.castShadow && 'shadow' in l) { const size = [512, 1024, 2048, 4096][fx?.shadows ?? 2]; const sh = (l as T.DirectionalLight).shadow; if (sh.mapSize.x !== size) { sh.mapSize.set(size, size); sh.map?.dispose(); sh.map = null as never; } }
+    n.baseI = l.intensity; n.baseColor = `#${l.color.getHexString()}`;
+    // Cono de luz volumétrica en los focos (efectos activos).
+    const wantCone = l instanceof T.SpotLight && !!fx && fx.cones > 0 && lit;
+    const len = L.dist > 0 ? L.dist : 9;
+    if (wantCone && (!n.cone || n.cone.userData.len !== len || n.cone.userData.angle !== l.angle)) { n.cone?.removeFromParent(); n.cone?.geometry.dispose(); n.cone = volumeCone((l as T.SpotLight).angle / D2R, len); n.cone.userData.len = len; n.cone.userData.angle = l.angle; n.node.add(n.cone); }
+    if (n.cone) { n.cone.visible = wantCone; if (wantCone) { const u = (n.cone.material as T.ShaderMaterial).uniforms; u.color.value.copy(l.color); u.strength.value = fx!.cones * Math.min(2, l.intensity / 30); } }
     this.pickMesh(n, () => new T.OctahedronGeometry(0.18), '#ffe27a', on);
+    if (n.pick) n.pick.visible = n.pick.visible && !this.live;
   }
   private syncCam(n: Node3, o: Obj3, t: number, on: boolean, sc: Scene3) {
     if (!n.cam) {
@@ -416,7 +539,7 @@ export class View3D {
     n.cam.aspect = r.w / r.h;
     n.cam.updateProjectionMatrix();
     n.cam.far = o.cam!.far;
-    n.camHelper!.visible = this.showHelpers && !this.throughCamera && effVisible(sc, o);
+    n.camHelper!.visible = this.showHelpers && !this.throughCamera && effVisible(sc, o) && !this.live;
     this.pickMesh(n, () => new T.ConeGeometry(0.22, 0.4, 4).rotateX(-Math.PI / 2).rotateZ(Math.PI / 4), sc.camera === o.id ? '#8fd3ff' : '#9a9aa8', on);
   }
 
@@ -651,6 +774,7 @@ export class View3D {
     // Crear: el clic que fija la altura termina la forma (lo hace `up`).
     if (s.tool === 'create') { if (this.drag?.kind !== 'create' || this.drag.phase !== 'height') this.createDown(e); return; }
     if (s.tool === 'block') { this.blockClick(e); return; }
+    if (s.tool === 'aim') { this.aimAt(e); return; }
     if (s.tool === 'paint') { this.paintDown(e); return; }
     if (s.mode === 'edit') { this.drag = { kind: 'rect', x0: e.clientX, y0: e.clientY, add }; return; }
     const hit = this.hitObject(e);
@@ -782,6 +906,21 @@ export class View3D {
     this.drag = null; this.ghost.visible = false;
     s.addPrim(cp, [cx, d.y, cz], primFromBox(cp, Math.max(0.05, w), Math.max(0.05, d.h), Math.max(0.05, dd)));
     s.setTool('move');
+  }
+
+  /** Apuntar: la dirección de los personajes elegidos hacia el punto del suelo que se pulsa. */
+  private aimAt(e: PointerEvent) {
+    const s = this.s, g = this.ground(e);
+    const chars = s.selected.filter(o => o.ctrl);
+    if (!g) return;
+    if (!chars.length) { toast('Elige un personaje (con «Personaje» activado en Objeto → Física y control).'); return; }
+    s.edit('Dirección del personaje', (_st, sc) => {
+      for (const c of chars) {
+        const o = objOf(sc, c.id)!;
+        const p = new T.Vector3().setFromMatrixPosition(s.worldMatrix(o));
+        o.ctrl!.dir = round((Math.atan2(-(g.z - p.z), g.x - p.x) * 180) / Math.PI);
+      }
+    });
   }
 
   // ---------------------------------------------------------------- construir con bloques
@@ -939,6 +1078,15 @@ export class View3D {
     n.node.updateMatrixWorld(true);
     return n.cam;
   }
+  /** Para el modo En vivo: rayo desde el puntero y punto del suelo. */
+  rayAt(e: { clientX: number; clientY: number }) { return this.ray(e); }
+  groundAt(e: { clientX: number; clientY: number }, y = 0) { return this.ground(e, y); }
+  get liveCamera(): T.Camera { return this.viewCam(); }
+  nodeOf(id: string) { return this.nodes.get(id) ?? null; }
+  /** Copia creada en vivo (se mueve con la física y desaparece al parar). */
+  registerExtra(id: string, node: T.Object3D) { const mesh = node.children.find(c => (c as T.Mesh).isMesh) as T.Mesh | undefined; this.nodes.set(id, { node: node as T.Group, mesh }); }
+  /** Vuelve a dibujar todo como dice el proyecto (al salir del modo En vivo). */
+  resetLive() { this.live = null; this.liveInput = null; this.mats.clear(); this.sync(); }
   /** Objeto de Three de un objeto del modelo (exportar). */
   threeOf(id: string) { return this.nodes.get(id)?.node ?? null; }
   get rootNode() { return this.root; }

@@ -88,3 +88,26 @@ body.s3d-mode #app { visibility: hidden; }
 .mo-simple.s3-root .mo-brand, .mo-simple.s3-root .s3-scenesel, .mo-simple.s3-root .mo-top > .btn:not(.s3-renderbtn), .mo-simple.s3-root .mo-sep { display: none; }
 .mo-simple.s3-root .s3-renderbtn span { display: none; }
 .mo-simple.s3-root .s3-assistant { max-height: 34%; width: calc(100% - 20px); }
+/* ---------- Modo En vivo ---------- */
+.s3-playbtn { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.s3-playing .s3-playbtn { background: #ff4d6d; color: #fff; border-color: transparent; }
+.s3-playing .s3-vbar, .s3-playing .s3-editbar, .s3-playing .s3-paintbar, .s3-playing .s3-assistant, .s3-playing .s3-hud { display: none !important; }
+.s3-playing .s3-view { box-shadow: inset 0 0 0 2px #ff4d6d; }
+.s3-livehud { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 4; display: flex; flex-direction: column; gap: 4px; align-items: center; pointer-events: none; width: min(860px, calc(100% - 16px)); }
+.s3-hudrow { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 12px; background: rgba(20, 16, 30, 0.82); border: 1px solid var(--line); pointer-events: auto; }
+.s3-hudfx label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.s3-hudfx input[type="range"] { width: 80px; }
+.s3-fps { font: 500 11px var(--font-mono); color: #9df0b8; }
+.s3-rec { background: #ff4d6d !important; color: #fff !important; animation: s3pulse 1.2s infinite; }
+.s3-hudlog { font: 500 11.5px var(--font-mono); color: #ffd36b; text-shadow: 0 1px 2px #000; text-align: center; }
+.s3-hudlog .s3-err { color: #ff8a9a; }
+.s3-hudhelp { font-size: 11px; color: rgba(255, 255, 255, 0.7); text-shadow: 0 1px 2px #000; text-align: center; }
+.s3-code { width: 100%; box-sizing: border-box; font: 12px/1.45 var(--font-mono); background: #0c0a13; color: #e9e4ff; border: 1px solid var(--line); border-radius: 8px; padding: 8px; resize: vertical; tab-size: 2; }
+.s3-rule { border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; margin: 6px 0; background: var(--surface-2); display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.s3-rule.off { opacity: 0.55; }
+.s3-rulehead, .s3-rulewhen, .s3-ruleact { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.s3-rulehead input[type="text"] { flex: 1; }
+.s3-ruleact .mo-num { width: 54px; }
+.s3-ruleact .s3-code { flex-basis: 100%; }
+.mo-simple.s3-root .s3-hudfx, .mo-simple.s3-root .s3-hudhelp { display: none; }
+.s3-hudrow .mo-sel { width: auto; flex: none; }

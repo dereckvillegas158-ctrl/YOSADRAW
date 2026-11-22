@@ -370,6 +370,8 @@ Proyectos 3D dentro de YOSADRAW («Nuevo proyecto → 3D»): modelado poligonal,
 | Texturas procedimentales y de imagen | `src/yosadraw/studio3d/textures.ts` |
 | Importar y exportar | `src/yosadraw/studio3d/io.ts` |
 | Interfaz (paneles, jerarquía, línea de tiempo, asistente) | `src/yosadraw/studio3d/ui/*` |
+| Modo En vivo: física (cannon-es), personajes, ratón, disparadores, programa, grabación | `src/yosadraw/studio3d/live/Live.ts` |
+| Efectos en tiempo real (luz volumétrica, bloom, aberración, glitch, tinte) | `src/yosadraw/studio3d/live/fx.ts` |
 
 ## YOSADRAW MOTION (editor de vídeo)
 

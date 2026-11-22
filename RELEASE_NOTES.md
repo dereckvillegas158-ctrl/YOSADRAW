@@ -1,4 +1,22 @@
-## YOSADRAW 1.12.0
+## YOSADRAW 1.13.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.13.0-x64.exe` (instalador), `YOSADRAW-1.13.0-x64-portable.exe` o `YOSADRAW-1.13.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.13.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo en 3D Studio: modo En vivo
+La escena se ejecuta como un videojuego para crear animaciones: física, personajes, disparadores, programa y efectos, todo en tiempo real. Botón **▶ En vivo** (F5); Esc para.
+- **Física:** cada objeto puede ser dinámico (cae, rebota, choca), estático (suelo, paredes), cinemático (sigue sus keyframes y empuja a los demás) o una zona que avisa cuando algo entra. Masa, rebote, rozamiento, forma de choque, gravedad y suelo infinito. Los terrenos chocan con su relieve.
+- **Control con el ratón:** agarra cualquier objeto dinámico y muévelo, sacúdelo o lánzalo (la rueda lo acerca o aleja); arrastra en el suelo para que los personajes vayan hacia el puntero.
+- **Personajes:** dirección (con flecha en el editor y «Apuntar en el visor»), velocidad, salto (Espacio), comportamiento (caminar, ir y volver, seguir al ratón, quieto), bloqueo por ejes, siempre de pie y efecto gelatina al moverse o al sacudirlos.
+- **Disparadores:** «cuando pase algo, haz algo»: al empezar, en un segundo, cada X segundos, al pulsar una tecla, al hacer clic, al chocar, al entrar en una zona, al agarrar o soltar; acciones de empujar, saltar, cambiar dirección, velocidad o comportamiento, color, luz, efecto visual, temblor de cámara, soltar copias, ocultar o mostrar, gravedad, cámara lenta, parar o código. Con plantillas para empezar.
+- **Programa (JavaScript):** `on('collide', 'Cubo', e => …)`, `every`, `after`, `obj('Nombre').impulse(…)`, `light('Foco').intensity(…)`, `fx('glitch', 0.5, 0.2)`, `shake`, `gravity`, `slowmo` y más. Los errores se muestran sin parar la escena; la primera vez se pide permiso para ejecutar el código.
+- **Efectos en tiempo real:** luz volumétrica (rayos de sol que se cortan con los objetos y con la silueta de los dibujos), conos de luz en los focos, resplandor, aberración cromática, glitch, tinte de color del entorno, viñeta y grano; calidad de sombras; luces que parpadean, laten o giran. Se cambian mientras corre la escena y se pueden ver también al editar.
+- **Dibujos en 3D:** tus dibujos de YOSADRAW (o imágenes) como carteles dentro de la escena: lo transparente se recorta, reciben las luces, las sombras y los efectos, y proyectan la sombra de su silueta; pueden mirar siempre a la cámara y tener física.
+- **Grabar:** lo que pasa en vivo se guarda como keyframes (para renderizarlo o seguir editándolo) o directamente como vídeo con los efectos.
+- **Rendimiento:** física a paso fijo con objetos que se duermen, efectos que se saltan cuando no hay ninguno activo, niveles de calidad (baja, media, alta) y calidad adaptativa que baja sola si van pocos FPS. La reproducción con keyframes ya no recalcula la geometría en cada fotograma.
+
+### Versión anterior: YOSADRAW 1.12.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.12.0-x64.exe` (instalador), `YOSADRAW-1.12.0-x64-portable.exe` o `YOSADRAW-1.12.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

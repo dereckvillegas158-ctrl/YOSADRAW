@@ -9,7 +9,10 @@ import type { Studio3D, Tool3 } from '../Studio3D';
 import { View3D, type ViewName } from '../View3D';
 import { Assistant } from './Assistant';
 import { I3 } from './icons3';
-import { AddPanel, Hierarchy, Inspector3, editMenu, objectMenu, type PanelDeps } from './Panels';
+import { AddPanel, Hierarchy, Inspector3, drawingToUrl, editMenu, objectMenu, type PanelDeps } from './Panels';
+import { Live } from '../live/Live';
+import { fileToDataUrl } from '../textures';
+import { confirmDialog } from '../../ui/modal';
 import { Timeline3 } from './Timeline3';
 
 export interface UI3Deps extends PanelDeps {
@@ -44,14 +47,20 @@ export class UI3D {
   private paintbar: HTMLElement;
   private sceneSel = h('select', { class: 'mo-sel s3-scenesel', 'aria-label': 'Escena' });
   private simple = false;
+  private playBtn!: HTMLButtonElement;
+  private hud: HTMLElement;
+  /** Modo En vivo en marcha (o null). */
+  live: Live | null = null;
+  private scriptOk = new WeakSet<object>();
+  private video: { rec: MediaRecorder; chunks: Blob[]; mime: string } | null = null;
   /** Para el tutorial: ¿giró la vista? ¿renderizó? */
   private orbits = 0; private renders = 0;
 
   constructor(private s: Studio3D, private deps: UI3Deps) {
     this.view = new View3D(s);
-    this.add = new AddPanel(s, { importModel: () => void this.importPick(), house: () => { this.closeSheet(); this.house(); }, picked: () => { if (this.simple) { this.closeSheet(); toast('Toca el suelo del visor para ponerlo'); } } });
+    this.add = new AddPanel(s, { importModel: () => void this.importPick(), card: (src: 'drawing' | 'image') => void this.addCard(src), house: () => { this.closeSheet(); this.house(); }, picked: () => { if (this.simple) { this.closeSheet(); toast('Toca el suelo del visor para ponerlo'); } } });
     this.hier = new Hierarchy(s);
-    this.insp = new Inspector3(s, this.view, { ...deps, renderDialog: () => this.renderDialog() });
+    this.insp = new Inspector3(s, this.view, { ...deps, renderDialog: () => this.renderDialog(), play: () => void this.play() });
     this.tl = new Timeline3(s);
     this.assist = new Assistant(s, () => { s.prefs.assistant = false; s.deps.persist(); this.syncAssist(); });
     this.view.onContext = (x, y) => objectMenu(s, x, y);
@@ -69,6 +78,7 @@ export class UI3D {
       ib(I3.help, 'Asistente 3D y tutorial «Tu primera casa»', e => this.helpMenu(e)),
       ib(I3.keyboard, 'Atajos de teclado', () => this.shortcuts(), 'icon mo-pconly'),
       h('button', { type: 'button', class: 'btn sm', title: 'Exportar el modelo (GLB, glTF, OBJ, STL)', on: { click: (e: Event) => this.exportMenu(e as MouseEvent) } }, 'Exportar'),
+      this.playBtn = h('button', { type: 'button', class: 'btn s3-playbtn', html: '▶ <span>En vivo</span>', title: 'Ejecutar la escena en vivo: física, personajes, reglas y efectos (F5)', on: { click: () => void this.play() } }),
       h('button', { type: 'button', class: 'btn primary s3-renderbtn', html: `${I3.render} <span>Render</span>`, title: 'Renderizar imagen o animación (F12)', on: { click: () => this.renderDialog() } }));
 
     // Herramientas (izquierda).
@@ -110,7 +120,8 @@ export class UI3D {
     const po = h('input', { type: 'range', min: '5', max: '100', value: '100', 'aria-label': 'Opacidad del pincel' });
     po.addEventListener('input', () => { s.paint.opacity = Number(po.value) / 100; });
     this.paintbar = h('div', { class: 's3-paintbar', hidden: true }, h('span', { html: I3.paint }), h('label', null, 'Color ', pc), h('label', null, 'Tamaño ', ps), h('label', null, 'Opacidad ', po), h('span', { class: 'mo-unit' }, 'Pinta sobre el objeto: la textura cambia en vivo.'));
-    const center = h('div', { class: 'mo-center s3-center' }, this.vbar, this.editbar, this.paintbar, h('div', { class: 's3-viewwrap' }, this.view.el, this.assist.el));
+    this.hud = h('div', { class: 's3-livehud', hidden: true });
+    const center = h('div', { class: 'mo-center s3-center' }, this.vbar, this.editbar, this.paintbar, h('div', { class: 's3-viewwrap' }, this.view.el, this.assist.el, this.hud));
     const split = (side: 'l' | 'r' | 'b') => {
       const el = h('div', { class: `mo-split mo-split-${side}`, 'aria-hidden': 'true' });
       el.addEventListener('pointerdown', e => {
@@ -289,6 +300,130 @@ export class UI3D {
     if (ids.length) toast(`${ids.length === 1 ? 'Un dibujo usado como textura cambió' : `${ids.length} dibujos usados como textura cambiaron`}.`, 'info', { label: 'Actualizar', run: () => { for (const id of ids) void this.insp.refreshDrawing(id); } });
   }
 
+  // ---------------------------------------------------------------- modo En vivo
+
+  /** Ejecuta la escena en vivo (o la para). */
+  async play() {
+    const s = this.s;
+    if (this.live?.running) { await this.stopLive(); return; }
+    const code = s.scene.script?.trim();
+    let runScript = !!code;
+    // El programa es código: la primera vez en este proyecto se pregunta antes de ejecutarlo.
+    if (code && s.doc && !this.scriptOk.has(s.doc)) {
+      runScript = await confirmDialog('Programa de la escena', 'Esta escena tiene un programa (JavaScript). Ejecútalo sólo si confías en quien lo escribió. ¿Ejecutarlo?', 'Ejecutar');
+      if (runScript) this.scriptOk.add(s.doc);
+    }
+    const live = new Live(s, this.view);
+    this.live = live;
+    live.onState = () => this.syncHud();
+    live.onLog = l => this.hudLog(l.msg, l.error);
+    live.start(runScript);
+    this.el.classList.add('s3-playing');
+    this.renderHud();
+    this.view.el.focus?.();
+    if (!live.bodyCount && !(s.scene.rules?.length) && !code) toast('Consejo: en Objeto → «Física y control» haz los objetos dinámicos o personajes para que se muevan y se puedan agarrar.');
+  }
+  private async stopLive() {
+    const live = this.live;
+    if (!live) return;
+    if (this.video) this.stopVideo();
+    live.stop();
+  }
+  private async afterStop() {
+    const live = this.live;
+    if (!live) return;
+    this.el.classList.remove('s3-playing');
+    this.hud.hidden = true;
+    this.playBtn.innerHTML = '▶ <span>En vivo</span>';
+    if (live.recording) {
+      const save = await confirmDialog('Grabación en vivo', '¿Guardar lo que has grabado como keyframes? (Después lo puedes renderizar a vídeo o seguir editándolo.)', 'Guardar keyframes');
+      const n = live.stopRec(save);
+      if (n) toast(`Grabación guardada: ${n} keyframes`, 'ok');
+    }
+    this.live = null;
+    this.syncTop();
+  }
+  private renderHud() {
+    const s = this.s, live = this.live!;
+    const b = (label: string, title: string, run: () => void, cls = 'btn sm') => h('button', { type: 'button', class: cls, title, on: { click: run } }, label);
+    const slow = h('select', { class: 'mo-sel', 'aria-label': 'Velocidad', title: 'Cámara lenta' }, ...[[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [2, '2×']].map(([v, l]) => h('option', { value: String(v) }, String(l))));
+    slow.addEventListener('change', () => { live.timescale = Number(slow.value); });
+    const slider = (k: 'godrays' | 'bloom' | 'chroma' | 'glitch' | 'tintAmt', label: string, max: number) => {
+      const r = h('input', { type: 'range', min: '0', max: String(max), step: '0.01', value: String(live.fx[k]), 'aria-label': label, title: label });
+      r.addEventListener('input', () => { live.fx[k] = Number(r.value); });
+      r.addEventListener('change', () => s.setFx({ [k]: Number(r.value) }));
+      return h('label', null, label, r);
+    };
+    this.hud.replaceChildren(
+      h('div', { class: 's3-hudrow' },
+        b('■ Parar', 'Parar (Esc)', () => void this.stopLive(), 'btn sm primary'),
+        b(live.paused ? '▶ Seguir' : '❚❚ Pausa', 'Pausa', () => { live.togglePause(); this.renderHud(); }),
+        b(live.recording ? '● Grabando…' : '● Grabar keyframes', 'Graba lo que pasa (física y personajes) para guardarlo como animación', () => { if (live.recording) void this.saveRec(); else live.startRec(); this.renderHud(); }, `btn sm${live.recording ? ' s3-rec' : ''}`),
+        b(this.video ? '⏺ Parar vídeo' : '⏺ Grabar vídeo', 'Graba en vídeo lo que se ve, con los efectos', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
+        slow, h('span', { class: 's3-fps' })),
+      h('div', { class: 's3-hudrow s3-hudfx' }, slider('godrays', 'Luz volumétrica', 2), slider('bloom', 'Resplandor', 3), slider('chroma', 'Aberración', 3), slider('glitch', 'Glitch', 1), slider('tintAmt', 'Tinte', 1)),
+      h('div', { class: 's3-hudlog' }),
+      h('div', { class: 's3-hudhelp' }, 'Arrastra lo dinámico para agarrarlo y sacudirlo (rueda: acercar o alejar) · arrastra en el suelo para guiar a los personajes «hacia el ratón» · Espacio: saltar · botón central: girar la vista · Esc: parar'));
+    this.hud.hidden = false;
+    this.syncHud();
+  }
+  private syncHud() {
+    const live = this.live;
+    if (!live) return;
+    if (!live.running) { void this.afterStop(); return; }
+    this.playBtn.innerHTML = live.running ? '■ <span>Parar</span>' : '▶ <span>En vivo</span>';
+    const fps = this.hud.querySelector('.s3-fps');
+    if (fps) { const tick = () => { if (!this.live?.running) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos · ${live.time.toFixed(1)} s`; setTimeout(tick, 500); }; tick(); }
+  }
+  private hudLog(msg: string, error = false) {
+    const el = this.hud.querySelector('.s3-hudlog');
+    if (!el) return;
+    el.append(h('div', { class: error ? 's3-err' : '' }, msg));
+    while (el.children.length > 4) el.firstChild!.remove();
+  }
+  private async saveRec() {
+    const live = this.live;
+    if (!live) return;
+    const n = live.stopRec(true);
+    toast(n ? `Grabación guardada como ${n} keyframes (se puede deshacer)` : 'No se grabó ningún movimiento.', n ? 'ok' : 'info');
+  }
+  private startVideo() {
+    const cv = this.view.renderer.domElement as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream };
+    if (!cv.captureStream || typeof MediaRecorder === 'undefined') { toast('Este sistema no puede grabar vídeo en vivo: graba keyframes y usa Render → animación.', 'error'); return; }
+    const mime = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
+    const rec = new MediaRecorder(cv.captureStream(this.s.fps), { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+    const chunks: Blob[] = [];
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      const blob = new Blob(chunks, { type: mime });
+      const name = `${this.deps.name()}-en-vivo.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
+      await saveFile(name, new Uint8Array(await blob.arrayBuffer()));
+      toast(`Vídeo guardado: ${name}`, 'ok');
+    };
+    rec.start(500);
+    this.video = { rec, chunks, mime };
+  }
+  private stopVideo() { this.video?.rec.stop(); this.video = null; }
+  /** Dibujo de YOSADRAW o imagen como cartel 3D (recibe luces, sombras y efectos). */
+  private async addCard(src: 'drawing' | 'image') {
+    const s = this.s;
+    const aspectOf = (url: string) => new Promise<number>(res => { const im = new Image(); im.onload = () => res(im.naturalWidth / Math.max(1, im.naturalHeight)); im.onerror = () => res(1); im.src = url; });
+    if (src === 'image') {
+      const [f] = await pickFiles('image/png,image/jpeg,image/webp,image/gif', false);
+      if (!f) return;
+      const url = await fileToDataUrl(f);
+      s.addCard(url, f.name.replace(/\.[^.]+$/, '') || 'Imagen', await aspectOf(url));
+      this.view.frameSelected();
+      return;
+    }
+    const list = this.deps.projects.list().filter(e => !e.trashed && !e.motion && !e.s3d).slice(0, 30);
+    if (!list.length) { toast('No tienes dibujos en la galería.'); return; }
+    menu(innerWidth / 2, innerHeight / 3, 'Dibujo en 3D', list.map(e => ({ label: e.name, run: async () => {
+      try { toast('Preparando el dibujo…'); const url = await drawingToUrl(this.deps, e.id); s.addCard(url, e.name, await aspectOf(url), { id: e.id, rev: e.rev }); this.closeSheet(); this.view.frameSelected(); toast(`«${e.name}» está en la escena: recibe luces, sombras y efectos`, 'ok'); }
+      catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }
+    } })));
+  }
+
   // ---------------------------------------------------------------- render
 
   renderDialog() {
@@ -368,6 +503,7 @@ export class UI3D {
     }
     const views: Record<string, ViewName> = { 1: 'front', 3: 'right', 7: 'top', 0: 'camera' };
     switch (k) {
+      case 'F5': void this.play(); return true;
       case 'Tab': s.toggleEdit(); return true;
       case ' ': s.toggle(); return true;
       case 'ArrowLeft': s.step(-1); return true;

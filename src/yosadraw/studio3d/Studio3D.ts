@@ -9,13 +9,13 @@ import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
 import * as M from './mesh';
 import {
-  History3, PRIMS, cameraObject, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, PRIMS, cameraObject, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
 export type Mode3 = 'object' | 'edit';
 export type SelMode = 'vert' | 'edge' | 'face';
-export type Tool3 = 'select' | 'move' | 'rotate' | 'scale' | 'create' | 'block' | 'paint';
+export type Tool3 = 'select' | 'move' | 'rotate' | 'scale' | 'create' | 'block' | 'paint' | 'aim';
 import type { Shading } from './prefs';
 
 export type { Prefs3, Shading } from './prefs';
@@ -596,6 +596,52 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
       s.open = sid2;
     });
     this.sel = []; this.emit('select', undefined);
+  }
+
+  // ---------------------------------------------------------------- modo En vivo: física, personajes, reglas, efectos
+
+  /** Física de los objetos elegidos (crea la configuración si no tenían). */
+  setPhys(ids: string[], patch: Partial<Phys3>, label = 'Física') {
+    this.edit(label, (_s, sc) => { for (const id of ids) { const o = objOf(sc, id); if (o && o.kind === 'mesh') o.phys = { ...(o.phys ?? defaultPhys()), ...patch }; } });
+  }
+  /** Convierte los elegidos en personajes (o lo quita con `on` = false). */
+  setCharacter(ids: string[], on: boolean) {
+    this.edit(on ? 'Personaje' : 'Quitar personaje', (_s, sc) => {
+      for (const id of ids) { const o = objOf(sc, id); if (!o || o.kind !== 'mesh') continue; if (on) { o.ctrl ??= defaultCtrl(); o.phys ??= defaultPhys('dynamic'); if (o.phys.body === 'none') o.phys.body = 'dynamic'; } else delete o.ctrl; }
+    });
+  }
+  setCtrl(ids: string[], patch: Partial<Ctrl3>, live = false) {
+    const fn = (_s: Studio3, sc: Scene3) => { for (const id of ids) { const o = objOf(sc, id); if (o?.ctrl) o.ctrl = { ...o.ctrl, ...patch, lock: { ...o.ctrl.lock, ...(patch.lock ?? {}) } }; } };
+    if (live) this.live(fn); else this.edit('Personaje', fn);
+  }
+  get fx(): Fx3 { return { ...defaultFx(), ...(this.scene.fx ?? {}) }; }
+  /** Efectos de la escena (`live` = mientras se arrastra; se registra al soltar). */
+  setFx(patch: Partial<Fx3>, live = false) {
+    const fn = (_s: Studio3, sc: Scene3) => { sc.fx = { ...defaultFx(), ...(sc.fx ?? {}), ...patch }; };
+    if (live) this.live(fn); else this.edit('Efectos', fn);
+  }
+  addRule(r: Rule3) { this.edit('Nueva regla', (_s, sc) => { (sc.rules ??= []).push(r); }); }
+  updateRule(id: string, fn: (r: Rule3) => void, label = 'Regla') { this.edit(label, (_s, sc) => { const r = sc.rules?.find(x => x.id === id); if (r) fn(r); }); }
+  removeRule(id: string) { this.edit('Borrar regla', (_s, sc) => { sc.rules = (sc.rules ?? []).filter(r => r.id !== id); }); }
+  setScript(code: string) { if ((this.scene.script ?? '') !== code) this.edit('Programa', (_s, sc) => { sc.script = code; }); }
+  /**
+   * Dibujo en 3D: un cartel vertical con el dibujo de textura (lo transparente se
+   * recorta), que recibe las luces, las sombras y los efectos de la escena y proyecta
+   * la sombra de su silueta.
+   */
+  addCard(src: string, name: string, aspect: number, project: { id: string; rev: number } | null = null, height = 2) {
+    const w = round(height * aspect), hh = height;
+    const tex = sid('tx');
+    const mat = newMaterial(name, { color: '#ffffff', rough: 0.85 });
+    mat.tex = tex; mat.cut = true;
+    const o = newObject('mesh', name, [0, 0, 0]);
+    o.mesh = { v: [-w / 2, 0, 0, w / 2, 0, 0, w / 2, hh, 0, -w / 2, hh, 0], f: [[0, 1, 2, 3]], m: [0], uv: [[0, 0, 1, 0, 1, 1, 0, 1]] };
+    o.mats = [mat.id];
+    o.card = { billboard: false };
+    this.edit(`Dibujo en 3D: ${name}`, (st, sc) => { st.textures.push({ id: tex, name, src, project }); st.materials.push(mat); o.name = this.uniqueName(sc, o.name); sc.objects.push(o); });
+    this.sel = [o.id];
+    this.emit('select', undefined);
+    return o;
   }
 
   // ---------------------------------------------------------------- tiempo y keyframes
