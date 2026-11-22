@@ -182,6 +182,9 @@ class GodRaysPass extends Pass {
       if ((o as T.Mesh).isMesh) {
         const m = o as T.Mesh;
         if (m.userData.noOcclude) { hidden.push(m); return; }
+        // Cristal y materiales casi transparentes: dejan pasar los rayos.
+        const ms = Array.isArray(m.material) ? m.material : [m.material];
+        if (ms.every(x => x.transparent && x.opacity < 0.6)) { hidden.push(m); return; }
         swapped.push([m, m.material]);
         const src = Array.isArray(m.material) ? m.material : [m.material];
         const occ = src.map(x => { const sm = x as T.MeshStandardMaterial; if (sm.alphaTest > 0 && sm.map) { let c = this.cutMats.get(x); if (!c) { c = new T.MeshBasicMaterial({ color: 0x000000, map: sm.map, alphaTest: sm.alphaTest, side: T.DoubleSide }); this.cutMats.set(x, c); } return c; } return this.black; });
@@ -295,23 +298,99 @@ export class FxPipeline {
   dispose() { this.god.dispose(); this.bloom.dispose(); this.composer.dispose(); }
 }
 
-/** Cono de luz volumétrica de un foco (aditivo, se desvanece a lo largo y en los bordes). */
+/**
+ * Haz de luz volumétrica de un foco. En vez de un cono plano que atraviesa todo,
+ * cada píxel del haz recorre el rayo de la cámara dentro del cono (pocos pasos con
+ * ruido para que no se noten) y mira el mapa de sombras del foco: donde una pared,
+ * un mueble o la silueta de un dibujo tapa la luz, el haz se corta. Más denso cerca
+ * del foco, bordes suaves y más brillante mirando hacia la luz. Sin pases extra:
+ * reutiliza la sombra que el foco ya calcula.
+ */
+/** Foco de cada haz (fuera de userData, que se copia con JSON al clonar/exportar). */
+export const coneLight = new WeakMap<T.Object3D, T.SpotLight>();
+export const CONE_STEPS = { low: 10, medium: 18, high: 28 } as const;
 export function volumeCone(angleDeg: number, length: number): T.Mesh {
-  const r = Math.tan((Math.max(1, Math.min(80, angleDeg)) * Math.PI) / 180) * length;
-  const g = new T.ConeGeometry(r, length, 40, 1, true).translate(0, -length / 2, 0).rotateX(Math.PI / 2);
+  const tanA = Math.tan((Math.max(1, Math.min(80, angleDeg)) * Math.PI) / 180);
+  const r = tanA * length;
+  // Cerrado (con tapa) para que el haz también se vea mirando desde la base.
+  const g = new T.ConeGeometry(r, length, 40, 1, false).translate(0, -length / 2, 0).rotateX(Math.PI / 2);
   const m = new T.ShaderMaterial({
-    uniforms: { color: { value: new T.Color('#ffffff') }, strength: { value: 0.5 }, len: { value: length }, time: { value: 0 } },
-    vertexShader: `varying float vL; varying vec3 vN; varying vec3 vV; varying vec3 vP; uniform float len;
-      void main(){ vL = clamp(-position.z / len, 0.0, 1.0); vN = normalize(normalMatrix * normal); vec4 mv = modelViewMatrix * vec4(position, 1.0); vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: `uniform vec3 color; uniform float strength, time; varying float vL; varying vec3 vN; varying vec3 vV; varying vec3 vP;
-      float n(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
-      void main(){ float edge = pow(abs(dot(normalize(vN), normalize(vV))), 2.0); float dust = 0.85 + 0.15 * sin(vP.z * 3.0 + time * 1.7 + vP.x * 5.0);
-        float a = pow(1.0 - vL, 1.6) * edge * strength * dust; gl_FragColor = vec4(color * a, a); }`,
-    transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide,
+    uniforms: {
+      color: { value: new T.Color('#ffffff') }, strength: { value: 0.5 }, len: { value: length }, tanA: { value: tanA }, time: { value: 0 },
+      inside: { value: 0 }, camLocal: { value: new T.Vector3() }, steps: { value: CONE_STEPS.medium },
+      shadowMap: { value: null }, shadowMatrix: { value: new T.Matrix4() }, hasShadow: { value: 0 },
+    },
+    vertexShader: `varying vec3 vL; void main(){ vL = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `#include <packing>
+      uniform vec3 color, camLocal; uniform float strength, len, tanA, time, inside, steps, hasShadow; uniform sampler2D shadowMap; uniform mat4 shadowMatrix;
+      varying vec3 vL;
+      float k2;
+      // Salida del rayo del cono (eje -z, vértice en el origen) o de su tapa.
+      float exitT(vec3 o, vec3 d){
+        float a = d.x * d.x + d.y * d.y - k2 * d.z * d.z, b = 2.0 * (o.x * d.x + o.y * d.y - k2 * o.z * d.z), c = o.x * o.x + o.y * o.y - k2 * o.z * o.z;
+        float best = 1e9;
+        if (abs(a) > 1e-6) { float D = b * b - 4.0 * a * c; if (D >= 0.0) { float s = sqrt(D);
+          float t1 = (-b - s) / (2.0 * a), t2 = (-b + s) / (2.0 * a);
+          float z1 = o.z + d.z * t1, z2 = o.z + d.z * t2;
+          if (t1 > 1e-3 && z1 <= 0.0 && z1 >= -len) best = min(best, t1);
+          if (t2 > 1e-3 && z2 <= 0.0 && z2 >= -len) best = min(best, t2); } }
+        if (abs(d.z) > 1e-6) { float t = (-len - o.z) / d.z; vec3 p = o + d * t; if (t > 1e-3 && length(p.xy) <= tanA * len) best = min(best, t); }
+        return best > 1e8 ? 0.0 : best;
+      }
+      float lit(vec3 local){
+        if (hasShadow < 0.5) return 1.0;
+        vec4 sc = shadowMatrix * vec4(local, 1.0);
+        sc.xyz /= sc.w;
+        if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z > 1.0) return 1.0;
+        return step(sc.z - 0.003, unpackRGBAToDepth(texture2D(shadowMap, sc.xy)));
+      }
+      void main(){
+        k2 = tanA * tanA;
+        vec3 o, d; float tEnd;
+        if (inside > 0.5) { o = camLocal; vec3 v = vL - camLocal; tEnd = length(v); d = v / max(tEnd, 1e-5); }
+        else { o = vL; d = normalize(vL - camLocal); tEnd = exitT(o, d); }
+        if (tEnd <= 0.0) discard;
+        // Ruido por píxel (y por fotograma) para repartir los pasos sin bandas.
+        float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) + time * 0.618);
+        float n = steps, dt = tEnd / n, acc = 0.0;
+        for (int i = 0; i < 32; i++) {
+          if (float(i) >= n) break;
+          vec3 p = o + d * (dt * (float(i) + jit));
+          float z = -p.z; if (z <= 0.0) continue;
+          float edge = smoothstep(1.0, 0.55, length(p.xy) / (tanA * z));
+          float fall = 1.0 / (1.0 + 6.0 * (z / len) * (z / len)) * smoothstep(len, len * 0.75, z);
+          float dust = 0.85 + 0.15 * sin(p.x * 4.0 + time * 1.3) * sin(p.y * 3.0 - time * 0.9 + p.z * 2.0);
+          acc += lit(p) * edge * fall * dust;
+        }
+        // Más brillo mirando hacia el foco (dispersión hacia delante).
+        float c = dot(d, normalize(o + d * tEnd * 0.5));
+        float phase = clamp(0.8775 / pow(1.1225 - 0.7 * c, 1.5), 0.5, 3.0);
+        float a = 1.0 - exp(-acc * dt * strength * 0.9 * phase / max(0.3, tanA * len * 0.5));
+        gl_FragColor = vec4(color * a, a);
+      }`,
+    transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.FrontSide,
   });
   const mesh = new T.Mesh(g, m);
   mesh.userData.noOcclude = true;
   mesh.userData.cone = true;
+  mesh.castShadow = false; mesh.receiveShadow = false;
   mesh.raycast = () => undefined;
+  const inv = new T.Matrix4(), cl = new T.Vector3();
+  // Antes de dibujarlo: cámara en coordenadas del cono, ¿dentro del haz?, y la sombra del foco.
+  mesh.onBeforeRender = (_r, _s, camera) => {
+    const u = m.uniforms;
+    inv.copy(mesh.matrixWorld).invert();
+    cl.setFromMatrixPosition(camera.matrixWorld).applyMatrix4(inv);
+    u.camLocal.value.copy(cl);
+    const z = -cl.z, inCone = z > 0 && z < length && Math.hypot(cl.x, cl.y) < tanA * z;
+    u.inside.value = inCone ? 1 : 0;
+    m.side = inCone ? T.BackSide : T.FrontSide;
+    m.depthTest = !inCone;
+    const l = coneLight.get(mesh);
+    const map = l?.castShadow ? l.shadow.map?.texture ?? null : null;
+    u.shadowMap.value = map; u.hasShadow.value = map ? 1 : 0;
+    // Del espacio del cono directamente a la textura de sombra del foco.
+    if (l) u.shadowMatrix.value.multiplyMatrices(l.shadow.matrix, mesh.matrixWorld);
+  };
   return mesh;
 }

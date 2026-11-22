@@ -8,7 +8,7 @@ import * as M from './mesh';
 import { defaultFx, effLocked, effVisible, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
 import { round, type Studio3D } from './Studio3D';
 import { canvasToUrl, TexCache } from './textures';
-import { FxPipeline, volumeCone } from './live/fx';
+import { CONE_STEPS, FxPipeline, coneLight, volumeCone } from './live/fx';
 import type { Fx3 } from './model';
 
 /** Lo que el modo En vivo cambia al dibujar (sin tocar el proyecto). */
@@ -455,7 +455,8 @@ export class View3D {
         // Zonas: se ven al editar (semitransparentes), no en vivo.
         if (o.phys?.zone) n.mesh!.visible = !this.live;
         else n.mesh!.visible = true;
-        n.mesh!.castShadow = o.castShadow !== false && mode === 'render';
+        // El cristal (casi transparente) no proyecta sombra: la luz pasa por las ventanas.
+        n.mesh!.castShadow = o.castShadow !== false && mode === 'render' && !ms.every(x => x.transparent && x.opacity < 0.6);
         n.mesh!.receiveShadow = mode === 'render';
         // Contorno de selección (aristas marcadas).
         const on = sel.has(o.id) && s.mode === 'object';
@@ -515,14 +516,14 @@ export class View3D {
     if (l instanceof T.HemisphereLight) l.groundColor.set(L.ground);
     if (l instanceof T.SpotLight) { l.angle = Math.max(1, Math.min(89, valueAt(L.angle, t))) * D2R; l.penumbra = 0.35; l.distance = L.dist; l.decay = 2; }
     if (l instanceof T.PointLight) { l.distance = L.dist; l.decay = 2; }
-    l.castShadow = L.shadow && (fx?.shadows ?? 2) > 0 && (l instanceof T.DirectionalLight || l instanceof T.SpotLight || l instanceof T.PointLight);
+    // Cono de luz volumétrica en los focos (efectos activos): usa la sombra del foco para cortarse con las paredes.
+    const wantCone = l instanceof T.SpotLight && !!fx && fx.cones > 0 && lit;
+    l.castShadow = (L.shadow || wantCone) && (fx?.shadows ?? 2) > 0 && (l instanceof T.DirectionalLight || l instanceof T.SpotLight || l instanceof T.PointLight);
     if (l.castShadow && 'shadow' in l) { const size = [512, 1024, 2048, 4096][fx?.shadows ?? 2]; const sh = (l as T.DirectionalLight).shadow; if (sh.mapSize.x !== size) { sh.mapSize.set(size, size); sh.map?.dispose(); sh.map = null as never; } }
     n.baseI = l.intensity; n.baseColor = `#${l.color.getHexString()}`;
-    // Cono de luz volumétrica en los focos (efectos activos).
-    const wantCone = l instanceof T.SpotLight && !!fx && fx.cones > 0 && lit;
     const len = L.dist > 0 ? L.dist : 9;
-    if (wantCone && (!n.cone || n.cone.userData.len !== len || n.cone.userData.angle !== l.angle)) { n.cone?.removeFromParent(); n.cone?.geometry.dispose(); n.cone = volumeCone((l as T.SpotLight).angle / D2R, len); n.cone.userData.len = len; n.cone.userData.angle = l.angle; n.node.add(n.cone); }
-    if (n.cone) { n.cone.visible = wantCone; if (wantCone) { const u = (n.cone.material as T.ShaderMaterial).uniforms; u.color.value.copy(l.color); u.strength.value = fx!.cones * Math.min(2, l.intensity / 30); } }
+    if (wantCone && (!n.cone || n.cone.userData.len !== len || n.cone.userData.angle !== l.angle)) { n.cone?.removeFromParent(); n.cone?.geometry.dispose(); n.cone = volumeCone((l as T.SpotLight).angle / D2R, len); coneLight.set(n.cone, l as T.SpotLight); n.cone.userData.len = len; n.cone.userData.angle = l.angle; n.node.add(n.cone); }
+    if (n.cone) { n.cone.visible = wantCone; if (wantCone) { const u = (n.cone.material as T.ShaderMaterial).uniforms; u.color.value.copy(l.color); u.strength.value = fx!.cones * Math.min(2, l.intensity / 30); u.steps.value = CONE_STEPS[fx!.quality]; } }
     this.pickMesh(n, () => new T.OctahedronGeometry(0.18), '#ffe27a', on);
     if (n.pick) n.pick.visible = n.pick.visible && !this.live;
   }

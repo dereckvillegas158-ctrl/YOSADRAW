@@ -1,4 +1,16 @@
-## YOSADRAW 1.14.0
+## YOSADRAW 1.14.1
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.14.1-x64.exe` (instalador), `YOSADRAW-1.14.1-x64-portable.exe` o `YOSADRAW-1.14.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.14.1.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Mejor luz volumétrica en 3D Studio
+- **Los haces de los focos chocan con las cosas:** una pared, un mueble, el suelo o la silueta de un dibujo cortan el haz y dejan su «sombra» dentro de la luz, en vez de atravesarlo todo. Usa la sombra que el foco ya calcula, así que apenas cuesta más.
+- **Aspecto más real:** más denso cerca del foco y más suave al alejarse, bordes difuminados, más brillo cuando miras hacia la luz y polvo flotando. Se ve bien también desde dentro del haz y mirando desde la base.
+- **Cristal:** los objetos casi transparentes (ventanas de cristal) ya no proyectan sombra ni tapan los rayos del sol: la luz entra por las ventanas.
+- El detalle del haz sigue la calidad de los efectos (baja, media o alta), y la calidad adaptativa lo baja sola si van pocos FPS.
+
+### Versión anterior: YOSADRAW 1.14.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.14.0-x64.exe` (instalador), `YOSADRAW-1.14.0-x64-portable.exe` o `YOSADRAW-1.14.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
