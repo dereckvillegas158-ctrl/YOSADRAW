@@ -26,6 +26,11 @@ interface BodyInfo {
   kinematic: boolean;
   /** Hasta cuándo el control no frena un empujón (s de simulación). */
   free: number;
+  /**
+   * Inclinación de frente sólo visual (personajes «siempre de pie»): ángulo, su
+   * velocidad, eje (la vista) y punto de giro respecto al centro del cuerpo.
+   */
+  tilt: number; tiltV: number; tiltAxis: T.Vector3; tiltPivot: T.Vector3;
   /** Físicas efectivas (los carteles PNG sin físicas usan las de cartel). */
   ph: Phys3;
 }
@@ -165,7 +170,7 @@ export class Live {
     }
     body.updateMassProperties();
     this.world.addBody(body);
-    const info: BodyInfo = { id: o.id, obj: o, body, center, scale: sc, rot0: q.clone(), ctrl, origin: wc.clone(), patrolSign: 1, target: null, yaw: 0, jig: 0, jigV: 0, prevV: new T.Vector3(), grounded: false, kinematic: type === 'kinematic', free: 0, ph };
+    const info: BodyInfo = { id: o.id, obj: o, body, center, scale: sc, rot0: q.clone(), ctrl, origin: wc.clone(), patrolSign: 1, target: null, yaw: 0, jig: 0, jigV: 0, prevV: new T.Vector3(), grounded: false, kinematic: type === 'kinematic', free: 0, ph, tilt: 0, tiltV: 0, tiltAxis: new T.Vector3(0, 0, -1), tiltPivot: new T.Vector3() };
     if (terrain) info.rot0 = new T.Quaternion();
     this.bodies.set(o.id, info);
     this.byBody.set(body, info);
@@ -271,6 +276,17 @@ export class Live {
     const g = this.world.gravity;
     for (const b of this.bodies.values()) {
       const body = b.body, ph = b.ph;
+      // Siempre de pie: la inclinación de frente es sólo visual; se agarra igual y,
+      // al soltarlo, se balancea y vuelve a quedar de pie (nunca vuelca).
+      if (b.ctrl?.upright && body.type === C.Body.DYNAMIC) {
+        if (this.grab?.info === b && this.grab.face) this.faceRoll(b, this.grab.face);
+        else if (b.tilt !== 0 || b.tiltV !== 0) {
+          b.tiltV += (-b.tilt * 55 - b.tiltV * 4.2) * STEP;
+          b.tilt += b.tiltV * STEP;
+          if (Math.abs(b.tilt) < 1e-4 && Math.abs(b.tiltV) < 1e-3) { b.tilt = 0; b.tiltV = 0; }
+        }
+        continue;
+      }
       if (body.type !== C.Body.DYNAMIC || b.ctrl || ph.zone) continue;
       const grabbed = this.grab?.info === b;
       const m = body.mass;
@@ -315,6 +331,13 @@ export class Live {
     const k = 55, c = 4.2 + (1 - Math.min(1, sw)) * 4;
     f.rollV += (-(f.roll - target) * k - f.rollV * c) * STEP;
     f.roll = Math.max(-1.4, Math.min(1.4, f.roll + f.rollV * STEP));
+    if (b.ctrl?.upright) {
+      // De pie: el cuerpo no gira; se dibuja inclinado alrededor del punto agarrado.
+      b.tilt = f.roll; b.tiltV = f.rollV; b.tiltAxis.copy(fwd);
+      const bp = b.body.position;
+      b.tiltPivot.set(mp.x - bp.x, mp.y - bp.y, mp.z - bp.z);
+      return;
+    }
     const q = new T.Quaternion().setFromAxisAngle(fwd, f.roll).multiply(f.q0);
     b.body.quaternion.set(q.x, q.y, q.z, q.w);
     b.body.angularVelocity.set(0, 0, 0);
@@ -425,7 +448,12 @@ export class Live {
       if (b.ctrl?.upright) q = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), b.yaw).multiply(b.rot0);
       const sq = 1 + b.jig, st = 1 / Math.sqrt(Math.max(0.3, sq));
       const S = b.scale.clone().multiply(new T.Vector3(st, sq, st));
-      const W = new T.Matrix4().compose(new T.Vector3(bp.x, bp.y, bp.z), q, S).multiply(new T.Matrix4().makeTranslation(-b.center.x, -b.center.y, -b.center.z));
+      let W = new T.Matrix4().compose(new T.Vector3(bp.x, bp.y, bp.z), q, S).multiply(new T.Matrix4().makeTranslation(-b.center.x, -b.center.y, -b.center.z));
+      // Inclinación de frente de un personaje de pie (alrededor del punto donde se agarró).
+      if (b.tilt !== 0) {
+        const pv = new T.Vector3(bp.x, bp.y, bp.z).add(b.tiltPivot);
+        W = new T.Matrix4().makeTranslation(pv.x, pv.y, pv.z).multiply(new T.Matrix4().makeRotationAxis(b.tiltAxis, b.tilt)).multiply(new T.Matrix4().makeTranslation(-pv.x, -pv.y, -pv.z)).multiply(W);
+      }
       if (b.obj.gen?.type === 'terrain' && b.body.type === C.Body.STATIC) continue;
       this.hooks.world.set(b.id, W);
     }
@@ -464,7 +492,7 @@ export class Live {
       let face: NonNullable<Live['grab']>['face'] = null;
       if (this.faces(info)) {
         const bq = info.body.quaternion;
-        info.body.fixedRotation = true; info.body.updateMassProperties();
+        if (!info.ctrl?.upright) { info.body.fixedRotation = true; info.body.updateMassProperties(); }
         face = { q0: new T.Quaternion(bq.x, bq.y, bq.z, bq.w), roll: 0, rollV: 0, vel: 0, prev: p.clone(), side: local.y >= 0 ? 1 : -1 };
       }
       this.grab = { info, joint, mouse, dist: 0, plane: new T.Plane().setFromNormalAndCoplanarPoint(n, p), face };
@@ -496,7 +524,9 @@ export class Live {
       this.world.removeBody(this.grab.mouse);
       this.grab.info.free = this.time + 0.6;
       const f = this.grab.face, body = this.grab.info.body;
-      if (f) {
+      if (f && this.grab.info.ctrl?.upright) {
+        // De pie: sigue balanceándose (sólo visual, desde donde se agarró) hasta quedar derecho.
+      } else if (f) {
         // Al soltarlo sigue oscilando con el giro que llevaba y luego se endereza.
         body.fixedRotation = false; body.updateMassProperties();
         const fwd = new T.Vector3(0, 0, -1).applyQuaternion(this.view.liveCamera.quaternion).multiplyScalar(f.rollV);
