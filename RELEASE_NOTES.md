@@ -1,4 +1,18 @@
-## YOSADRAW 1.15.2
+## YOSADRAW 1.16.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.16.0-x64.exe` (instalador), `YOSADRAW-1.16.0-x64-portable.exe` o `YOSADRAW-1.16.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.16.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo en 3D Studio: dibujo animado
+- **Cel shading** para toda la escena (Vivo → «Dibujo animado») o sólo para un objeto (Objeto → «Dibujo animado del objeto»): número de tonos, suavidad del borde, sombra que **reacciona al color del ambiente** o con **un color propio**, y brillo de borde con su color. Estilos listos: Caricatura y Anime. Se ve en vivo, en la vista previa de efectos y en los renders (imagen, MP4 y GIF). Amplía la opción «Estilizado» de los materiales sin reemplazarla.
+- **Lineart de caricatura:** contorno con grosor y color, para toda la escena o por objeto. En las figuras es un contorno de grosor constante; en los dibujos sigue su silueta.
+- **Poses de los dibujos con transiciones en vivo:** a un dibujo en 3D se le pueden añadir otros dibujos o imágenes como poses, cada una con su tecla (y una tecla para el original y otra para «siguiente pose»). En vivo, al pulsar la tecla el dibujo cambia con una transición, sin keyframes: **squash and stretch** (aplastar y estirar), volteo, giro, pop, fundido, salto, sacudida o corte, con duración ajustable. También desde el programa: `obj("Gato").pose("Feliz")`. Las poses se guardan en el proyecto.
+- **Grabación de vídeo en vivo arreglada y con más calidad:** ocultar o mostrar la interfaz mientras se graba ya no estropea el vídeo (se graba a un tamaño fijo, independiente de la ventana). Se elige la calidad (720p, 1080p, 1440p o el tamaño de la pantalla); mientras se graba, la escena se dibuja a la resolución del vídeo y con más bits por segundo, así que sale más nítido. El primer fotograma ya no sale negro.
+- **Grabar con la interfaz oculta:** botón **«⏺ Grabar sin interfaz»** (oculta todo y empieza a grabar) y, con la interfaz oculta, un botón discreto para grabar o parar con el tiempo de grabación. **F9** empieza o para la grabación en cualquier momento; Esc también la termina y la guarda.
+- **Optimización del modo En vivo:** los objetos quietos o dormidos ya no se recalculan en cada fotograma y el bucle de física y de dibujo reutiliza sus objetos de trabajo (menos trabajo y menos tirones del recolector de memoria).
+
+### Versión anterior: YOSADRAW 1.15.2
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.15.2-x64.exe` (instalador), `YOSADRAW-1.15.2-x64-portable.exe` o `YOSADRAW-1.15.2-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

@@ -234,6 +234,8 @@ export async function writeProject(doc: Document, meta: ProjectMeta, o: { codec:
 function s3dOut(doc: Document) {
   const s = doc.s3d!;
   const used = new Set(s.materials.map(m => m.tex).filter(Boolean));
+  // Poses de los dibujos (cambian en vivo).
+  for (const sc of s.scenes) for (const o of sc.objects) for (const p of o.card?.poses ?? []) used.add(p.tex);
   return { ...s, textures: s.textures.filter(t => used.has(t.id)) };
 }
 

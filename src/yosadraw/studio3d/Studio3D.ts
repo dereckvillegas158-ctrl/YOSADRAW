@@ -619,6 +619,21 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
     const fn = (_s: Studio3, sc: Scene3) => { for (const id of ids) { const o = objOf(sc, id); if (!o || o.kind !== 'mesh') continue; if (patch === null) delete o.style; else o.style = { ...defaultObjStyle(), ...(o.style ?? {}), ...patch }; } };
     if (live) this.live(fn); else this.edit('Estilo del objeto', fn);
   }
+  /** Pose nueva para un dibujo (otro dibujo o imagen que se cambia en vivo con una tecla). */
+  addPose(id: string, src: string, name: string, project: { id: string; rev: number } | null = null) {
+    const tex = sid('tx');
+    this.edit(`Pose: ${name}`, (st, sc) => {
+      const o = objOf(sc, id); if (!o?.card) return;
+      st.textures.push({ id: tex, name, src, ...(project ? { project } : {}) });
+      const poses = (o.card.poses ??= []);
+      poses.push({ id: sid('ps'), name, tex, key: String(Math.min(9, poses.length + 1)) });
+    });
+  }
+  /** Cambia algo del dibujo (poses, teclas, transición). */
+  setCard(id: string, fn: (c: NonNullable<Obj3['card']>) => void, label = 'Poses', live = false) {
+    const f = (_s: Studio3, sc: Scene3) => { const o = objOf(sc, id); if (o?.card) fn(o.card); };
+    if (live) this.live(f); else this.edit(label, f);
+  }
   /** Grosor (volumen) de los dibujos elegidos. */
   setCardDepth(ids: string[], depth: number, live = false) {
     const fn = (_s: Studio3, sc: Scene3) => { for (const id of ids) { const o = objOf(sc, id); if (o?.card) o.card = { ...o.card, depth: Math.max(0, Math.min(2, depth)) }; } };
