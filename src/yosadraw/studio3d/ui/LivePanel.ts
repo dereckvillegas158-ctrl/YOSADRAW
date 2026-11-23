@@ -1,10 +1,11 @@
 import { h, toast } from '../../ui/dom';
-import { cardPhys, defaultCtrl, defaultFx, defaultObjStyle, defaultPhys, styled, sid, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
+import { TRANS_TYPES, cardPhys, defaultCel, defaultCtrl, defaultFx, defaultObjStyle, defaultPhys, styled, sid, type Cel3, type Line3, type TransType, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
 import type { Studio3D } from '../Studio3D';
 import type { Rows } from './Panels';
 
 /** Física y control de un objeto (sección del panel «Objeto»). */
-export function physicsSection(r: Rows, s: Studio3D, o: Obj3) {
+export type PickArt = (kind: 'image' | 'drawing') => Promise<{ src: string; name: string; project: { id: string; rev: number } | null } | null>;
+export function physicsSection(r: Rows, s: Studio3D, o: Obj3, pick?: PickArt) {
   const ids = s.selected.filter(x => x.kind === 'mesh').map(x => x.id);
   if (o.kind === 'light') {
     r.sec('En vivo', r.select('Comportamiento', o.lightFx ?? 'none', [['none', 'Fija'], ['flicker', 'Parpadeo (fuego, avería)'], ['pulse', 'Pulso suave'], ['orbit', 'Girar alrededor del centro']], v => s.edit('Comportamiento de la luz', (_st, sc) => { const x = sc.objects.find(y => y.id === o.id); if (x) x.lightFx = v as Obj3['lightFx']; })));
@@ -49,6 +50,7 @@ export function physicsSection(r: Rows, s: Studio3D, o: Obj3) {
   if (o.card) kids.unshift(r.range('Grosor del dibujo (volumen)', o.card.depth ?? 0, 0, 0.5, 0.01, (v, live) => s.setCardDepth(ids, v, live), v => (v > 0 ? `${Math.round(v * 100)} cm` : 'Plano')));
   kids.push(h('p', { class: 'ctl-help' }, 'Pulsa «En vivo» (F5) para ejecutar la escena: agarra y sacude lo dinámico con el ratón, Espacio hace saltar a los personajes.'));
   r.sec('Física y control (En vivo)', ...kids);
+  if (o.card && pick) posesSection(r, s, o, pick);
   styleSection(r, s, o, ids);
 }
 
@@ -77,6 +79,63 @@ function styleSection(r: Rows, s: Studio3D, o: Obj3, ids: string[]) {
     st.squiggle > 0 ? r.range('Squiggle: tamaño de la onda', st.squigSize, 5, 200, 1, (v, live) => s.setStyle(ids, { squigSize: v }, live), v => `${Math.round(v)} px`) : null,
     st.ink > 0 ? (() => { const i = h('input', { type: 'color', class: 'mo-color', value: st.inkColor }); i.addEventListener('change', () => s.setStyle(ids, { inkColor: i.value })); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Color de la tinta'), i); })() : null,
     on ? r.btns(['Quitar el estilo', () => s.setStyle(ids, null)]) : null);
+  // Dibujo animado propio de este objeto (anula el de la escena).
+  r.sec('Dibujo animado del objeto (cel shading y lineart)',
+    h('p', { class: 'ctl-help' }, o.card ? 'En los dibujos, el lineart es el contorno de su silueta.' : 'Sólo este objeto; anula el de la escena. Se ve en los modos Materiales y Render, en vivo y en los renders.'),
+    ...toonControls(r, o.style?.cel ?? null, o.style?.line ?? null, c => s.setStyle(ids, { cel: c }), (l, live) => s.setStyle(ids, { line: l }, live)));
+}
+
+/**
+ * Poses de un dibujo: otros dibujos o imágenes que se cambian en vivo pulsando una
+ * tecla, con una transición (squash and stretch, volteo, giro, pop…), sin keyframes.
+ */
+function posesSection(r: Rows, s: Studio3D, o: Obj3, pick: PickArt) {
+  const c = o.card!, poses = c.poses ?? [];
+  const tr = c.trans ?? { type: 'squash' as TransType, dur: 0.45 };
+  const add = async (kind: 'image' | 'drawing') => { const a = await pick(kind); if (a) { s.addPose(o.id, a.src, a.name, a.project); toast(`Pose «${a.name}» añadida`, 'ok'); } };
+  const keyInput = (value: string, set: (v: string) => void, label: string) => {
+    const i = h('input', { type: 'text', class: 'mo-num s3-keyin', value, maxlength: '12', 'aria-label': label, title: 'Tecla (una letra, número o nombre como F1)' });
+    i.addEventListener('keydown', e => e.stopPropagation());
+    i.addEventListener('change', () => set(i.value.trim()));
+    return i;
+  };
+  const row = (name: string, key: string, setKey: (v: string) => void, extra: Node | null) => h('div', { class: 's3-poserow' }, h('span', { class: 's3-posename', title: name }, name), keyInput(key, setKey, `Tecla de ${name}`), extra);
+  r.sec(`Poses del dibujo (${poses.length})`,
+    h('p', { class: 'ctl-help' }, 'En vivo, pulsa la tecla de una pose para cambiar el dibujo con la transición elegida (sin keyframes).'),
+    row('Original', c.baseKey ?? '0', v => s.setCard(o.id, x => { x.baseKey = v; }), null),
+    ...poses.map((p, i) => row(p.name, p.key, v => s.setCard(o.id, x => { x.poses![i].key = v; }), h('button', { type: 'button', class: 'icon sm', title: 'Quitar la pose', 'aria-label': `Quitar ${p.name}`, on: { click: () => s.setCard(o.id, x => { x.poses!.splice(i, 1); }, 'Quitar pose') } }, '✕'))),
+    r.btns(['+ Dibujo de YOSADRAW…', () => void add('drawing')], ['+ Imagen…', () => void add('image')]),
+    r.select('Transición', tr.type, TRANS_TYPES, v => s.setCard(o.id, x => { x.trans = { ...tr, type: v as TransType }; })),
+    tr.type !== 'cut' ? r.range('Duración', tr.dur, 0.1, 1.5, 0.05, (v, live) => s.setCard(o.id, x => { x.trans = { ...tr, dur: v }; }, 'Transición', live), v => `${v.toFixed(2)} s`) : null,
+    h('div', { class: 's3-poserow' }, h('span', { class: 's3-posename' }, 'Siguiente pose'), keyInput(c.nextKey ?? '', v => s.setCard(o.id, x => { x.nextKey = v; }), 'Tecla para la siguiente pose'), null));
+}
+
+const color = (label: string, value: string, set: (v: string) => void) => { const i = h('input', { type: 'color', class: 'mo-color', value }); i.addEventListener('change', () => set(i.value)); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, label), i); };
+/** Controles de cel shading y lineart (escena u objeto). */
+function toonControls(r: Rows, cel: Cel3 | null, line: Line3 | null, setCel: (c: Cel3 | null) => void, setLine: (l: Line3 | null, live?: boolean) => void): (Node | null)[] {
+  const c = cel ?? defaultCel();
+  const up = (patch: Partial<Cel3>) => setCel({ ...c, ...patch });
+  const out: (Node | null)[] = [r.check('Cel shading (sombreado de dibujo animado)', !!cel, v => setCel(v ? c : null))];
+  if (cel) out.push(
+    r.range('Tonos', c.bands, 2, 6, 1, (v, live) => { if (!live) up({ bands: v }); }, v => `${Math.round(v)}`),
+    r.range('Suavidad del borde', c.soft, 0, 1, 0.05, (v, live) => { if (!live) up({ soft: v }); }),
+    r.select('Color de la sombra', c.shade, [['ambient', 'Reacciona al ambiente (luces y entorno)'], ['color', 'Color propio']], v => up({ shade: v as Cel3['shade'] })),
+    c.shade === 'color' ? color('Color de la sombra', c.color, v => up({ color: v })) : null,
+    r.range('Brillo de borde', c.rim, 0, 1, 0.05, (v, live) => { if (!live) up({ rim: v }); }),
+    c.rim > 0 ? color('Color del brillo', c.rimColor, v => up({ rimColor: v })) : null);
+  const l = line ?? { width: 0, color: '#111111' };
+  out.push(r.range('Lineart (contorno de caricatura)', l.width, 0, 10, 0.5, (v, live) => setLine(v > 0 ? { ...l, width: v } : null, live), v => (v > 0 ? `${v} px` : 'Sin contorno')));
+  if (line && line.width > 0) out.push(color('Color del lineart', l.color, v => setLine({ ...l, color: v })));
+  return out;
+}
+
+/** Cel shading y lineart de toda la escena. */
+function toonSection(r: Rows, s: Studio3D) {
+  const fx = s.fx;
+  r.sec('Dibujo animado (cel shading y lineart)',
+    h('p', { class: 'ctl-help' }, 'Toda la escena como una caricatura. Se ve en vivo, en la vista previa de efectos y en los renders con efectos. Cada objeto puede tener el suyo en Objeto → «Dibujo animado del objeto».'),
+    ...toonControls(r, fx.cel, fx.line, c => s.setFx({ cel: c }), (l, live) => s.setFx({ line: l }, live)),
+    r.btns(['Caricatura', () => s.setFx({ cel: { ...defaultCel(), bands: 2, soft: 0.05 }, line: { width: 3, color: '#151018' }, preview: true })], ['Anime', () => s.setFx({ cel: { ...defaultCel(), bands: 3, soft: 0.15, shade: 'color', color: '#6b5b9a', rim: 0.35, rimColor: '#fff4e0' }, line: { width: 1.5, color: '#2a2030' }, preview: true })], ['Quitar', () => s.setFx({ cel: null, line: null })]));
 }
 
 const EVENTS: [EventType, string][] = [['start', 'Al empezar'], ['time', 'En el segundo…'], ['every', 'Cada … segundos'], ['key', 'Al pulsar la tecla…'], ['click', 'Al hacer clic en…'], ['collide', 'Al chocar…'], ['enter', 'Al entrar en la zona…'], ['grab', 'Al agarrar…'], ['release', 'Al soltar…']];
@@ -154,6 +213,7 @@ export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
     fx.squiggle > 0 ? r.range('Squiggle: dibujos por segundo', fx.squigFps, 1, 30, 1, (v, live) => s.setFx({ squigFps: v }, live), v => `${Math.round(v)} fps`) : null,
     fx.squiggle > 0 ? r.range('Squiggle: tamaño de la onda', fx.squigSize, 5, 200, 1, (v, live) => s.setFx({ squigSize: v }, live), v => `${Math.round(v)} px`) : null,
     fx.ink > 0 ? (() => { const i = h('input', { type: 'color', class: 'mo-color', value: fx.inkColor }); i.addEventListener('change', () => s.setFx({ inkColor: i.value })); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Color de la tinta'), i); })() : null);
+  toonSection(r, s);
   r.sec('Física de la escena',
     r.range('Gravedad', fx.gravity, 0, 30, 0.1, (v, live) => s.setFx({ gravity: v }, live), v => `${v.toFixed(1)} m/s²`),
     r.check('Suelo infinito (y = 0)', fx.ground, v => s.setFx({ ground: v })),
@@ -170,7 +230,7 @@ export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
   ta.addEventListener('change', () => s.setScript(ta.value));
   r.sec('Programa (JavaScript)', ta,
     r.btns(['Guardar', () => s.setScript(ta.value)], ['Ejemplo', () => { ta.value = SCRIPT_EXAMPLE; s.setScript(ta.value); }], ['Probar', () => { s.setScript(ta.value); onPlay(); }]),
-    h('p', { class: 'ctl-help' }, 'on(suceso, objeto o tecla, función) — sucesos: start, key, click, collide, enter, grab, release. obj("Nombre") da .pos, .vel, .impulse(x,y,z), .jump(v), .dir(grados), .speed(v), .goTo(x,z), .color("#f00", s), .hide(), .show(), .spawn(x,y,z). También every, after, light("Nombre").intensity(k, s), fx("glitch", 0.5, s), shake, gravity, slowmo, random, time, log y stop.'));
+    h('p', { class: 'ctl-help' }, 'on(suceso, objeto o tecla, función) — sucesos: start, key, click, collide, enter, grab, release. obj("Nombre") da .pos, .vel, .impulse(x,y,z), .jump(v), .dir(grados), .speed(v), .goTo(x,z), .color("#f00", s), .hide(), .show(), .spawn(x,y,z), .pose(n o "nombre"). También every, after, light("Nombre").intensity(k, s), fx("glitch", 0.5, s), shake, gravity, slowmo, random, time, log y stop.'));
 }
 
 function ruleCard(r: Rows, s: Studio3D, rule: Rule3, objs: [string, string][]) {

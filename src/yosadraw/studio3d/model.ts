@@ -38,16 +38,51 @@ export interface Obj3 {
   /** Personaje controlable (dirección, velocidad, comportamiento). */
   ctrl?: Ctrl3;
   /** Dibujo en 3D: cartel que mira a la cámara (sólo gira en Y). */
-  card?: { billboard: boolean; /** Grosor (volumen 3D del dibujo, en m; 0 = plano). */ depth?: number };
+  card?: {
+    billboard: boolean; /** Grosor (volumen 3D del dibujo, en m; 0 = plano). */ depth?: number;
+    /** Poses: otros dibujos que se cambian en vivo con una tecla y una transición. */
+    poses?: Pose3[];
+    /** Tecla que vuelve al dibujo original; tecla que pasa a la siguiente pose. */
+    baseKey?: string; nextKey?: string;
+    /** Transición al cambiar de pose. */
+    trans?: { type: TransType; dur: number };
+  };
   /** Estilo propio (shaders) sólo para este objeto: se ve en los modos Materiales y Render, en vivo y en los renders. */
   style?: ObjStyle;
   /** Comportamiento de una luz en vivo. */
   lightFx?: 'none' | 'flicker' | 'pulse' | 'orbit';
 }
+/** Pose de un dibujo: textura y tecla para cambiar a ella en vivo. */
+export interface Pose3 { id: string; name: string; tex: string; key: string }
+/** Transiciones entre poses (populares en animación 2D dentro de 3D). */
+export type TransType = 'squash' | 'flip' | 'spin' | 'pop' | 'fade' | 'jump' | 'shake' | 'cut';
+export const TRANS_TYPES: [TransType, string][] = [['squash', 'Squash and stretch (aplastar y estirar)'], ['flip', 'Volteo (girar como una carta)'], ['spin', 'Giro'], ['pop', 'Pop (encoger y rebotar)'], ['fade', 'Fundido'], ['jump', 'Salto'], ['shake', 'Sacudida'], ['cut', 'Corte (sin transición)']];
+/**
+ * Cel shading (sombreado de dibujo animado): bandas de luz duras, sombra con el
+ * color del ambiente o con un color propio y brillo de borde.
+ */
+export interface Cel3 {
+  /** Número de tonos (2 = luz y sombra). */
+  bands: number;
+  /** Suavidad del borde entre tonos (0 = corte limpio). */
+  soft: number;
+  /** Sombra: «ambient» = toma el color del ambiente; «color» = color propio. */
+  shade: 'ambient' | 'color';
+  color: string;
+  /** Brillo de borde (rim) y su color. */
+  rim: number; rimColor: string;
+}
+export const defaultCel = (): Cel3 => ({ bands: 3, soft: 0.1, shade: 'ambient', color: '#5b4a8a', rim: 0, rimColor: '#ffffff' });
+/** Lineart de caricatura: contorno con grosor en píxeles (a 1080 p) y color. */
+export interface Line3 { width: number; color: string }
 /** Estilo (shaders) de un objeto concreto. */
 export interface ObjStyle {
   squiggle: number; squigFps: number; squigSize: number;
   ink: number; inkColor: string; posterize: number; halftone: number; pixel: number; paint: number; scan: number;
+  /** Cel shading propio (anula el de la escena). */
+  cel?: Cel3 | null;
+  /** Lineart propio (anula el de la escena); ancho 0 = sin contorno. */
+  line?: Line3 | null;
 }
 export const STYLE_KEYS = ['squiggle', 'ink', 'posterize', 'halftone', 'pixel', 'paint', 'scan'] as const;
 export const defaultObjStyle = (): ObjStyle => ({ squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, scan: 0 });
@@ -121,8 +156,12 @@ export interface Fx3 {
   ao: number;
   /** En vivo: con un actor elegido, el clic sólo mueve al actor (no agarra objetos). */
   actorClick: boolean;
+  /** Cel shading de toda la escena (null = no). */
+  cel: Cel3 | null;
+  /** Lineart de toda la escena (null = no). */
+  line: Line3 | null;
 }
-export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, paper: 0, scan: 0, gravity: 9.81, ground: true, ao: 0, actorClick: true });
+export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, paper: 0, scan: 0, gravity: 9.81, ground: true, ao: 0, actorClick: true, cel: null, line: null });
 
 /** Disparador: cuando pasa algo, se hacen acciones. */
 export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release';
@@ -449,12 +488,20 @@ export function normalizeStudio(v: unknown): Studio3 | null {
       if (o.kind === 'camera') o.cam = isObj(o.cam) ? { near: isNum(o.cam.near) ? o.cam.near : 0.05, far: isNum(o.cam.far) ? o.cam.far : 2000, fov: okProp(o.cam.fov, 45) } : { fov: prop(45), near: 0.05, far: 2000 };
     }
     sc.fx = { ...defaultFx(), ...(isObj(sc.fx) ? sc.fx : {}) };
+    if (sc.fx.cel) sc.fx.cel = isObj(sc.fx.cel) ? { ...defaultCel(), ...sc.fx.cel } : null;
+    if (sc.fx.line && !isObj(sc.fx.line)) sc.fx.line = null;
     sc.rules = Array.isArray(sc.rules) ? sc.rules.filter(r => isObj(r) && isObj(r.on) && Array.isArray(r.do)).map(r => ({ ...r, id: typeof r.id === 'string' ? r.id : sid('ru'), name: typeof r.name === 'string' ? r.name : 'Regla', enabled: r.enabled !== false, once: !!r.once, do: r.do.filter(isObj) as Act3[] })) : [];
     sc.script = typeof sc.script === 'string' ? sc.script : '';
     for (const o of sc.objects) {
       if (o.phys !== undefined) o.phys = isObj(o.phys) ? { ...defaultPhys(), ...o.phys } : undefined;
       if (o.ctrl !== undefined) o.ctrl = isObj(o.ctrl) ? { ...defaultCtrl(), ...o.ctrl, lock: { ...defaultCtrl().lock, ...(isObj(o.ctrl.lock) ? o.ctrl.lock : {}) } } : undefined;
       if (o.style !== undefined) o.style = isObj(o.style) ? { ...defaultObjStyle(), ...o.style } : undefined;
+      if (o.style?.cel) o.style.cel = isObj(o.style.cel) ? { ...defaultCel(), ...o.style.cel } : null;
+      if (o.style?.line) o.style.line = isObj(o.style.line) ? { width: isNum(o.style.line.width) ? o.style.line.width : 2, color: typeof o.style.line.color === 'string' ? o.style.line.color : '#111111' } : null;
+      if (o.card) {
+        if (o.card.poses !== undefined) o.card.poses = Array.isArray(o.card.poses) ? o.card.poses.filter(p => isObj(p) && typeof p.tex === 'string').map(p => ({ id: typeof p.id === 'string' ? p.id : sid('ps'), name: typeof p.name === 'string' ? p.name : 'Pose', tex: p.tex, key: typeof p.key === 'string' ? p.key : '' })) : [];
+        if (o.card.trans && !isObj(o.card.trans)) delete o.card.trans;
+      }
       if (o.style === undefined) delete o.style;
       if (o.phys === undefined) delete o.phys;
       if (o.ctrl === undefined) delete o.ctrl;

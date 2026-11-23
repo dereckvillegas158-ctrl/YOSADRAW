@@ -5,9 +5,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { valueAt } from '../motion/keys';
 import { toast } from '../ui/dom';
 import * as M from './mesh';
-import { defaultFx, effLocked, effVisible, styled, type ObjStyle, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
+import { defaultFx, defaultObjStyle, effLocked, effVisible, styled, type Cel3, type Line3, type ObjStyle, objOf, sceneOf, type Mat3, type Obj3, type PrimType, type Scene3 } from './model';
 import { round, type Studio3D } from './Studio3D';
 import { canvasToUrl, TexCache } from './textures';
+import { applyCel, celKey, lineMesh, setLine } from './toon';
 import { CONE_STEPS, FxPipeline, coneLight, volumeCone } from './live/fx';
 import type { Fx3 } from './model';
 
@@ -18,6 +19,8 @@ export interface LiveHooks {
   shake: T.Vector3; fx: Fx3; time: number;
   /** Actor que se controla ahora (se marca con un aro en el suelo). */
   actor?: string | null;
+  /** Poses: textura de cada dibujo (null = la original) y su opacidad durante un fundido. */
+  cardTex?: Map<string, string | null>; cardAlpha?: Map<string, number>;
 }
 
 const D2R = Math.PI / 180;
@@ -37,6 +40,8 @@ interface Node3 {
   cone?: T.Mesh; arrow?: T.ArrowHelper;
   /** Capas del grosor de un dibujo (volumen). */
   slices?: T.Mesh[]; slicesSig?: string;
+  /** Lineart de caricatura (casco invertido). */
+  line?: T.Mesh;
 }
 
 /** Firma rápida de una malla (para no reconstruir la geometría si no cambió). */
@@ -306,11 +311,46 @@ export class View3D {
       const n = this.nodes.get(o.id);
       if (!n?.mesh) continue;
       let slot = 0;
-      if (!clear && styled(o.style) && n.node.visible && out.length < 15) { out.push(o.style!); slot = out.length; }
+      // Los dibujos con lineart usan el contorno por silueta (tinta) de la máscara.
+      let st = o.style ?? null;
+      const ln = o.card ? this.lineFor(o) : null;
+      if (ln) st = { ...defaultObjStyle(), ...(st ?? {}), ink: Math.max(st?.ink ?? 0, Math.min(1, ln.width / 3)), inkColor: ln.color };
+      if (!clear && styled(st) && n.node.visible && out.length < 15) { out.push(st!); slot = out.length; }
       n.mesh.userData.styleSlot = slot;
       for (const m of n.slices ?? []) m.userData.styleSlot = slot;
     }
     return out;
+  }
+  /** Los renders con «efectos y estilo» aplican también el cel shading y el lineart de la escena. */
+  private renderFxOn = false;
+  /** ¿Se ven los efectos de la escena (en vivo, vista previa o render con efectos)? */
+  private sceneFxOn() { return !!this.live || !!this.s.scene.fx?.preview || this.renderFxOn; }
+  /** Cel shading de un objeto: el suyo o el de la escena (sólo con luces: Materiales y Render). */
+  private celFor(o: Obj3): Cel3 | null {
+    if (this.mode !== 'material' && this.mode !== 'render') return null;
+    if (o.style?.cel) return o.style.cel;
+    const f = this.live?.fx ?? this.s.scene.fx;
+    return f?.cel && this.sceneFxOn() ? f.cel : null;
+  }
+  /** Lineart de un objeto: el suyo o el de la escena. */
+  private lineFor(o: Obj3): Line3 | null {
+    if (this.mode !== 'material' && this.mode !== 'render') return null;
+    if (o.style?.line) return o.style.line.width > 0 ? o.style.line : null;
+    const f = this.live?.fx ?? this.s.scene.fx;
+    return f?.line && f.line.width > 0 && this.sceneFxOn() ? f.line : null;
+  }
+  /** Color del ambiente para las sombras del cel shading («toma el color del ambiente»). */
+  private celAmbient() {
+    const e = this.s.scene.env;
+    return new T.Color(e.bg).multiplyScalar(0.35 * Math.min(2, e.envLight));
+  }
+  /** Contorno de caricatura (no en los dibujos: ellos usan la silueta). */
+  private syncLine(n: Node3, o: Obj3) {
+    const l = o.card ? null : this.lineFor(o);
+    if (!l) { if (n.line) n.line.visible = false; return; }
+    if (!n.line) { n.line = lineMesh(n.mesh!.geometry); n.node.add(n.line); }
+    setLine(n.line, n.mesh!.geometry, l);
+    n.line.visible = n.mesh!.visible;
   }
   private ring: T.Mesh | null = null;
   /** Aro bajo el actor que se controla en vivo. */
@@ -345,13 +385,14 @@ export class View3D {
     for (const n of this.nodes.values()) if (n.light instanceof T.SpotLight && n.node.visible) { const a = new T.Vector3().setFromMatrixPosition(n.light.matrixWorld); return a.sub(this.controls.target).normalize(); }
     return null;
   }
+  private _inv = new T.Matrix4();
   /** Aplica lo del modo En vivo: posiciones de la física, luces, colores y visibilidad. */
   private applyLive(L: LiveHooks) {
     for (const [id, W] of L.world) {
       const n = this.nodes.get(id);
       if (!n) continue;
       const P = n.node.parent?.matrixWorld;
-      n.node.matrix.copy(P ? new T.Matrix4().copy(P).invert().multiply(W) : W);
+      if (P) n.node.matrix.copy(this._inv.copy(P).invert().multiply(W)); else n.node.matrix.copy(W);
     }
     for (const [id, n] of this.nodes) {
       if (L.hidden.has(id)) n.node.visible = false;
@@ -362,6 +403,20 @@ export class View3D {
         n.light.color.set(c ?? n.baseColor ?? '#ffffff');
         if (n.cone) { const u = (n.cone.material as T.ShaderMaterial).uniforms; u.color.value.copy(n.light.color); u.time.value = L.time; u.strength.value = L.fx.cones * Math.min(2, (n.baseI ?? 1) * (k ?? 1) / 30); }
       }
+    }
+    // Poses de los dibujos: textura y opacidad (sin tocar el proyecto).
+    if (L.cardTex?.size || L.cardAlpha?.size) for (const [id, n] of this.nodes) {
+      const tid = L.cardTex?.get(id), a = L.cardAlpha?.get(id);
+      if (tid === undefined && a === undefined) continue;
+      const m0 = n.mesh && (Array.isArray(n.mesh.material) ? n.mesh.material[0] : n.mesh.material) as T.MeshStandardMaterial | undefined;
+      if (!m0) continue;
+      if (tid !== undefined) {
+        const map = tid ? this.poseTexture(tid) : this.baseMap(id);
+        if (map && m0.map !== map) { m0.map = map; m0.needsUpdate = true; }
+        const dm = n.mesh!.customDepthMaterial as T.MeshDepthMaterial | undefined;
+        if (dm && map && dm.map !== map) { dm.map = map; dm.needsUpdate = true; }
+      }
+      if (a !== undefined) { m0.opacity = a; m0.transparent = a < 0.999; m0.alphaTest = 0.5 * Math.max(0.02, a); }
     }
     if (L.matColor.size) for (const [key, m] of this.mats) { const id = key.split('|')[1]; const c = L.matColor.get(id); if (c) (m as T.MeshStandardMaterial).color?.set(c); }
     this.root.updateMatrixWorld(true);
@@ -427,16 +482,18 @@ export class View3D {
   private disposeNode(n: Node3) {
     n.node.removeFromParent();
     n.mesh?.geometry.dispose();
+    if (n.line) (n.line.material as T.Material).dispose();
     n.outline?.geometry.dispose();
     n.camHelper?.removeFromParent(); n.camHelper?.dispose();
     n.pick?.geometry.dispose();
   }
 
   /** Material de Three para un material del proyecto en el tiempo actual (según el modo de vista). */
-  private material(id: string, op: number): T.Material {
+  private material(id: string, op: number, cel: Cel3 | null = null): T.Material {
     const s = this.s, mode = this.mode, t = s.time;
     const m = s.mat(id);
-    const key = `${mode}|${id}|${op < 1 ? op.toFixed(3) : 1}`;
+    if (mode === 'wire' || mode === 'solid') cel = null;
+    const key = `${mode}|${id}|${op < 1 ? op.toFixed(3) : 1}${cel ? `|cel|${celKey(cel)}` : ''}`;
     let out = this.mats.get(key);
     const col = m ? valueAt(m.color, t) : '#cccccc';
     if (mode === 'wire') {
@@ -450,8 +507,10 @@ export class View3D {
       mm.color.set('#c8c3d4'); mm.opacity = op * (m ? valueAt(m.opacity, t) : 1); mm.transparent = mm.opacity < 1;
       return out;
     }
-    const toon = !!m?.toon;
+    const toon = !!m?.toon || !!cel;
     if (!out || (toon !== (out instanceof T.MeshToonMaterial))) { out?.dispose(); out = toon ? new T.MeshToonMaterial() : new T.MeshStandardMaterial(); this.mats.set(key, out); }
+    // Cel shading (escena u objeto): rampa de tonos, sombra del ambiente o de color, brillo de borde.
+    if (cel) applyCel(out as T.MeshToonMaterial, cel, this.celAmbient());
     const mm = out as T.MeshStandardMaterial;
     mm.color.set(col);
     if (!toon) { mm.roughness = m ? valueAt(m.rough, t) : 0.5; mm.metalness = m ? valueAt(m.metal, t) : 0; mm.envMapIntensity = 1; }
@@ -515,13 +574,15 @@ export class View3D {
           n.outlineSig = '';
         }
         const slots = Math.max(1, ...o.mesh.m.map(x => x + 1));
-        const ms = Array.from({ length: slots }, (_, i) => this.material(o.mats?.[i] ?? o.mats?.[0] ?? '', op));
+        const cel = this.celFor(o);
+        const ms = Array.from({ length: slots }, (_, i) => this.material(o.mats?.[i] ?? o.mats?.[0] ?? '', op, cel));
         n.mesh!.material = ms;
         // Sombra con la silueta del dibujo (no un rectángulo).
         const cutMap = (ms.find(x => (x as T.MeshStandardMaterial).alphaTest > 0 && (x as T.MeshStandardMaterial).map) as T.MeshStandardMaterial | undefined)?.map ?? null;
         if (cutMap) { const dm = n.mesh!.customDepthMaterial as T.MeshDepthMaterial | undefined; if (!dm || dm.map !== cutMap) n.mesh!.customDepthMaterial = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, map: cutMap, alphaTest: 0.5 }); }
         else if (n.mesh!.customDepthMaterial) n.mesh!.customDepthMaterial = undefined;
         this.syncSlices(n, o, ms, mode === 'render');
+        this.syncLine(n, o);
         // Zonas: se ven al editar (semitransparentes), no en vivo.
         if (o.phys?.zone) n.mesh!.visible = !this.live;
         else n.mesh!.visible = true;
@@ -1106,6 +1167,7 @@ export class View3D {
     const t0 = s.time;
     if (o.time !== undefined) s.s.time = o.time;
     s.prefs.shading = 'render';
+    this.renderFxOn = o.fx ?? s.s.render.fx !== false;
     const hide: T.Object3D[] = [this.grid, this.axes, this.overlay, this.tc.getHelper(), this.ghost];
     const vis = hide.map(x => x.visible);
     this.mats.clear();
@@ -1124,6 +1186,7 @@ export class View3D {
     const objStyles = this.styleSlots();
     const big0 = this.renderFx(cam, fx ?? { ...defaultFx(), ...STYLE_OFF_FX(s.scene.fx) }, W, H, o.time ?? t0, objStyles);
     // Volver como estaba.
+    this.renderFxOn = false;
     s.prefs.shading = prev;
     s.s.time = t0;
     hide.forEach((x, i) => { x.visible = vis[i]; });
@@ -1176,6 +1239,16 @@ export class View3D {
   nodeOf(id: string) { return this.nodes.get(id) ?? null; }
   /** Copia creada en vivo (se mueve con la física y desaparece al parar). */
   registerExtra(id: string, node: T.Object3D) { const mesh = node.children.find(c => (c as T.Mesh).isMesh) as T.Mesh | undefined; this.nodes.set(id, { node: node as T.Group, mesh }); }
+  /** Textura de una pose (se carga una vez y se reutiliza). */
+  poseTexture(texId: string): T.Texture | null {
+    const tx = this.s.s.textures.find(x => x.id === texId);
+    return tx ? this.tex.image(tx.id, tx.src) : null;
+  }
+  /** Textura original de un dibujo. */
+  private baseMap(id: string): T.Texture | null {
+    const o = this.s.obj(id), m = o?.mats?.[0] ? this.s.mat(o.mats[0]) : null;
+    return m?.tex ? this.poseTexture(m.tex) : null;
+  }
   /** Vuelve a dibujar todo como dice el proyecto (al salir del modo En vivo). */
   resetLive() { this.live = null; this.liveInput = null; this.mats.clear(); this.sync(); }
   /** Objeto de Three de un objeto del modelo (exportar). */

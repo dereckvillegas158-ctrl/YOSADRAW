@@ -374,7 +374,7 @@ export class Inspector3 extends Rows {
       this.check('Proyecta sombras', o.castShadow !== false, v => s.edit('Sombras', (_st, sc) => { const x = objOf(sc, id); if (x) x.castShadow = v; })),
       this.btns(['Editar geometría (Tab)', () => s.enterEdit()], ['Suavizar', () => s.subdivide(1, true), 'Subdivisión Catmull-Clark: más caras y formas redondeadas']));
     if (o.light) this.lightPanel(o);
-    if (o.kind === 'mesh' || o.kind === 'light') physicsSection(this, s, o);
+    if (o.kind === 'mesh' || o.kind === 'light') physicsSection(this, s, o, this.pickArt);
     if (o.card) this.sec('Dibujo en 3D', this.check('Mira siempre a la cámara (cartel)', o.card.billboard, v => s.edit('Cartel', (_st, sc) => { const x = objOf(sc, o.id); if (x?.card) x.card.billboard = v; })), h('p', { class: 'ctl-help' }, 'Recibe las luces, las sombras y los efectos de la escena, y proyecta la sombra de su silueta. Activa «Física» para que caiga, choque o se pueda agarrar.'));
     if (o.cam) this.camPanel(o);
     if (objs.length > 1) this.alignPanel();
@@ -486,6 +486,20 @@ export class Inspector3 extends Rows {
       catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }
     } })));
   }
+  /** Elige una imagen o un dibujo de la galería (para las poses de un dibujo en 3D). */
+  pickArt = async (kind: 'image' | 'drawing'): Promise<{ src: string; name: string; project: { id: string; rev: number } | null } | null> => {
+    if (kind === 'image') {
+      const [f] = await pickFiles('image/png,image/jpeg,image/webp,image/gif', false);
+      return f ? { src: await fileToDataUrl(f), name: f.name.replace(/\.[^.]+$/, '') || 'Imagen', project: null } : null;
+    }
+    const list = this.deps.projects.list().filter(e => !e.trashed && !e.motion && !e.s3d).slice(0, 30);
+    if (!list.length) { toast('No tienes dibujos en la galería.'); return null; }
+    const r = (document.activeElement as HTMLElement | null)?.getBoundingClientRect();
+    return new Promise(res => menu(r?.left ?? innerWidth / 2, r?.bottom ?? innerHeight / 2, 'Pose: dibujo', list.map(e => ({ label: e.name, run: async () => {
+      try { toast('Preparando el dibujo…'); res({ src: await drawingToUrl(this.deps, e.id), name: e.name, project: { id: e.id, rev: e.rev } }); }
+      catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); res(null); }
+    } }))));
+  };
   async refreshDrawing(id: string) {
     const s = this.s, m = s.mat(id), t = m?.tex ? s.s.textures.find(x => x.id === m.tex) : null;
     if (!t?.project) return;

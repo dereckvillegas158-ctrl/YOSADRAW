@@ -2,7 +2,7 @@ import * as C from 'cannon-es';
 import * as T from 'three';
 import { valueAt } from '../../motion/keys';
 import { bounds } from '../mesh';
-import { cardPhys, defaultCtrl, defaultFx, defaultPhys, effVisible, objOf, type Act3, type Ctrl3, type EventType, type Fx3, type Obj3, type Phys3, type Rule3 } from '../model';
+import { cardPhys, defaultCtrl, defaultFx, defaultPhys, effVisible, objOf, type Act3, type Ctrl3, type EventType, type Fx3, type Obj3, type Phys3, type TransType, type Rule3 } from '../model';
 import { round, type Studio3D } from '../Studio3D';
 import type { LiveHooks, View3D } from '../View3D';
 
@@ -36,6 +36,31 @@ interface BodyInfo {
 }
 interface Tween { apply: (k: number) => void; t0: number; dur: number; done?: () => void }
 export interface LiveLog { t: number; msg: string; error?: boolean }
+
+/** Curvas de las transiciones de pose (u = 0..1): escala, giro, salto, opacidad y cuándo se cambia el dibujo. */
+export function poseCurve(type: TransType, u: number): { sx: number; sy: number; ry: number; rz: number; dy: number; a: number; swapAt: number } {
+  const r = { sx: 1, sy: 1, ry: 0, rz: 0, dy: 0, a: 1, swapAt: 0.5 };
+  const inQ = (x: number) => x * x, outQ = (x: number) => 1 - (1 - x) * (1 - x);
+  const elastic = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : Math.pow(2, -10 * x) * Math.sin((x * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1);
+  const keep = (sy: number) => (sy <= 1 ? 1 + (1 - sy) * 0.7 : 1 - (sy - 1) * 0.6);
+  switch (type) {
+    case 'squash': {
+      // Squash and stretch: se aplasta, cambia, se estira de más y rebota hasta quedar normal.
+      r.swapAt = 0.35;
+      r.sy = u < 0.35 ? 1 - 0.6 * inQ(u / 0.35) : 0.4 + 0.6 * elastic((u - 0.35) / 0.65);
+      r.sx = keep(r.sy);
+      break;
+    }
+    case 'flip': r.ry = u < 0.5 ? (Math.PI / 2) * inQ(u / 0.5) : -(Math.PI / 2) * (1 - outQ((u - 0.5) / 0.5)); break;
+    case 'spin': { const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; r.rz = -2 * Math.PI * e; r.sx = r.sy = 1 - 0.35 * Math.sin(Math.PI * u); break; }
+    case 'pop': { r.swapAt = 0.35; const s = u < 0.35 ? Math.max(0.01, 1 - inQ(u / 0.35) * 1.05) : Math.max(0.01, elastic((u - 0.35) / 0.65)); r.sx = r.sy = s; break; }
+    case 'fade': r.a = u < 0.5 ? 1 - 2 * u : 2 * u - 1; break;
+    case 'jump': { r.dy = 0.45 * Math.sin(Math.PI * u); const e = Math.min(u, 1 - u), land = e < 0.12 ? Math.sin((Math.PI * e) / 0.12) : 0; r.sy = 1 - 0.25 * land; r.sx = keep(r.sy); break; }
+    case 'shake': { const f = 1 - u; r.rz = 0.22 * Math.sin(u * Math.PI * 9) * f; r.sx = 1 + 0.08 * Math.sin(u * Math.PI * 11) * f; break; }
+    case 'cut': r.swapAt = 0; break;
+  }
+  return r;
+}
 
 export class Live {
   running = false;
@@ -74,12 +99,14 @@ export class Live {
   private actor: BodyInfo | null = null;
   /** Teclas de movimiento pulsadas (WASD / flechas) para el actor. */
   private held = new Set<string>();
+  /** Poses de los dibujos: la actual y la transición en curso (con su matriz local). */
+  private poses = new Map<string, { cur: string | null; hc: number; anim: { type: TransType; t0: number; dur: number; to: string | null; swapped: boolean } | null; mod: T.Matrix4 | null }>();
   /** Tecla H: ocultar o mostrar la interfaz (la pone la interfaz). */
   onToggleUi: () => void = () => {};
 
   constructor(private s: Studio3D, private view: View3D) {
     const fx = { ...defaultFx(), ...(s.scene.fx ?? {}) };
-    this.hooks = { world: new Map(), hidden: new Set(), lightK: new Map(), lightColor: new Map(), matColor: new Map(), shake: new T.Vector3(), fx, time: 0, actor: null };
+    this.hooks = { world: new Map(), hidden: new Set(), lightK: new Map(), lightColor: new Map(), matColor: new Map(), shake: new T.Vector3(), fx, time: 0, actor: null, cardTex: new Map(), cardAlpha: new Map() };
   }
   get fx() { return this.hooks.fx; }
   get bodyCount() { return this.bodies.size; }
@@ -106,6 +133,8 @@ export class Live {
     for (const o of sc.objects) if (o.light && o.lightFx === 'orbit') this.lightBase.set(o.id, new T.Vector3().setFromMatrixPosition(s.worldMatrix(o)));
     this.rules = (sc.rules ?? []).filter(r => r.enabled).map(r => ({ ...structuredClone(r), fired: false, next: r.on.type === 'every' ? (r.on.t ?? 1) : 0 }));
     if (runScript && sc.script?.trim()) this.runScript(sc.script);
+    // Poses: se cargan ya sus texturas (el cambio en vivo es instantáneo).
+    for (const o of sc.objects) for (const p of o.card?.poses ?? []) this.view.poseTexture(p.tex);
     this.view.live = this.hooks;
     this.view.liveInput = { down: e => this.down(e), move: e => this.move(e), up: () => this.up(), wheel: e => this.wheel(e) };
     this.view.sync();
@@ -220,6 +249,7 @@ export class Live {
     while (this.acc >= STEP && n++ < 4) { this.forces(); this.world.step(STEP); this.acc -= STEP; }
     if (n >= 4) this.acc = 0;
     this.lights();
+    this.poseStep();
     this.tweenStep();
     this.shake(realDt);
     this.output(dt);
@@ -272,6 +302,8 @@ export class Live {
    * derechos (como un cartel colgado de un muelle); al arrastrar, el aire frena la
    * parte que no se agarra y el objeto se inclina y gira según cómo se mueva el ratón.
    */
+  private static readonly CUP = new C.Vec3(0, 1, 0);
+  private _cup = new C.Vec3(); private _cax = new C.Vec3();
   private forces() {
     const g = this.world.gravity;
     for (const b of this.bodies.values()) {
@@ -290,15 +322,18 @@ export class Live {
       if (body.type !== C.Body.DYNAMIC || b.ctrl || ph.zone) continue;
       const grabbed = this.grab?.info === b;
       const m = body.mass;
-      if (ph.float) body.force.vadd(new C.Vec3(-g.x * m, -g.y * m, -g.z * m), body.force);
-      const up = body.quaternion.vmult(new C.Vec3(0, 1, 0));
+      if (ph.float) { body.force.x -= g.x * m; body.force.y -= g.y * m; body.force.z -= g.z * m; }
+      // Quieto y dormido: no hay nada que corregir.
+      if (body.sleepState === C.Body.SLEEPING && !grabbed) continue;
+      const up = body.quaternion.vmult(Live.CUP, this._cup);
       if (ph.float) {
         // Muelle que lo endereza (más flojo mientras se agarra).
         // Eje × ángulo (no × seno): sigue enderezando aunque esté muy volcado.
-        const axis = up.cross(new C.Vec3(0, 1, 0)), sn = axis.length();
+        const axis = up.cross(Live.CUP, this._cax), sn = axis.length();
         if (sn > 1e-6) axis.scale(Math.acos(Math.max(-1, Math.min(1, up.y))) / sn, axis);
         const k = (grabbed ? 4 : 7) * m, d = (grabbed ? 1.4 : 0.9) * m;
-        body.torque.vadd(new C.Vec3(axis.x * k - body.angularVelocity.x * d, axis.y * k - body.angularVelocity.y * d * 0.3, axis.z * k - body.angularVelocity.z * d), body.torque);
+        const av = body.angularVelocity;
+        body.torque.x += axis.x * k - av.x * d; body.torque.y += axis.y * k - av.y * d * 0.3; body.torque.z += axis.z * k - av.z * d;
       }
       if (grabbed && this.grab!.face) { this.faceRoll(b, this.grab!.face); continue; }
       if (grabbed && ph.swing > 0) {
@@ -342,6 +377,74 @@ export class Live {
     b.body.quaternion.set(q.x, q.y, q.z, q.w);
     b.body.angularVelocity.set(0, 0, 0);
   }
+
+  // ---------------------------------------------------------------- poses de los dibujos
+
+  private keyIs = (want: string | undefined, k: string) => !!want?.trim() && (want.trim().length === 1 ? want.trim().toLowerCase() : want.trim()) === k;
+  /** Tecla de una pose: cambia los dibujos que la usan. Devuelve si alguna la usó. */
+  private poseKey(k: string, repeat: boolean): boolean {
+    let used = false;
+    for (const o of this.s.scene.objects) {
+      const c = o.card;
+      if (!c?.poses?.length) continue;
+      const st = this.poses.get(o.id);
+      const cur = st?.anim ? st.anim.to : st?.cur ?? null;
+      let to: string | null | undefined;
+      if (this.keyIs(c.baseKey ?? '0', k)) to = null;
+      const p = c.poses.find(x => this.keyIs(x.key, k));
+      if (p) to = p.tex;
+      if (this.keyIs(c.nextKey, k)) { const list = [null, ...c.poses.map(x => x.tex)]; to = list[(list.indexOf(cur) + 1) % list.length]; }
+      if (to === undefined) continue;
+      used = true;
+      if (!repeat) this.setPose(o, to);
+    }
+    return used;
+  }
+  /** Cambia la pose de un dibujo con su transición. */
+  setPose(o: Obj3, to: string | null) {
+    let st = this.poses.get(o.id);
+    if (!st) {
+      const v = o.mesh?.v ?? [];
+      let hc = 0; for (let i = 1; i < v.length; i += 3) hc = Math.max(hc, v[i]);
+      st = { cur: null, hc: hc / 2, anim: null, mod: null };
+      this.poses.set(o.id, st);
+    }
+    if (st.anim) { this.swapPose(o.id, st, st.anim.to); st.anim = null; }
+    if (to === st.cur) return;
+    const tr = o.card?.trans ?? { type: 'squash' as TransType, dur: 0.45 };
+    if (tr.type === 'cut' || tr.dur <= 0) { this.swapPose(o.id, st, to); return; }
+    st.anim = { type: tr.type, t0: this.time, dur: Math.max(0.05, tr.dur), to, swapped: false };
+  }
+  private swapPose(id: string, st: { cur: string | null }, to: string | null) { st.cur = to; this.hooks.cardTex!.set(id, to); }
+  /** Avanza las transiciones: escala, giro, salto y fundido alrededor de la base del dibujo. */
+  private release = new Set<string>();
+  private poseStep() {
+    for (const id of this.release) { if (!this.poses.get(id)?.anim) this.hooks.world.delete(id); }
+    this.release.clear();
+    for (const [id, st] of this.poses) {
+      const a = st.anim;
+      if (!a) continue;
+      const u = Math.min(1, (this.time - a.t0) / a.dur);
+      const k = poseCurve(a.type, u);
+      if (!a.swapped && u >= k.swapAt) { a.swapped = true; this.swapPose(id, st, a.to); }
+      const m = (st.mod ??= new T.Matrix4());
+      m.makeTranslation(0, k.dy * st.hc * 2, 0);
+      if (k.rz) m.multiply(new T.Matrix4().makeTranslation(0, st.hc, 0)).multiply(new T.Matrix4().makeRotationZ(k.rz)).multiply(new T.Matrix4().makeTranslation(0, -st.hc, 0));
+      if (k.ry) m.multiply(new T.Matrix4().makeRotationY(k.ry));
+      m.multiply(new T.Matrix4().makeScale(k.sx, k.sy, 1));
+      if (a.type === 'fade' || this.hooks.cardAlpha!.has(id)) this.hooks.cardAlpha!.set(id, k.a);
+      if (u >= 1) { st.anim = null; st.mod = null; if (!a.swapped) this.swapPose(id, st, a.to); }
+      // Dibujos sin cuerpo físico: se mueven aquí (los demás, en output()).
+      if (!this.bodies.has(id)) {
+        const o = objOf(this.s.scene, id);
+        if (o && st.anim) { const W = this.s.worldMatrix(o).clone(); if (st.mod) W.multiply(st.mod); this.hooks.world.set(id, W); }
+        // Al terminar: un fotograma en su sitio y luego vuelve a mandar el proyecto (keyframes).
+        else if (o) { this.hooks.world.set(id, this.s.worldMatrix(o).clone()); this.release.add(id); }
+      }
+    }
+  }
+  /** Pose actual de un dibujo (para el programa y las pruebas). */
+  poseOf(id: string) { const st = this.poses.get(id); return { cur: st?.cur ?? null, moving: !!st?.anim }; }
 
   // ---------------------------------------------------------------- actores
 
@@ -430,32 +533,45 @@ export class Live {
     sh.set((Math.random() - 0.5) * k, (Math.random() - 0.5) * k, (Math.random() - 0.5) * k * 0.5);
   }
   /** Posición final de cada objeto con física (con su «gelatina» al moverse o sacudirlo). */
+  // Objetos de trabajo reutilizados en cada fotograma (sin crear basura para el recolector).
+  private _v = new T.Vector3(); private _p = new T.Vector3(); private _s = new T.Vector3(); private _q = new T.Quaternion();
+  private _m = new T.Matrix4(); private _m2 = new T.Matrix4(); private static readonly UP = new T.Vector3(0, 1, 0);
   private output(dt: number) {
+    const world = this.hooks.world;
     for (const b of this.bodies.values()) {
       if (b.ph.zone) continue;
+      if (b.obj.gen?.type === 'terrain' && b.body.type === C.Body.STATIC) continue;
+      const pm = this.poses.get(b.id)?.mod;
+      const prev = world.get(b.id);
+      // Quieto: lo estático no se mueve y lo dormido sin gelatina ni transición tampoco.
+      const still = b.body.type === C.Body.STATIC || (b.body.sleepState === C.Body.SLEEPING && Math.abs(b.jig) < 1e-4 && Math.abs(b.jigV) < 1e-3);
+      if (prev && still && !pm && b.tilt === 0 && this.grab?.info !== b) continue;
       const bp = b.body.position, bq = b.body.quaternion;
-      const v = new T.Vector3(b.body.velocity.x, b.body.velocity.y, b.body.velocity.z);
+      const v = this._v.set(b.body.velocity.x, b.body.velocity.y, b.body.velocity.z);
       // Muelle de gelatina impulsado por la aceleración.
       const w = b.ctrl?.wobble ?? (this.grab?.info === b ? Math.max(0.3, b.ph.jelly) : b.ph.jelly * 0.6);
       if (w > 0 && dt > 0) {
-        const acc = v.clone().sub(b.prevV).length() / dt;
+        const acc = Math.hypot(v.x - b.prevV.x, v.y - b.prevV.y, v.z - b.prevV.z) / dt;
         b.jigV += (-b.jig * 180 - b.jigV * 12 + Math.min(40, acc) * 0.6 * w) * dt;
         b.jig += b.jigV * dt;
         b.jig = Math.max(-0.35, Math.min(0.35, b.jig));
       }
       b.prevV.copy(v);
-      let q = new T.Quaternion(bq.x, bq.y, bq.z, bq.w);
-      if (b.ctrl?.upright) q = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), b.yaw).multiply(b.rot0);
+      const q = this._q;
+      if (b.ctrl?.upright) q.setFromAxisAngle(Live.UP, b.yaw).multiply(b.rot0); else q.set(bq.x, bq.y, bq.z, bq.w);
       const sq = 1 + b.jig, st = 1 / Math.sqrt(Math.max(0.3, sq));
-      const S = b.scale.clone().multiply(new T.Vector3(st, sq, st));
-      let W = new T.Matrix4().compose(new T.Vector3(bp.x, bp.y, bp.z), q, S).multiply(new T.Matrix4().makeTranslation(-b.center.x, -b.center.y, -b.center.z));
+      const S = this._s.copy(b.scale).multiply(this._p.set(st, sq, st));
+      const W = prev ?? new T.Matrix4();
+      W.compose(this._p.set(bp.x, bp.y, bp.z), q, S).multiply(this._m.makeTranslation(-b.center.x, -b.center.y, -b.center.z));
+      // Transición de pose (en el espacio del dibujo: base en el suelo, centrada).
+      if (pm) W.multiply(pm);
       // Inclinación de frente de un personaje de pie (alrededor del punto donde se agarró).
       if (b.tilt !== 0) {
-        const pv = new T.Vector3(bp.x, bp.y, bp.z).add(b.tiltPivot);
-        W = new T.Matrix4().makeTranslation(pv.x, pv.y, pv.z).multiply(new T.Matrix4().makeRotationAxis(b.tiltAxis, b.tilt)).multiply(new T.Matrix4().makeTranslation(-pv.x, -pv.y, -pv.z)).multiply(W);
+        const pv = this._p.set(bp.x, bp.y, bp.z).add(b.tiltPivot);
+        this._m.makeTranslation(pv.x, pv.y, pv.z).multiply(this._m2.makeRotationAxis(b.tiltAxis, b.tilt)).multiply(this._m2.makeTranslation(-pv.x, -pv.y, -pv.z));
+        W.premultiply(this._m);
       }
-      if (b.obj.gen?.type === 'terrain' && b.body.type === C.Body.STATIC) continue;
-      this.hooks.world.set(b.id, W);
+      if (!prev) world.set(b.id, W);
     }
   }
 
@@ -556,8 +672,9 @@ export class Live {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     const ruleKey = (x: string) => this.rules.some(r => r.on.type === 'key' && (r.on.key ?? '').toLowerCase() === x) || this.handlers.has(`key:${x}`);
     const actorOf = [...this.bodies.values()].find(b => this.actorKeys(b).includes(k));
+    const posed = this.poseKey(k, e.repeat);
     // H: ocultar o mostrar la interfaz (si ninguna regla ni actor usa la H).
-    if (k === 'h' && !actorOf && !ruleKey('h') && !e.repeat) { e.preventDefault(); e.stopPropagation(); this.onToggleUi(); return; }
+    if (k === 'h' && !actorOf && !posed && !ruleKey('h') && !e.repeat) { e.preventDefault(); e.stopPropagation(); this.onToggleUi(); return; }
     // Tecla de un actor: pasa a controlarse ese; el anterior se queda quieto o vuelve a su sitio.
     if (actorOf && !e.repeat && this.actor !== actorOf) this.selectActor(actorOf.id);
     // WASD / flechas: mueven al actor elegido.
@@ -672,6 +789,8 @@ export class Live {
         behavior(b2: string) { live.act({ type: 'behavior', target: id, param: b2 }); },
         color(c: string, dur = 0) { live.act({ type: 'color', target: id, color: c, dur }); },
         hide() { live.act({ type: 'hide', target: id }); }, show() { live.act({ type: 'show', target: id }); },
+        /** Cambia la pose de un dibujo (nombre o número; 0 = original) con su transición. */
+        pose(p: string | number) { const o = objOf(live.s.scene, id); const c = o?.card; if (!o || !c) return; const ps = c.poses ?? []; const t = typeof p === 'number' ? (p <= 0 ? null : ps[p - 1]?.tex) : p === '' ? null : ps.find(x => x.name === p)?.tex; if (t !== undefined) live.setPose(o, t ?? null); },
         spawn(x = 0, y = 2, z = 0) { return handle(live.spawn(id, [x, y, z])); },
         goTo(x: number, z: number) { const bb = b(); if (bb?.ctrl) { bb.ctrl.behavior = 'mouse'; bb.target = new T.Vector3(x, 0, z); } },
       };
