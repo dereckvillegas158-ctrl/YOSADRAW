@@ -1,8 +1,19 @@
-## YOSADRAW 1.16.1
+## YOSADRAW 1.17.0
 
 ### Descargas
-- **Windows 64 bits:** `YOSADRAW-Setup-1.16.1-x64.exe` (instalador), `YOSADRAW-1.16.1-x64-portable.exe` o `YOSADRAW-1.16.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
-- **Android 7.0 o superior:** `YOSADRAW-1.16.1.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+- **Windows 64 bits:** `YOSADRAW-Setup-1.17.0-x64.exe` (instalador), `YOSADRAW-1.17.0-x64-portable.exe` o `YOSADRAW-1.17.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.17.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo: PNGTuber en 3D Studio
+Personajes 2D que hablan, reaccionan y viven dentro de la escena 3D, usando lo que ya tiene YOSADRAW: dibujo, poses y transiciones, física, disparadores, programa, efectos y grabación. Todo en **Añadir → PNGTuber** y en el modo **En vivo**.
+- **Personajes:** un PNG con transparencia (**Personaje desde un PNG…**) o un dibujo de YOSADRAW **por capas** (**Personaje por capas (dibujo)…**): la capa de abajo es el cuerpo y las demás son partes que **se balancean** al moverlo (pelo, orejas, accesorios), con su punto de giro ajustable.
+- **Hablar y parpadear:** imágenes de **boca abierta** y **ojos cerrados** (también por cada expresión), parpadeo automático, y al hablar **rebote**, **squash and stretch** y brillo ajustables. Las imágenes originales no se modifican.
+- **Expresiones y estados:** las poses (con tecla y transición) son las expresiones; los disparadores también pueden cambiarlas (**Cambiar de expresión**).
+- **Audio:** importa audios (MP3, WAV, OGG…) que suenan al empezar o con un disparador, o usa el **micrófono** (tu voz mueve al personaje). Umbral para hablar, tiempo que se mantiene la boca abierta y medidor de nivel. Nuevos sucesos para los disparadores y el programa: **al empezar a hablar**, **al callarse** y **sonido fuerte**; en el programa, `audio.level`, `audio.talking`, `audio.play()`, `audio.mic()` y `on('talk', …)`. Con varios actores, sólo habla el que controlas.
+- **En la escena 3D:** colócalos, gíralos y escálalos donde quieras; agárralos y sacúdelos con el ratón (se inclinan de frente, con gelatina), con física, personajes que caminan, luces (incluida la volumétrica), sombras, cel shading, glitch, aberración y cambios de color en vivo. **Escenario PNGTuber** prepara cámara de frente, luz de escenario, luz de contorno y efectos suaves.
+- **Grabar:** el vídeo en vivo ahora lleva **el audio** (lo que suena y el micrófono) y se puede grabar también como **GIF animado** (640 px, hasta 40 s), además de MP4 en alta calidad, conservando efectos y físicas.
+- **Rendimiento:** el audio sólo se analiza si la escena lo usa, el nivel se calcula una vez por fotograma, y los deslizadores de efectos de la barra En vivo quedan plegados (botón **✨ Efectos**) para no tapar la escena.
+- Android pide permiso para el micrófono la primera vez que se usa.
 
 ### Corrección
 - **Dibujo: bajar la opacidad de una capa ya no la hace desaparecer.** Con 4 o más capas, al soltar el deslizador de opacidad la capa elegida dejaba de verse hasta que se ocultaba algo. Ahora se ve con su nueva opacidad al momento (también al cambiar la fusión u otras propiedades de la capa).

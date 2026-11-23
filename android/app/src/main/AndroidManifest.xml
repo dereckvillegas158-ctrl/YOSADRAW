@@ -43,6 +43,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- PNGTuber: el micrófono mueve al personaje en el modo En vivo (se pide al usarlo). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Solo Android 7–9: guardar exportaciones en Imágenes/Descargas. Desde Android 10 se usa MediaStore sin permiso. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 </manifest>

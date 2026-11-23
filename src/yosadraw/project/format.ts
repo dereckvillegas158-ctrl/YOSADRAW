@@ -235,7 +235,12 @@ function s3dOut(doc: Document) {
   const s = doc.s3d!;
   const used = new Set(s.materials.map(m => m.tex).filter(Boolean));
   // Poses de los dibujos (cambian en vivo).
-  for (const sc of s.scenes) for (const o of sc.objects) for (const p of o.card?.poses ?? []) used.add(p.tex);
+  for (const sc of s.scenes) for (const o of sc.objects) {
+    for (const p of o.card?.poses ?? []) { used.add(p.tex); if (p.talk) used.add(p.talk); if (p.blink) used.add(p.blink); }
+    // PNGTuber: boca abierta y ojos cerrados del original.
+    if (o.card?.tuber?.talk) used.add(o.card.tuber.talk);
+    if (o.card?.tuber?.blink) used.add(o.card.tuber.blink);
+  }
   return { ...s, textures: s.textures.filter(t => used.has(t.id)) };
 }
 

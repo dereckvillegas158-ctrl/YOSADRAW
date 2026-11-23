@@ -130,3 +130,16 @@ body.s3d-mode #app { visibility: hidden; }
 .s3-rectime:empty { display: none; }
 /* Grabando sin interfaz: el panel mínimo casi invisible (no sale en el vídeo de todas formas). */
 .s3-clean .s3-hudmin:has(.s3-rec) { opacity: 0.55; }
+
+/* PNGTuber */
+.s3-meter { position: relative; height: 10px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; margin: 4px 0; }
+.s3-meterbar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #7a6cff; transition: width 0.05s linear; }
+.s3-meter.on .s3-meterbar { background: #4cd98a; }
+.s3-meter.idle { opacity: 0.5; }
+.s3-metermark { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #ffcf5a; }
+.s3-poseopts { display: inline-flex; gap: 3px; align-items: center; }
+.s3-hudmeter { display: inline-block; width: 60px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.12); overflow: hidden; }
+.s3-hudmeter[hidden] { display: none; }
+.s3-hudmeter i { display: block; height: 100%; width: 0; background: #7a6cff; }
+.s3-hudmeter.on i { background: #4cd98a; }
+.s3-hudfx[hidden] { display: none !important; }

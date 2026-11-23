@@ -4,14 +4,16 @@ import { modal } from '../../ui/modal';
 import { menu } from '../../ui/motion/util';
 import { genDef } from '../generators';
 import { exportModel, importModel, MODEL_ACCEPT, renderVideo, saveFile, canvasPng, sceneAnimated, type ModelFormat } from '../io';
-import { genObject, newObject, type PrimType } from '../model';
+import { defaultTuber, genObject, newObject, type PrimType } from '../model';
 import type { Studio3D, Tool3 } from '../Studio3D';
 import { View3D, type ViewName } from '../View3D';
 import { Assistant } from './Assistant';
 import { I3 } from './icons3';
-import { AddPanel, Hierarchy, Inspector3, drawingToUrl, editMenu, objectMenu, type PanelDeps } from './Panels';
+import { AddPanel, Hierarchy, Inspector3, drawingLayersToUrls, drawingToUrl, editMenu, objectMenu, type PanelDeps } from './Panels';
 import { Live } from '../live/Live';
-import { LiveRecorder, REC_SIZES, recDims, type RecSize } from '../live/recorder';
+import { setMeterSource } from './LivePanel';
+import { LiveGifRecorder, LiveRecorder, REC_SIZES, recDims, type LiveRec, type RecSize } from '../live/recorder';
+import { encodeGif } from '../../anim/webexport';
 import { fileToDataUrl } from '../textures';
 import { confirmDialog } from '../../ui/modal';
 import { Timeline3 } from './Timeline3';
@@ -53,7 +55,9 @@ export class UI3D {
   /** Modo En vivo en marcha (o null). */
   live: Live | null = null;
   private scriptOk = new WeakSet<object>();
-  private video: LiveRecorder | null = null;
+  private video: LiveRec | null = null;
+  /** Deslizadores de efectos en la barra del modo En vivo (plegados para no tapar la escena). */
+  private hudFx = false;
   /** Calidad del vídeo en vivo (se recuerda en este equipo). */
   private recSize: RecSize = (() => { try { const v = localStorage.getItem('yosadraw.s3d.recSize'); return REC_SIZES.some(([k]) => k === v) ? v as RecSize : '1080'; } catch { return '1080' as RecSize; } })();
   /** Para el tutorial: ¿giró la vista? ¿renderizó? */
@@ -61,7 +65,7 @@ export class UI3D {
 
   constructor(private s: Studio3D, private deps: UI3Deps) {
     this.view = new View3D(s);
-    this.add = new AddPanel(s, { importModel: () => void this.importPick(), card: (src: 'drawing' | 'image') => void this.addCard(src), house: () => { this.closeSheet(); this.house(); }, picked: () => { if (this.simple) { this.closeSheet(); toast('Toca el suelo del visor para ponerlo'); } } });
+    this.add = new AddPanel(s, { importModel: () => void this.importPick(), card: src => void this.addCard(src), house: () => { this.closeSheet(); this.house(); }, picked: () => { if (this.simple) { this.closeSheet(); toast('Toca el suelo del visor para ponerlo'); } } });
     this.hier = new Hierarchy(s);
     this.insp = new Inspector3(s, this.view, { ...deps, renderDialog: () => this.renderDialog(), play: () => void this.play() });
     this.tl = new Timeline3(s);
@@ -321,6 +325,7 @@ export class UI3D {
     live.onState = () => this.syncHud();
     live.onLog = l => this.hudLog(l.msg, l.error);
     live.onToggleUi = () => this.toggleClean();
+    setMeterSource(() => (live.running ? { level: live.audio.level, talking: live.audio.talking } : null));
     live.onRecordKey = () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); };
     live.start(runScript);
     this.el.classList.add('s3-playing');
@@ -371,13 +376,16 @@ export class UI3D {
         b(this.video ? '⏺ Parar vídeo' : '⏺ Grabar vídeo', 'Graba en vídeo lo que se ve, con los efectos (F9)', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
         this.video ? null : b('⏺ Grabar sin interfaz', 'Oculta la interfaz y empieza a grabar el vídeo (H vuelve a mostrarla, F9 para)', () => { this.toggleClean(true); this.startVideo(); this.renderHud(); }),
         this.video ? null : recSel,
+        b(live.audio.micOn ? '🎤 Micrófono: sí' : '🎤 Micrófono', 'Tu voz mueve a los personajes PNGTuber (boca, rebote, sucesos de audio)', () => void live.audio.useMic(!live.audio.micOn).then(ok => { if (!ok) toast('No se pudo usar el micrófono (permiso denegado o no hay micrófono).', 'error'); this.renderHud(); }), `btn sm${live.audio.micOn ? ' primary' : ''}`),
+        h('span', { class: 's3-hudmeter', title: 'Nivel del audio' }, h('i')),
+        b(this.hudFx ? '✨ Efectos ▴' : '✨ Efectos ▾', 'Mostrar u ocultar los deslizadores de efectos', () => { this.hudFx = !this.hudFx; this.renderHud(); }, `btn sm${this.hudFx ? ' primary' : ''}`),
         slow, b('⛶ Ocultar interfaz', 'Ocultar la interfaz para jugar con la escena a pantalla completa (H)', () => this.toggleClean()), h('span', { class: 's3-fps' })),
       h('div', { class: 's3-hudrow s3-hudmin' }, b('■', 'Parar (Esc)', () => void this.stopLive(), 'btn sm primary'),
         b(this.video ? '⏹ Parar vídeo' : '⏺ Grabar', this.video ? 'Parar la grabación (F9)' : 'Grabar vídeo sin la interfaz (F9)', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
         h('span', { class: 's3-rectime' }),
         b('Mostrar interfaz (H)', 'Volver a ver los paneles', () => this.toggleClean())),
       h('div', { class: 's3-hudrow s3-actors', hidden: true }),
-      h('div', { class: 's3-hudrow s3-hudfx' }, slider('godrays', 'Luz volumétrica', 2), slider('bloom', 'Resplandor', 3), slider('chroma', 'Aberración', 3), slider('glitch', 'Glitch', 1), slider('tintAmt', 'Tinte', 1), slider('squiggle', 'Squiggle', 1), slider('ink', 'Tinta', 1)),
+      h('div', { class: 's3-hudrow s3-hudfx', hidden: !this.hudFx }, slider('godrays', 'Luz volumétrica', 2), slider('bloom', 'Resplandor', 3), slider('chroma', 'Aberración', 3), slider('glitch', 'Glitch', 1), slider('tintAmt', 'Tinte', 1), slider('squiggle', 'Squiggle', 1), slider('ink', 'Tinta', 1)),
       h('div', { class: 's3-hudlog' }),
       h('div', { class: 's3-hudhelp' }, 'Arrastra lo dinámico para agarrarlo y sacudirlo (rueda: acercar o alejar) · arrastra en el suelo para guiar a los personajes «hacia el ratón» · Espacio: saltar · botón central: girar la vista · Esc: parar'));
     this.hud.hidden = false;
@@ -389,7 +397,7 @@ export class UI3D {
     if (!live.running) { void this.afterStop(); return; }
     this.playBtn.innerHTML = live.running ? '■ <span>Parar</span>' : '▶ <span>En vivo</span>';
     const fps = this.hud.querySelector('.s3-fps');
-    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos · ${live.time.toFixed(1)} s`; const rt = this.hud.querySelector('.s3-rectime'); if (rt) { const v = this.video; rt.textContent = v ? `● ${Math.floor(v.seconds / 60)}:${String(Math.floor(v.seconds % 60)).padStart(2, '0')}` : ''; } setTimeout(tick, 500); }; tick(); }
+    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos · ${live.time.toFixed(1)} s`; const hm = this.hud.querySelector<HTMLElement>('.s3-hudmeter i'); if (hm) { hm.style.width = `${Math.round(Math.min(1, live.audio.level) * 100)}%`; hm.parentElement!.classList.toggle('on', live.audio.talking); hm.parentElement!.hidden = !live.audio.active; } const rt = this.hud.querySelector('.s3-rectime'); if (rt) { const v = this.video; rt.textContent = v ? `● ${Math.floor(v.seconds / 60)}:${String(Math.floor(v.seconds % 60)).padStart(2, '0')}` : ''; } setTimeout(tick, 500); }; tick(); }
     // Actores: quién se controla (clic en uno para elegirlo; en el activo, para soltarlo).
     const bar = this.hud.querySelector<HTMLElement>('.s3-actors');
     if (bar) {
@@ -431,13 +439,30 @@ export class UI3D {
     const box = this.view.el.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
     const dims = recDims(this.recSize, box.width / Math.max(1, box.height), { w: box.width * dpr, h: box.height * dpr });
     const fps = Math.max(24, Math.min(60, this.s.fps));
-    let rec: LiveRecorder;
+    let rec: LiveRec;
+    if (this.recSize === 'gif') {
+      // GIF: fotogramas pequeños y, al parar, el codificador GIF del módulo de animación.
+      rec = new LiveGifRecorder(box.width / Math.max(1, box.height), (frames, w, h, gfps) => void (async () => {
+        if (!frames.length) return;
+        toast(`Creando el GIF (${frames.length} fotogramas)…`);
+        const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d')!;
+        const data = await encodeGif({ width: w, height: h, fps: gfps, frames: frames.length, frame: k => { g.putImageData(frames[k], 0, 0); return c; }, loop: true, alpha: false });
+        if (!data) return;
+        const name = `${this.deps.name()}-en-vivo.gif`;
+        await saveFile(name, data);
+        toast(`GIF guardado: ${name} (${w} × ${h})`, 'ok');
+      })(), cv);
+      live.onFrame = () => { rec.frame(cv); if ((rec as LiveGifRecorder).full) { this.stopVideo(); this.renderHud(); toast('GIF: se alcanzó el máximo de 40 s'); } };
+      this.video = rec;
+      toast('Grabando GIF (F9 para parar)');
+      return;
+    }
     try {
       rec = new LiveRecorder(dims.w, dims.h, fps, async (blob, mime) => {
         const name = `${this.deps.name()}-en-vivo.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
         await saveFile(name, new Uint8Array(await blob.arrayBuffer()));
         toast(`Vídeo guardado: ${name} (${dims.w} × ${dims.h})`, 'ok');
-      }, cv);
+      }, cv, live.audio.recordable());
     } catch (e) { toast(`No se pudo grabar: ${e instanceof Error ? e.message : String(e)}`, 'error'); return; }
     this.view.setRecordHeight(dims.h);
     live.onFrame = () => rec.frame(cv);
@@ -453,19 +478,34 @@ export class UI3D {
     this.view.setRecordHeight(0);
   }
   /** Dibujo de YOSADRAW o imagen como cartel 3D (recibe luces, sombras y efectos). */
-  private async addCard(src: 'drawing' | 'image') {
+  private async addCard(src: 'drawing' | 'image' | 'layers' | 'tuber' | 'stage') {
     const s = this.s;
     const aspectOf = (url: string) => new Promise<number>(res => { const im = new Image(); im.onload = () => res(im.naturalWidth / Math.max(1, im.naturalHeight)); im.onerror = () => res(1); im.src = url; });
-    if (src === 'image') {
+    if (src === 'stage') { s.tuberStage(); this.view.sync(); this.view.lookThrough(); toast('Escenario PNGTuber listo: añade tu personaje y pulsa En vivo', 'ok'); return; }
+    if (src === 'image' || src === 'tuber') {
       const [f] = await pickFiles('image/png,image/jpeg,image/webp,image/gif', false);
       if (!f) return;
       const url = await fileToDataUrl(f);
-      s.addCard(url, f.name.replace(/\.[^.]+$/, '') || 'Imagen', await aspectOf(url));
+      const o = s.addCard(url, f.name.replace(/\.[^.]+$/, '') || 'Imagen', await aspectOf(url));
+      if (src === 'tuber') { s.setCard(o.id, c => { c.tuber = defaultTuber(); }, 'Personaje PNGTuber'); toast('Personaje PNGTuber: en Objeto → «PNGTuber» pon su boca abierta y ojos cerrados', 'ok'); }
       this.view.frameSelected();
       return;
     }
     const list = this.deps.projects.list().filter(e => !e.trashed && !e.motion && !e.s3d).slice(0, 30);
     if (!list.length) { toast('No tienes dibujos en la galería.'); return; }
+    if (src === 'layers') {
+      menu(innerWidth / 2, innerHeight / 3, 'Personaje por capas', list.map(e => ({ label: e.name, run: async () => {
+        try {
+          toast('Separando las capas del dibujo…');
+          const r = await drawingLayersToUrls(this.deps, e.id);
+          if (!r.layers.length) { toast('El dibujo no tiene capas con contenido.', 'error'); return; }
+          s.addLayeredCharacter(e.name, r.layers, r.aspect, { id: e.id, rev: e.rev });
+          this.closeSheet(); this.view.frameSelected();
+          toast(`«${e.name}»: ${r.layers.length} partes (la de abajo es el cuerpo; las demás se balancean)`, 'ok');
+        } catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }
+      } })));
+      return;
+    }
     menu(innerWidth / 2, innerHeight / 3, 'Dibujo en 3D', list.map(e => ({ label: e.name, run: async () => {
       try { toast('Preparando el dibujo…'); const url = await drawingToUrl(this.deps, e.id); s.addCard(url, e.name, await aspectOf(url), { id: e.id, rev: e.rev }); this.closeSheet(); this.view.frameSelected(); toast(`«${e.name}» está en la escena: recibe luces, sombras y efectos`, 'ok'); }
       catch (err) { toast(err instanceof Error ? err.message : String(err), 'error'); }

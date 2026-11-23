@@ -1,5 +1,5 @@
-import { h, toast } from '../../ui/dom';
-import { TRANS_TYPES, cardPhys, defaultCel, defaultCtrl, defaultFx, defaultObjStyle, defaultPhys, styled, sid, type Cel3, type Line3, type TransType, type Act3, type ActType, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
+import { h, pickFiles, toast } from '../../ui/dom';
+import { TRANS_TYPES, cardPhys, defaultAudio, defaultCel, defaultTuber, sid as newId, defaultCtrl, defaultFx, defaultObjStyle, defaultPhys, styled, sid, type Cel3, type Line3, type Pose3, type TransType, type Tuber3, type Act3, type ActType, type Track3, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
 import type { Studio3D } from '../Studio3D';
 import type { Rows } from './Panels';
 
@@ -50,7 +50,8 @@ export function physicsSection(r: Rows, s: Studio3D, o: Obj3, pick?: PickArt) {
   if (o.card) kids.unshift(r.range('Grosor del dibujo (volumen)', o.card.depth ?? 0, 0, 0.5, 0.01, (v, live) => s.setCardDepth(ids, v, live), v => (v > 0 ? `${Math.round(v * 100)} cm` : 'Plano')));
   kids.push(h('p', { class: 'ctl-help' }, 'Pulsa «En vivo» (F5) para ejecutar la escena: agarra y sacude lo dinámico con el ratón, Espacio hace saltar a los personajes.'));
   r.sec('Física y control (En vivo)', ...kids);
-  if (o.card && pick) posesSection(r, s, o, pick);
+  if (o.card && pick) { tuberSection(r, s, o, pick); posesSection(r, s, o, pick); }
+  if (o.card && o.parent && s.obj(o.parent)?.card) partSection(r, s, o);
   styleSection(r, s, o, ids);
 }
 
@@ -85,6 +86,61 @@ function styleSection(r: Rows, s: Studio3D, o: Obj3, ids: string[]) {
     ...toonControls(r, o.style?.cel ?? null, o.style?.line ?? null, c => s.setStyle(ids, { cel: c }), (l, live) => s.setStyle(ids, { line: l }, live)));
 }
 
+/** Nivel del audio en vivo para el medidor del panel (lo pone la interfaz; null = sin audio). */
+let meterSource: (() => { level: number; talking: boolean } | null) | null = null;
+export function setMeterSource(fn: typeof meterSource) { meterSource = fn; }
+/** Medidor del nivel de audio con la marca del umbral (se actualiza mientras se ve). */
+function meter(threshold: number) {
+  const bar = h('div', { class: 's3-meterbar' }), mark = h('div', { class: 's3-metermark', style: { left: `${Math.min(100, threshold * 100)}%` } });
+  const el = h('div', { class: 's3-meter', title: 'Nivel del audio (la marca es el umbral para hablar)' }, bar, mark);
+  const tick = () => {
+    if (!el.isConnected) return;
+    const v = meterSource?.() ?? null;
+    bar.style.width = `${Math.round(Math.min(1, v?.level ?? 0) * 100)}%`;
+    el.classList.toggle('on', !!v?.talking);
+    el.classList.toggle('idle', !v);
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  return el;
+}
+
+/**
+ * PNGTuber de un dibujo: boca abierta y ojos cerrados (imágenes que no cambian el
+ * original), parpadeo y reacción al audio (rebote, aplastado, brillo).
+ */
+function tuberSection(r: Rows, s: Studio3D, o: Obj3, pick: PickArt) {
+  const c = o.card!, tb = c.tuber;
+  const set = (fn: (t: Tuber3) => void, label = 'PNGTuber', live = false) => s.setCard(o.id, x => { const t: Tuber3 = { ...defaultTuber(), ...(x.tuber ?? {}) }; fn(t); x.tuber = t; }, label, live);
+  const imgRow = (label: string, tex: string | undefined, key: 'talk' | 'blink') => {
+    const add = async (kind: 'image' | 'drawing') => { const a = await pick(kind); if (a) s.addTexture(a.src, `${o.name} · ${label}`, a.project, (id, sc) => { const x = sc.objects.find(y => y.id === o.id); if (x?.card) x.card.tuber = { ...defaultTuber(), ...(x.card.tuber ?? {}), [key]: id }; }, label); };
+    const name = tex ? s.s.textures.find(t => t.id === tex)?.name ?? 'imagen' : '—';
+    return h('div', { class: 's3-poserow' }, h('span', { class: 's3-posename', title: name }, `${label}: ${tex ? '✓' : '—'}`),
+      h('button', { type: 'button', class: 'btn xs', on: { click: () => void add('drawing') } }, 'Dibujo…'),
+      h('button', { type: 'button', class: 'btn xs', on: { click: () => void add('image') } }, 'Imagen…'),
+      tex ? h('button', { type: 'button', class: 'icon sm', title: 'Quitar', 'aria-label': `Quitar ${label}`, on: { click: () => set(t => { delete t[key]; }) } }, '✕') : null);
+  };
+  const kids: (Node | null)[] = [r.check('Personaje PNGTuber (habla con el audio o el micrófono)', !!tb, v => s.setCard(o.id, x => { if (v) x.tuber = { ...defaultTuber(), ...(x.tuber ?? {}) }; else delete x.tuber; }, 'PNGTuber'))];
+  if (tb) kids.push(
+    h('p', { class: 'ctl-help' }, 'Al hablar se muestra la boca abierta y rebota; parpadea solo. Cada pose (expresión) puede tener su propia boca y ojos. El original no se modifica.'),
+    imgRow('Boca abierta', tb.talk, 'talk'),
+    imgRow('Ojos cerrados', tb.blink, 'blink'),
+    r.range('Parpadeo cada', tb.blinkEvery, 0, 10, 0.5, (v, live) => set(t => { t.blinkEvery = v; }, 'Parpadeo', live), v => (v > 0 ? `${v.toFixed(1)} s` : 'Nunca')),
+    r.range('Rebote al hablar', tb.bounce, 0, 1, 0.05, (v, live) => set(t => { t.bounce = v; }, 'Rebote', live)),
+    r.range('Aplastado al hablar (squash)', tb.squash, 0, 1, 0.05, (v, live) => set(t => { t.squash = v; }, 'Aplastado', live)),
+    r.range('Brillo al hablar', tb.glow, 0, 1, 0.05, (v, live) => set(t => { t.glow = v; }, 'Brillo', live)));
+  r.sec('PNGTuber', ...kids);
+}
+/** Parte de un personaje (hija de otro dibujo): balanceo y punto de giro. */
+function partSection(r: Rows, s: Studio3D, o: Obj3) {
+  const pt = o.part;
+  r.sec('Parte del personaje',
+    r.check('Se balancea con el movimiento del personaje (pelo, orejas…)', !!pt, v => s.setPart([o.id], v ? { sway: pt?.sway ?? 0.6 } : null)),
+    pt ? r.range('Balanceo', pt.sway, 0, 2, 0.05, (v, live) => { if (!live) s.setPart([o.id], { sway: v }); }) : null,
+    pt ? r.range('Punto de giro: horizontal', pt.pivot?.[0] ?? 0.5, 0, 1, 0.01, (v, live) => { if (!live) s.setPart([o.id], { pivot: [v, pt.pivot?.[1] ?? 0] }); }, v => `${Math.round(v * 100)} %`) : null,
+    pt ? r.range('Punto de giro: altura', pt.pivot?.[1] ?? 0, 0, 1, 0.01, (v, live) => { if (!live) s.setPart([o.id], { pivot: [pt.pivot?.[0] ?? 0.5, v] }); }, v => `${Math.round(v * 100)} %`) : null);
+}
+
 /**
  * Poses de un dibujo: otros dibujos o imágenes que se cambian en vivo pulsando una
  * tecla, con una transición (squash and stretch, volteo, giro, pop…), sin keyframes.
@@ -99,11 +155,19 @@ function posesSection(r: Rows, s: Studio3D, o: Obj3, pick: PickArt) {
     i.addEventListener('change', () => set(i.value.trim()));
     return i;
   };
+  const variant = (p: Pose3, i: number, key: 'talk' | 'blink', label: string, title: string) => h('button', { type: 'button', class: `btn xs${p[key] ? ' primary' : ''}`, title: p[key] ? `${title} — clic para cambiarla (Mayús + clic: quitarla)` : title, on: { click: async (e: Event) => {
+    if ((e as MouseEvent).shiftKey && p[key]) { s.setCard(o.id, x => { delete x.poses![i][key]; }); return; }
+    const a = await pick('image'); if (a) s.addTexture(a.src, `${p.name} · ${label}`, a.project, (id, sc) => { const x = sc.objects.find(y => y.id === o.id); const q = x?.card?.poses?.[i]; if (q) q[key] = id; }, label);
+  } } }, label);
   const row = (name: string, key: string, setKey: (v: string) => void, extra: Node | null) => h('div', { class: 's3-poserow' }, h('span', { class: 's3-posename', title: name }, name), keyInput(key, setKey, `Tecla de ${name}`), extra);
   r.sec(`Poses del dibujo (${poses.length})`,
     h('p', { class: 'ctl-help' }, 'En vivo, pulsa la tecla de una pose para cambiar el dibujo con la transición elegida (sin keyframes).'),
     row('Original', c.baseKey ?? '0', v => s.setCard(o.id, x => { x.baseKey = v; }), null),
-    ...poses.map((p, i) => row(p.name, p.key, v => s.setCard(o.id, x => { x.poses![i].key = v; }), h('button', { type: 'button', class: 'icon sm', title: 'Quitar la pose', 'aria-label': `Quitar ${p.name}`, on: { click: () => s.setCard(o.id, x => { x.poses!.splice(i, 1); }, 'Quitar pose') } }, '✕'))),
+    ...poses.map((p, i) => row(p.name, p.key, v => s.setCard(o.id, x => { x.poses![i].key = v; }), h('span', { class: 's3-poseopts' },
+      // PNGTuber: la boca abierta y los ojos cerrados de esta expresión.
+      c.tuber ? variant(p, i, 'talk', 'Boca', 'Imagen de esta expresión hablando (boca abierta)') : null,
+      c.tuber ? variant(p, i, 'blink', 'Ojos', 'Imagen de esta expresión con los ojos cerrados (parpadeo)') : null,
+      h('button', { type: 'button', class: 'icon sm', title: 'Quitar la pose', 'aria-label': `Quitar ${p.name}`, on: { click: () => s.setCard(o.id, x => { x.poses!.splice(i, 1); }, 'Quitar pose') } }, '✕')))),
     r.btns(['+ Dibujo de YOSADRAW…', () => void add('drawing')], ['+ Imagen…', () => void add('image')]),
     r.select('Transición', tr.type, TRANS_TYPES, v => s.setCard(o.id, x => { x.trans = { ...tr, type: v as TransType }; })),
     tr.type !== 'cut' ? r.range('Duración', tr.dur, 0.1, 1.5, 0.05, (v, live) => s.setCard(o.id, x => { x.trans = { ...tr, dur: v }; }, 'Transición', live), v => `${v.toFixed(2)} s`) : null,
@@ -129,6 +193,36 @@ function toonControls(r: Rows, cel: Cel3 | null, line: Line3 | null, setCel: (c:
   return out;
 }
 
+/** Audio de la escena (PNGTuber): pistas, micrófono, umbral para hablar y medidor. */
+function audioSection(r: Rows, s: Studio3D) {
+  const au = { ...defaultAudio(), ...(s.scene.audio ?? {}) };
+  const add = async () => {
+    const files = await pickFiles('audio/*,.mp3,.ogg,.wav,.m4a,.aac,.webm', true);
+    for (const f of files) {
+      if (f.size > 25 * 1024 * 1024) { toast(`«${f.name}» es muy grande (máx. 25 MB)`, 'error'); continue; }
+      const src = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(fr.error); fr.readAsDataURL(f); });
+      s.setAudio(a => { a.tracks.push({ id: newId('au'), name: f.name.replace(/\.[^.]+$/, '') || 'Audio', src, auto: a.tracks.length === 0, loop: false, volume: 1 }); }, 'Añadir audio');
+    }
+  };
+  const row = (t: Track3, i: number) => {
+    const chk = (label: string, v: boolean, fn: (on: boolean) => void) => { const cb = h('input', { type: 'checkbox', checked: v }); cb.addEventListener('change', () => fn(cb.checked)); return h('label', { class: 'mo-checkrow', title: label }, cb, h('span', null, label)); };
+    return h('div', { class: 's3-poserow' }, h('span', { class: 's3-posename', title: t.name }, t.name),
+      chk('Al empezar', t.auto, v => s.setAudio(a => { a.tracks[i].auto = v; })),
+      chk('Repetir', t.loop, v => s.setAudio(a => { a.tracks[i].loop = v; })),
+      h('button', { type: 'button', class: 'icon sm', title: 'Quitar el audio', 'aria-label': `Quitar ${t.name}`, on: { click: () => s.setAudio(a => { a.tracks.splice(i, 1); }, 'Quitar audio') } }, '✕'));
+  };
+  r.sec(`Audio (PNGTuber) ${au.tracks.length ? `(${au.tracks.length})` : ''}`,
+    h('p', { class: 'ctl-help' }, 'Los personajes PNGTuber hablan con el micrófono o con un audio: boca abierta, rebote y sucesos «al empezar a hablar», «al callarse» y «sonido fuerte» para los disparadores. Lo que suena se graba con el vídeo.'),
+    ...au.tracks.map(row),
+    r.btns(['+ Audio (MP3, WAV, OGG…)', () => void add()]),
+    r.check('Usar el micrófono en vivo (tu voz mueve al personaje)', au.mic, v => s.setAudio(a => { a.mic = v; }, 'Micrófono')),
+    r.range('Umbral para hablar', au.threshold, 0.01, 0.5, 0.01, (v, live) => s.setAudio(a => { a.threshold = v; }, 'Umbral', live), v => `${Math.round(v * 100)} %`),
+    meter(au.threshold),
+    r.range('Mantener la boca abierta', au.hold, 0, 0.6, 0.02, (v, live) => s.setAudio(a => { a.hold = v; }, 'Boca', live), v => `${Math.round(v * 1000)} ms`),
+    r.range('Sonido fuerte a partir de', au.loud, 0.1, 1, 0.05, (v, live) => s.setAudio(a => { a.loud = v; }, 'Sonido fuerte', live), v => `${Math.round(v * 100)} %`),
+    h('p', { class: 'ctl-help' }, 'El medidor se mueve mientras la escena está en vivo; la marca es el umbral.'));
+}
+
 /** Cel shading y lineart de toda la escena. */
 function toonSection(r: Rows, s: Studio3D) {
   const fx = s.fx;
@@ -138,14 +232,15 @@ function toonSection(r: Rows, s: Studio3D) {
     r.btns(['Caricatura', () => s.setFx({ cel: { ...defaultCel(), bands: 2, soft: 0.05 }, line: { width: 3, color: '#151018' }, preview: true })], ['Anime', () => s.setFx({ cel: { ...defaultCel(), bands: 3, soft: 0.15, shade: 'color', color: '#6b5b9a', rim: 0.35, rimColor: '#fff4e0' }, line: { width: 1.5, color: '#2a2030' }, preview: true })], ['Quitar', () => s.setFx({ cel: null, line: null })]));
 }
 
-const EVENTS: [EventType, string][] = [['start', 'Al empezar'], ['time', 'En el segundo…'], ['every', 'Cada … segundos'], ['key', 'Al pulsar la tecla…'], ['click', 'Al hacer clic en…'], ['collide', 'Al chocar…'], ['enter', 'Al entrar en la zona…'], ['grab', 'Al agarrar…'], ['release', 'Al soltar…']];
-const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código']];
+const EVENTS: [EventType, string][] = [['start', 'Al empezar'], ['time', 'En el segundo…'], ['every', 'Cada … segundos'], ['key', 'Al pulsar la tecla…'], ['click', 'Al hacer clic en…'], ['collide', 'Al chocar…'], ['enter', 'Al entrar en la zona…'], ['grab', 'Al agarrar…'], ['release', 'Al soltar…'], ['talk', 'Al empezar a hablar (audio)'], ['quiet', 'Al callarse (audio)'], ['loud', 'Con un sonido fuerte (audio)']];
+const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código'], ['pose', 'Cambiar de expresión (pose)'], ['audio', 'Reproducir o parar audio']];
 const FX_PARAMS: [keyof Fx3, string, number][] = [['godrays', 'Luz volumétrica', 2], ['cones', 'Conos de luz', 2], ['bloom', 'Resplandor (bloom)', 3], ['chroma', 'Aberración cromática', 3], ['glitch', 'Glitch', 1], ['tintAmt', 'Tinte de color', 1], ['vignette', 'Viñeta', 1], ['grain', 'Grano', 1], ['ao', 'Volumen (oclusión ambiental)', 1]];
 
 /** Plantillas de reglas para empezar rápido. */
 function presets(s: Studio3D): [string, () => Rule3][] {
   const ch = s.scene.objects.find(o => o.ctrl)?.id ?? '', zone = s.scene.objects.find(o => o.phys?.zone)?.id ?? '', dyn = s.scene.objects.find(o => o.phys?.body === 'dynamic' && !o.ctrl)?.id ?? '';
   const light = s.scene.objects.find(o => o.light?.type === 'point' || o.light?.type === 'spot')?.id ?? '';
+  const tub = s.scene.objects.find(o => o.card?.tuber)?.id ?? '';
   const R = (name: string, on: Rule3['on'], acts: Act3[]): Rule3 => ({ id: sid('ru'), name, enabled: true, once: false, on, do: acts });
   return [
     ['Espacio: saltar', () => R('Espacio: saltar', { type: 'key', key: ' ' }, [{ type: 'jump', target: ch, value: 6 }])],
@@ -153,6 +248,10 @@ function presets(s: Studio3D): [string, () => Rule3][] {
     ['Cada 2 s: soltar una copia', () => R('Lluvia de copias', { type: 'every', t: 2 }, [{ type: 'spawn', target: dyn, v: [0, 4, 0] }])],
     ['Al entrar en la zona: luz roja', () => R('Zona: alarma', { type: 'enter', a: zone }, [{ type: 'light', target: light, value: 2, color: '#ff3030', dur: 0.3 }, { type: 'fx', target: '', param: 'tintAmt', value: 0.5, dur: 0.5 }])],
     ['Tecla G: gravedad lunar', () => R('Gravedad lunar', { type: 'key', key: 'g' }, [{ type: 'gravity', target: '', value: 1.6 }, { type: 'slowmo', target: '', value: 0.6, dur: 3 }])],
+    ['PNGTuber: al hablar, brillo y resplandor', () => R('Hablar: brillo', { type: 'talk' }, [{ type: 'fx', target: '', param: 'bloom', value: 0.8, dur: 0.15 }])],
+    ['PNGTuber: al callarse, quitar el resplandor', () => R('Callar: sin brillo', { type: 'quiet' }, [{ type: 'fx', target: '', param: 'bloom', value: 0.2, dur: 0.4 }])],
+    ['PNGTuber: grito → sorpresa, temblor y glitch', () => R('Grito', { type: 'loud' }, [...(tub ? [{ type: 'pose' as const, target: tub, param: s.obj(tub)?.card?.poses?.[0]?.name ?? '' }] : []), { type: 'shake', target: '', value: 0.25, dur: 0.35 }, { type: 'fx', target: '', param: 'glitch', value: 0.6, dur: 0.12 }, { type: 'fx', target: '', param: 'chroma', value: 1.2, dur: 0.12 }])],
+    ['PNGTuber: al callarse, volver a la expresión normal', () => R('Volver a normal', { type: 'quiet' }, tub ? [{ type: 'pose', target: tub }] : [])],
     ['A los 3 s: girar y acelerar', () => R('Giro', { type: 'time', t: 3 }, [{ type: 'setdir', target: ch, value: 90 }, { type: 'speed', target: ch, value: 4 }])],
   ];
 }
@@ -214,6 +313,7 @@ export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
     fx.squiggle > 0 ? r.range('Squiggle: tamaño de la onda', fx.squigSize, 5, 200, 1, (v, live) => s.setFx({ squigSize: v }, live), v => `${Math.round(v)} px`) : null,
     fx.ink > 0 ? (() => { const i = h('input', { type: 'color', class: 'mo-color', value: fx.inkColor }); i.addEventListener('change', () => s.setFx({ inkColor: i.value })); return h('div', { class: 'mo-prop' }, h('label', { class: 'mo-lab' }, 'Color de la tinta'), i); })() : null);
   toonSection(r, s);
+  audioSection(r, s);
   r.sec('Física de la escena',
     r.range('Gravedad', fx.gravity, 0, 30, 0.1, (v, live) => s.setFx({ gravity: v }, live), v => `${v.toFixed(1)} m/s²`),
     r.check('Suelo infinito (y = 0)', fx.ground, v => s.setFx({ ground: v })),
@@ -230,7 +330,7 @@ export function livePanel(r: Rows, s: Studio3D, onPlay: () => void) {
   ta.addEventListener('change', () => s.setScript(ta.value));
   r.sec('Programa (JavaScript)', ta,
     r.btns(['Guardar', () => s.setScript(ta.value)], ['Ejemplo', () => { ta.value = SCRIPT_EXAMPLE; s.setScript(ta.value); }], ['Probar', () => { s.setScript(ta.value); onPlay(); }]),
-    h('p', { class: 'ctl-help' }, 'on(suceso, objeto o tecla, función) — sucesos: start, key, click, collide, enter, grab, release. obj("Nombre") da .pos, .vel, .impulse(x,y,z), .jump(v), .dir(grados), .speed(v), .goTo(x,z), .color("#f00", s), .hide(), .show(), .spawn(x,y,z), .pose(n o "nombre"). También every, after, light("Nombre").intensity(k, s), fx("glitch", 0.5, s), shake, gravity, slowmo, random, time, log y stop.'));
+    h('p', { class: 'ctl-help' }, 'on(suceso, objeto o tecla, función) — sucesos: start, key, click, collide, enter, grab, release, talk (empieza a hablar), quiet (se calla), loud (sonido fuerte). obj("Nombre") da .pos, .vel, .impulse(x,y,z), .jump(v), .dir(grados), .speed(v), .goTo(x,z), .color("#f00", s), .hide(), .show(), .spawn(x,y,z), .pose(n o "nombre"). audio.level, audio.talking, audio.play("pista"), audio.stop(), audio.mic(true). También every, after, light("Nombre").intensity(k, s), fx("glitch", 0.5, s), shake, gravity, slowmo, random, time, log y stop.'));
 }
 
 function ruleCard(r: Rows, s: Studio3D, rule: Rule3, objs: [string, string][]) {
@@ -250,7 +350,9 @@ function ruleCard(r: Rows, s: Studio3D, rule: Rule3, objs: [string, string][]) {
   const acts = rule.do.map((a, i) => {
     const ua = (fn: (x: Act3) => void) => up(x => fn(x.do[i]));
     const p: (Node | null)[] = [sel(a.type, ACTS, v => ua(x => { x.type = v as ActType; }), 'Acción')];
-    if (!['fx', 'shake', 'gravity', 'slowmo', 'stop', 'script'].includes(a.type)) p.push(sel(a.target, objs, v => ua(x => { x.target = v; }), 'Objeto'));
+    if (!['fx', 'shake', 'gravity', 'slowmo', 'stop', 'script', 'audio'].includes(a.type)) p.push(sel(a.target, objs, v => ua(x => { x.target = v; }), 'Objeto'));
+    if (a.type === 'pose') { const o = a.target ? s.obj(a.target) : null; const ps = o?.card?.poses ?? []; p.push(sel(a.param ?? '', [['', 'Original'], ...ps.map(x => [x.name, x.name] as [string, string])], v => ua(x => { x.param = v; }), 'Expresión')); }
+    if (a.type === 'audio') { const ts = s.scene.audio?.tracks ?? []; p.push(sel(a.param ?? '', [['', '(todas)'], ...ts.map(t => [t.name, t.name] as [string, string])], v => ua(x => { x.param = v; }), 'Audio'), sel(String((a.value ?? 1) > 0 ? 1 : 0), [['1', 'Reproducir'], ['0', 'Parar']], v => ua(x => { x.value = Number(v); }), 'Qué hacer')); }
     const v3 = () => { const v = a.v ?? [0, 5, 0]; return (['x', 'y', 'z'] as const).map((n, k) => num(v[k], val => ua(x => { const w = [...(x.v ?? [0, 5, 0])] as [number, number, number]; w[k] = val; x.v = w; }), n.toUpperCase())); };
     if (a.type === 'impulse' || a.type === 'spawn') p.push(...v3());
     if (['jump', 'setdir', 'speed', 'gravity', 'slowmo', 'shake'].includes(a.type)) p.push(num(a.value, v => ua(x => { x.value = v; }), 'Valor'));
