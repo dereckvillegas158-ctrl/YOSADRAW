@@ -103,6 +103,10 @@ export class Live {
   private poses = new Map<string, { cur: string | null; hc: number; anim: { type: TransType; t0: number; dur: number; to: string | null; swapped: boolean } | null; mod: T.Matrix4 | null }>();
   /** Tecla H: ocultar o mostrar la interfaz (la pone la interfaz). */
   onToggleUi: () => void = () => {};
+  /** Después de dibujar cada fotograma (la grabación de vídeo lo copia). */
+  onFrame: () => void = () => {};
+  /** Tecla F9: empezar o parar la grabación de vídeo. */
+  onRecordKey: () => void = () => {};
 
   constructor(private s: Studio3D, private view: View3D) {
     const fx = { ...defaultFx(), ...(s.scene.fx ?? {}) };
@@ -229,6 +233,7 @@ export class Live {
     if (!this.paused) this.tick(dt * this.timescale, dt);
     const t1 = performance.now();
     this.view.renderNow();
+    this.onFrame();
     const t2 = performance.now();
     this.stats.phys += (t1 - t0 - this.stats.phys) * 0.1;
     this.stats.draw += (t2 - t1 - this.stats.draw) * 0.1;
@@ -667,6 +672,7 @@ export class Live {
     if (!this.running) return;
     // Esc y F5 paran siempre (también con el foco en un deslizador del panel).
     if (e.key === 'Escape' || e.key === 'F5') { e.preventDefault(); e.stopPropagation(); this.stop(); return; }
+    if (e.key === 'F9') { e.preventDefault(); e.stopPropagation(); if (!e.repeat) this.onRecordKey(); return; }
     const t = e.target as HTMLElement;
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color'].includes(t.type))) return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;

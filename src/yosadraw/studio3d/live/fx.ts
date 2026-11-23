@@ -309,6 +309,8 @@ export class FxPipeline {
   private ao: AOPass;
   private quality: Quality = 'medium';
   private w = 1; private h = 1;
+  /** Resolución mínima (píxeles por punto) mientras se graba un vídeo; 0 = la normal. */
+  minRatio = 0;
   /** FPS medidos (para bajar la calidad sola). */
   fps = 60;
   private frames = 0; private t0 = performance.now(); private slow = 0;
@@ -346,7 +348,7 @@ export class FxPipeline {
   setSize(w: number, h: number) {
     this.w = w; this.h = h;
     const q = QUALITY[this.quality];
-    const pr = this.fixedRatio || Math.min(window.devicePixelRatio || 1, q.ratio);
+    const pr = this.fixedRatio || Math.max(this.minRatio, Math.min(window.devicePixelRatio || 1, q.ratio));
     this.composer.setPixelRatio(pr);
     this.composer.setSize(w, h);
     this.god.scale = q.occ;

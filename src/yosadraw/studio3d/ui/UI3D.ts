@@ -11,6 +11,7 @@ import { Assistant } from './Assistant';
 import { I3 } from './icons3';
 import { AddPanel, Hierarchy, Inspector3, drawingToUrl, editMenu, objectMenu, type PanelDeps } from './Panels';
 import { Live } from '../live/Live';
+import { LiveRecorder, REC_SIZES, recDims, type RecSize } from '../live/recorder';
 import { fileToDataUrl } from '../textures';
 import { confirmDialog } from '../../ui/modal';
 import { Timeline3 } from './Timeline3';
@@ -52,7 +53,9 @@ export class UI3D {
   /** Modo En vivo en marcha (o null). */
   live: Live | null = null;
   private scriptOk = new WeakSet<object>();
-  private video: { rec: MediaRecorder; chunks: Blob[]; mime: string } | null = null;
+  private video: LiveRecorder | null = null;
+  /** Calidad del vídeo en vivo (se recuerda en este equipo). */
+  private recSize: RecSize = (() => { try { const v = localStorage.getItem('yosadraw.s3d.recSize'); return REC_SIZES.some(([k]) => k === v) ? v as RecSize : '1080'; } catch { return '1080' as RecSize; } })();
   /** Para el tutorial: ¿giró la vista? ¿renderizó? */
   private orbits = 0; private renders = 0;
 
@@ -318,6 +321,7 @@ export class UI3D {
     live.onState = () => this.syncHud();
     live.onLog = l => this.hudLog(l.msg, l.error);
     live.onToggleUi = () => this.toggleClean();
+    live.onRecordKey = () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); };
     live.start(runScript);
     this.el.classList.add('s3-playing');
     this.renderHud();
@@ -333,6 +337,8 @@ export class UI3D {
   private async afterStop() {
     const live = this.live;
     if (!live) return;
+    // Esc también termina (y guarda) el vídeo que se estaba grabando.
+    if (this.video) this.stopVideo();
     this.el.classList.remove('s3-playing', 's3-clean');
     this.hud.hidden = true;
     this.playBtn.innerHTML = '▶ <span>En vivo</span>';
@@ -349,6 +355,8 @@ export class UI3D {
     const b = (label: string, title: string, run: () => void, cls = 'btn sm') => h('button', { type: 'button', class: cls, title, on: { click: run } }, label);
     const slow = h('select', { class: 'mo-sel', 'aria-label': 'Velocidad', title: 'Cámara lenta' }, ...[[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [2, '2×']].map(([v, l]) => h('option', { value: String(v) }, String(l))));
     slow.addEventListener('change', () => { live.timescale = Number(slow.value); });
+    const recSel = h('select', { class: 'mo-sel', 'aria-label': 'Calidad del vídeo', title: 'Calidad del vídeo en vivo' }, ...REC_SIZES.map(([v, l]) => h('option', { value: v, selected: v === this.recSize }, l)));
+    recSel.addEventListener('change', () => { this.recSize = recSel.value as RecSize; try { localStorage.setItem('yosadraw.s3d.recSize', this.recSize); } catch { /* sin almacenamiento */ } });
     const slider = (k: 'godrays' | 'bloom' | 'chroma' | 'glitch' | 'tintAmt' | 'squiggle' | 'ink', label: string, max: number) => {
       const r = h('input', { type: 'range', min: '0', max: String(max), step: '0.01', value: String(live.fx[k]), 'aria-label': label, title: label });
       r.addEventListener('input', () => { live.fx[k] = Number(r.value); });
@@ -360,9 +368,14 @@ export class UI3D {
         b('■ Parar', 'Parar (Esc)', () => void this.stopLive(), 'btn sm primary'),
         b(live.paused ? '▶ Seguir' : '❚❚ Pausa', 'Pausa', () => { live.togglePause(); this.renderHud(); }),
         b(live.recording ? '● Grabando…' : '● Grabar keyframes', 'Graba lo que pasa (física y personajes) para guardarlo como animación', () => { if (live.recording) void this.saveRec(); else live.startRec(); this.renderHud(); }, `btn sm${live.recording ? ' s3-rec' : ''}`),
-        b(this.video ? '⏺ Parar vídeo' : '⏺ Grabar vídeo', 'Graba en vídeo lo que se ve, con los efectos', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
+        b(this.video ? '⏺ Parar vídeo' : '⏺ Grabar vídeo', 'Graba en vídeo lo que se ve, con los efectos (F9)', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
+        this.video ? null : b('⏺ Grabar sin interfaz', 'Oculta la interfaz y empieza a grabar el vídeo (H vuelve a mostrarla, F9 para)', () => { this.toggleClean(true); this.startVideo(); this.renderHud(); }),
+        this.video ? null : recSel,
         slow, b('⛶ Ocultar interfaz', 'Ocultar la interfaz para jugar con la escena a pantalla completa (H)', () => this.toggleClean()), h('span', { class: 's3-fps' })),
-      h('div', { class: 's3-hudrow s3-hudmin' }, b('■', 'Parar (Esc)', () => void this.stopLive(), 'btn sm primary'), b('Mostrar interfaz (H)', 'Volver a ver los paneles', () => this.toggleClean())),
+      h('div', { class: 's3-hudrow s3-hudmin' }, b('■', 'Parar (Esc)', () => void this.stopLive(), 'btn sm primary'),
+        b(this.video ? '⏹ Parar vídeo' : '⏺ Grabar', this.video ? 'Parar la grabación (F9)' : 'Grabar vídeo sin la interfaz (F9)', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
+        h('span', { class: 's3-rectime' }),
+        b('Mostrar interfaz (H)', 'Volver a ver los paneles', () => this.toggleClean())),
       h('div', { class: 's3-hudrow s3-actors', hidden: true }),
       h('div', { class: 's3-hudrow s3-hudfx' }, slider('godrays', 'Luz volumétrica', 2), slider('bloom', 'Resplandor', 3), slider('chroma', 'Aberración', 3), slider('glitch', 'Glitch', 1), slider('tintAmt', 'Tinte', 1), slider('squiggle', 'Squiggle', 1), slider('ink', 'Tinta', 1)),
       h('div', { class: 's3-hudlog' }),
@@ -376,7 +389,7 @@ export class UI3D {
     if (!live.running) { void this.afterStop(); return; }
     this.playBtn.innerHTML = live.running ? '■ <span>Parar</span>' : '▶ <span>En vivo</span>';
     const fps = this.hud.querySelector('.s3-fps');
-    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos · ${live.time.toFixed(1)} s`; setTimeout(tick, 500); }; tick(); }
+    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos · ${live.time.toFixed(1)} s`; const rt = this.hud.querySelector('.s3-rectime'); if (rt) { const v = this.video; rt.textContent = v ? `● ${Math.floor(v.seconds / 60)}:${String(Math.floor(v.seconds % 60)).padStart(2, '0')}` : ''; } setTimeout(tick, 500); }; tick(); }
     // Actores: quién se controla (clic en uno para elegirlo; en el activo, para soltarlo).
     const bar = this.hud.querySelector<HTMLElement>('.s3-actors');
     if (bar) {
@@ -387,9 +400,9 @@ export class UI3D {
     }
   }
   /** Ocultar la interfaz en vivo (sólo la escena, a pantalla completa) o volver a mostrarla. */
-  private toggleClean() {
+  private toggleClean(force?: boolean) {
     if (!this.live?.running) return;
-    this.el.classList.toggle('s3-clean');
+    this.el.classList.toggle('s3-clean', force);
     this.view.el.focus?.();
   }
   private hudLog(msg: string, error = false) {
@@ -404,23 +417,41 @@ export class UI3D {
     const n = live.stopRec(true);
     toast(n ? `Grabación guardada como ${n} keyframes (se puede deshacer)` : 'No se grabó ningún movimiento.', n ? 'ok' : 'info');
   }
+  /**
+   * Graba en vídeo lo que se ve en vivo: a un lienzo propio de tamaño fijo (no se
+   * estropea al ocultar la interfaz ni al cambiar el tamaño de la ventana) y con el
+   * visor dibujando a la resolución del vídeo mientras dura la grabación.
+   */
   private startVideo() {
-    const cv = this.view.renderer.domElement as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream };
-    if (!cv.captureStream || typeof MediaRecorder === 'undefined') { toast('Este sistema no puede grabar vídeo en vivo: graba keyframes y usa Render → animación.', 'error'); return; }
-    const mime = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
-    const rec = new MediaRecorder(cv.captureStream(this.s.fps), { mimeType: mime, videoBitsPerSecond: 12_000_000 });
-    const chunks: Blob[] = [];
-    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-    rec.onstop = async () => {
-      const blob = new Blob(chunks, { type: mime });
-      const name = `${this.deps.name()}-en-vivo.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
-      await saveFile(name, new Uint8Array(await blob.arrayBuffer()));
-      toast(`Vídeo guardado: ${name}`, 'ok');
-    };
-    rec.start(500);
-    this.video = { rec, chunks, mime };
+    const live = this.live;
+    if (!live?.running || this.video) return;
+    if (!LiveRecorder.supported()) { toast('Este sistema no puede grabar vídeo en vivo: graba keyframes y usa Render → animación.', 'error'); return; }
+    const cv = this.view.renderer.domElement as HTMLCanvasElement;
+    // Forma del vídeo: la de lo que se ve al empezar (pantalla completa si la interfaz está oculta).
+    const box = this.view.el.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+    const dims = recDims(this.recSize, box.width / Math.max(1, box.height), { w: box.width * dpr, h: box.height * dpr });
+    const fps = Math.max(24, Math.min(60, this.s.fps));
+    let rec: LiveRecorder;
+    try {
+      rec = new LiveRecorder(dims.w, dims.h, fps, async (blob, mime) => {
+        const name = `${this.deps.name()}-en-vivo.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
+        await saveFile(name, new Uint8Array(await blob.arrayBuffer()));
+        toast(`Vídeo guardado: ${name} (${dims.w} × ${dims.h})`, 'ok');
+      }, cv);
+    } catch (e) { toast(`No se pudo grabar: ${e instanceof Error ? e.message : String(e)}`, 'error'); return; }
+    this.view.setRecordHeight(dims.h);
+    live.onFrame = () => rec.frame(cv);
+    this.video = rec;
+    toast(`Grabando vídeo a ${dims.w} × ${dims.h}, ${fps} fps (F9 para parar)`);
   }
-  private stopVideo() { this.video?.rec.stop(); this.video = null; }
+  private stopVideo() {
+    const v = this.video;
+    if (!v) return;
+    this.video = null;
+    if (this.live) this.live.onFrame = () => {};
+    v.stop();
+    this.view.setRecordHeight(0);
+  }
   /** Dibujo de YOSADRAW o imagen como cartel 3D (recibe luces, sombras y efectos). */
   private async addCard(src: 'drawing' | 'image') {
     const s = this.s;

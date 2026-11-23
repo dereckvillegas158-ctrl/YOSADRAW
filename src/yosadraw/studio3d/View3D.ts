@@ -177,10 +177,20 @@ export class View3D {
 
   // ---------------------------------------------------------------- cámara y vista
 
+  /** Altura del vídeo que se graba (0 = no se graba): el visor dibuja a esa resolución. */
+  private recH = 0;
+  private recPr = 0;
+  setRecordHeight(h: number) { this.recH = Math.max(0, h); this.resize(); }
   private resize() {
     const w = this.el.clientWidth, h = this.el.clientHeight;
     if (w < 2 || h < 2) return;
+    // Al grabar, más píxeles por punto para que el vídeo salga nítido (hasta ×3).
+    const base = Math.min(2, devicePixelRatio || 1);
+    this.recPr = this.recH ? Math.min(3, Math.max(base, this.recH / h)) : 0;
+    const pr = this.recPr || base;
+    if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
+    if (this.fxp) this.fxp.minRatio = this.recPr;
     this.fxp?.setSize(w, h);
     this.renderer.domElement.style.width = `${w}px`; this.renderer.domElement.style.height = `${h}px`;
     this.persp.aspect = w / h; this.persp.updateProjectionMatrix();
@@ -287,7 +297,7 @@ export class View3D {
     this.actorRing(live);
     if (FxPipeline.needed(fx, objStyles.length)) {
       const f = fx ?? { ...defaultFx(), quality: this.s.scene.fx?.quality ?? 'medium', adaptive: this.s.scene.fx?.adaptive ?? true };
-      if (!this.fxp) { this.fxp = new FxPipeline(this.renderer, this.scene, cam); this.fxp.setSize(this.el.clientWidth || 1, this.el.clientHeight || 1); }
+      if (!this.fxp) { this.fxp = new FxPipeline(this.renderer, this.scene, cam); this.fxp.minRatio = this.recPr; this.fxp.setSize(this.el.clientWidth || 1, this.el.clientHeight || 1); }
       if (this.fxp.currentQuality !== f.quality && !f.adaptive) this.fxp.setQuality(f.quality);
       this.fxp.render(this.scene, cam, f, live?.time ?? performance.now() / 1000, this.sunDir(), objStyles);
       // Al editar, el squiggle de los objetos sigue temblando (a su ritmo, sin gastar más).
