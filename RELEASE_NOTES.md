@@ -1,4 +1,13 @@
-## YOSADRAW 1.16.0
+## YOSADRAW 1.16.1
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.16.1-x64.exe` (instalador), `YOSADRAW-1.16.1-x64-portable.exe` o `YOSADRAW-1.16.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.16.1.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Corrección
+- **Dibujo: bajar la opacidad de una capa ya no la hace desaparecer.** Con 4 o más capas, al soltar el deslizador de opacidad la capa elegida dejaba de verse hasta que se ocultaba algo. Ahora se ve con su nueva opacidad al momento (también al cambiar la fusión u otras propiedades de la capa).
+
+### Versión anterior: YOSADRAW 1.16.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.16.0-x64.exe` (instalador), `YOSADRAW-1.16.0-x64-portable.exe` o `YOSADRAW-1.16.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
