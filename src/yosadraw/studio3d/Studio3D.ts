@@ -9,7 +9,7 @@ import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
 import * as M from './mesh';
 import {
-  History3, PRIMS, cameraObject, cardPhys, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, PRIMS, cameraObject, cardPhys, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
@@ -668,6 +668,70 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
     this.sel = [o.id];
     this.emit('select', undefined);
     return o;
+  }
+
+  /**
+   * Personaje PNGTuber por capas: la capa de abajo es el cuerpo (con físicas de
+   * cartel y PNGTuber) y las demás son partes hijas, un poco delante, que se
+   * balancean al moverlo (pelo, orejas, accesorios…).
+   */
+  addLayeredCharacter(name: string, layers: { src: string; name: string; pivot: [number, number] }[], aspect: number, project: { id: string; rev: number } | null = null, height = 2) {
+    if (!layers.length) return null;
+    const w = round(height * aspect), hh = height;
+    const quad = () => ({ v: [-w / 2, 0, 0, w / 2, 0, 0, w / 2, hh, 0, -w / 2, hh, 0], f: [[0, 1, 2, 3]], m: [0], uv: [[0, 0, 1, 0, 1, 1, 0, 1]] });
+    const made: { o: Obj3; mat: Mat3; tex: { id: string; name: string; src: string; project: { id: string; rev: number } | null } }[] = [];
+    layers.forEach((l, i) => {
+      const tex = sid('tx');
+      const mat = newMaterial(l.name, { color: '#ffffff', rough: 0.85 });
+      mat.tex = tex; mat.cut = true;
+      const o = newObject('mesh', i === 0 ? name : l.name, [0, 0, i === 0 ? 0 : round(0.004 * i)]);
+      o.mesh = quad(); o.mats = [mat.id];
+      o.card = { billboard: false };
+      if (i === 0) { o.phys = cardPhys(); o.card.tuber = defaultTuber(); }
+      else o.part = { sway: 0.6, pivot: l.pivot };
+      made.push({ o, mat, tex: { id: tex, name: l.name, src: l.src, project } });
+    });
+    const body = made[0].o;
+    for (const m of made.slice(1)) m.o.parent = body.id;
+    this.edit(`Personaje PNGTuber: ${name}`, (st, sc) => {
+      for (const m of made) { st.textures.push(m.tex); st.materials.push(m.mat); m.o.name = this.uniqueName(sc, m.o.name); sc.objects.push(m.o); }
+    });
+    this.sel = [body.id];
+    this.emit('select', undefined);
+    return body;
+  }
+  /** Guarda una imagen como textura del proyecto y la usa (boca, ojos, variantes de pose). */
+  addTexture(src: string, name: string, project: { id: string; rev: number } | null, use: (texId: string, sc: Scene3) => void, label = 'Imagen') {
+    const id = sid('tx');
+    this.edit(label, (st, sc) => { st.textures.push({ id, name, src, ...(project ? { project } : {}) }); use(id, sc); });
+    return id;
+  }
+  /** Escenario PNGTuber: fondo, cámara de frente, luz de escenario y efectos suaves. */
+  tuberStage() {
+    this.edit('Escenario PNGTuber', (_st, sc) => {
+      sc.env = { ...sc.env, bg: '#1d1830' };
+      if (!sc.objects.some(o => o.kind === 'camera' && o.name === 'Cámara PNGTuber')) {
+        const cam = cameraObject([0, 1.2, 5.5]); cam.name = 'Cámara PNGTuber'; cam.tf.rx.v = -3; cam.tf.ry.v = 0;
+        sc.objects.push(cam); sc.camera = cam.id;
+      }
+      if (!sc.objects.some(o => o.name === 'Luz de escenario')) {
+        const spot = lightObject('spot', [1.5, 5, 3]); spot.name = 'Luz de escenario'; spot.tf.rx.v = -55; spot.tf.ry.v = 25;
+        spot.light!.intensity.v = 45; spot.light!.angle.v = 30; spot.light!.dist = 12; spot.light!.color.v = '#ffe8c8';
+        const rim = lightObject('point', [-2.5, 2.5, -1.5]); rim.name = 'Luz de contorno'; rim.light!.color.v = '#8a7dff'; rim.light!.intensity.v = 18;
+        sc.objects.push(spot, rim);
+      }
+      sc.fx = { ...defaultFx(), ...(sc.fx ?? {}), bloom: 0.35, vignette: 0.35, cones: 0.5, preview: true };
+      sc.audio = { ...defaultAudio(), ...(sc.audio ?? {}) };
+    });
+  }
+  /** Cambia la parte de un personaje (balanceo, punto de giro). */
+  setPart(ids: string[], patch: Partial<Part3> | null) {
+    this.edit('Parte del personaje', (_s, sc) => { for (const id of ids) { const o = objOf(sc, id); if (!o) continue; if (patch === null) delete o.part; else o.part = { sway: 0.6, ...(o.part ?? {}), ...patch }; } });
+  }
+  /** Audio de la escena (pistas, micrófono, umbral). */
+  setAudio(fn: (a: Audio3) => void, label = 'Audio', live = false) {
+    const f = (_s: Studio3, sc: Scene3) => { sc.audio = { ...defaultAudio(), ...(sc.audio ?? {}) }; fn(sc.audio); };
+    if (live) this.live(f); else this.edit(label, f);
   }
 
   // ---------------------------------------------------------------- tiempo y keyframes

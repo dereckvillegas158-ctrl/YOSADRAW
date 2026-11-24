@@ -1489,7 +1489,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
   private flatIds = new Set<string>();
   private flatSig = '';
   /** Lienzos compactados en uso y su vista (para la transformación CSS durante el zoom). */
-  private flatUsed: { canvas: HTMLCanvasElement; crisp: ViewTransform }[] = [];
+  private flatUsed: { canvas: HTMLCanvasElement; crisp: ViewTransform; after: string }[] = [];
 
   private flatCanvas(i: number) {
     let c = this.flatCanvases[i];
@@ -1530,7 +1530,13 @@ export class CanvasEngine extends Emitter<EngineEvents> {
     if (run.length >= 2) runs.push(run);
     if (!runs.length) { this.unflatten(); return; }
     const sig = `${crisp!.scale},${crisp!.rotation},${crisp!.x},${crisp!.y}|${this.back.width}x${this.back.height}|` + runs.map(r => r.map(l => { const v = this.layerViews.get(l.id)!; return `${l.id}:${v.ver ?? 0}:${v.canvas.style.opacity}:${v.canvas.style.mixBlendMode}`; }).join(',')).join('/');
-    if (sig === this.flatSig) { for (const f of this.flatUsed) this.flatTransform(f); return; }
+    if (sig === this.flatSig) {
+      // Misma composición, pero el orden de los lienzos puede haber cambiado (al cambiar
+      // propiedades de una capa se reordenan): cada tramo vuelve detrás de su última capa.
+      // Si no, el tramo de abajo (opaco, con el papel) podía quedar encima y tapar la capa activa.
+      for (const f of this.flatUsed) { const a = this.layerViews.get(f.after)?.canvas; if (a && a.nextElementSibling !== f.canvas) a.after(f.canvas); this.flatTransform(f); }
+      return;
+    }
     // Rehacer sólo con la vista quieta (el papel está dibujado con la vista actual).
     if (!crisp!.equals(this.view)) { this.unflatten(); return; }
     // Se rehace la composición.
@@ -1563,7 +1569,7 @@ export class CanvasEngine extends Emitter<EngineEvents> {
       g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
       // En el DOM, en el sitio de la última capa del tramo.
       this.layerViews.get(r[r.length - 1].id)!.canvas.after(c);
-      const f = { canvas: c, crisp: crisp!.clone() };
+      const f = { canvas: c, crisp: crisp!.clone(), after: r[r.length - 1].id };
       this.flatUsed.push(f);
       this.flatTransform(f);
     });

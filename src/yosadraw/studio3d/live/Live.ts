@@ -2,8 +2,9 @@ import * as C from 'cannon-es';
 import * as T from 'three';
 import { valueAt } from '../../motion/keys';
 import { bounds } from '../mesh';
-import { cardPhys, defaultCtrl, defaultFx, defaultPhys, effVisible, objOf, type Act3, type Ctrl3, type EventType, type Fx3, type Obj3, type Phys3, type TransType, type Rule3 } from '../model';
+import { cardPhys, defaultAudio, defaultCtrl, defaultFx, defaultPhys, effVisible, objOf, type Act3, type Ctrl3, type EventType, type Fx3, type Obj3, type Phys3, type TransType, type Rule3 } from '../model';
 import { round, type Studio3D } from '../Studio3D';
+import { LiveAudio } from './audio';
 import type { LiveHooks, View3D } from '../View3D';
 
 /**
@@ -110,7 +111,8 @@ export class Live {
 
   constructor(private s: Studio3D, private view: View3D) {
     const fx = { ...defaultFx(), ...(s.scene.fx ?? {}) };
-    this.hooks = { world: new Map(), hidden: new Set(), lightK: new Map(), lightColor: new Map(), matColor: new Map(), shake: new T.Vector3(), fx, time: 0, actor: null, cardTex: new Map(), cardAlpha: new Map() };
+    this.hooks = { world: new Map(), hidden: new Set(), lightK: new Map(), lightColor: new Map(), matColor: new Map(), shake: new T.Vector3(), fx, time: 0, actor: null, cardTex: new Map(), cardAlpha: new Map(), cardGlow: new Map() };
+    this.audio = new LiveAudio(() => s.scene.audio ?? defaultAudio());
   }
   get fx() { return this.hooks.fx; }
   get bodyCount() { return this.bodies.size; }
@@ -130,7 +132,8 @@ export class Live {
     if (this.fx.ground) { const g = new C.Body({ type: C.Body.STATIC, shape: new C.Plane(), material: new C.Material({ friction: 0.6, restitution: 0.5 }) }); g.quaternion.setFromEuler(-Math.PI / 2, 0, 0); this.world.addBody(g); }
     for (const o of sc.objects) if (o.phys && o.phys.body !== 'none' && effVisible(sc, o)) this.addBody(o);
     // Carteles (PNG) sin físicas: flotan y se pueden agarrar y balancear.
-    for (const o of sc.objects) if (o.card && !o.phys && !this.bodies.has(o.id) && effVisible(sc, o)) this.addBody(o);
+    // (las partes de un personaje no: siguen a su padre)
+    for (const o of sc.objects) if (o.card && !o.phys && !o.part && !this.bodies.has(o.id) && effVisible(sc, o)) this.addBody(o);
     // Personajes sin física: se les pone un cuerpo dinámico (de pie).
     for (const o of sc.objects) if (o.ctrl && !this.bodies.has(o.id) && effVisible(sc, o)) this.addBody(o, true);
     this.world.addEventListener('beginContact', (e: { bodyA: C.Body; bodyB: C.Body }) => this.contact(e.bodyA, e.bodyB));
@@ -146,6 +149,7 @@ export class Live {
     this.running = true;
     window.addEventListener('keydown', this.keyFn, true);
     window.addEventListener('keyup', this.keyUpFn, true);
+    void this.audio.start().then(() => { if (sc.audio?.mic && !this.audio.micOn) this.log('No se pudo usar el micrófono (permiso denegado o no hay micrófono).', true); });
     this.emit('start', {});
     this.last = performance.now();
     this.raf = requestAnimationFrame(t => this.loop(t));
@@ -158,6 +162,7 @@ export class Live {
     window.removeEventListener('keydown', this.keyFn, true);
     window.removeEventListener('keyup', this.keyUpFn, true);
     this.held.clear();
+    this.audio.stop();
     this.view.resetLive();
     this.onState();
   }
@@ -255,9 +260,12 @@ export class Live {
     if (n >= 4) this.acc = 0;
     this.lights();
     this.poseStep();
+    for (const e of this.audio.step(this.time, dt)) this.emit(e, {});
+    this.tuberStep(dt);
     this.tweenStep();
     this.shake(realDt);
     this.output(dt);
+    this.partsStep(dt);
     if (this.rec) this.record();
   }
 
@@ -440,12 +448,115 @@ export class Live {
       if (a.type === 'fade' || this.hooks.cardAlpha!.has(id)) this.hooks.cardAlpha!.set(id, k.a);
       if (u >= 1) { st.anim = null; st.mod = null; if (!a.swapped) this.swapPose(id, st, a.to); }
       // Dibujos sin cuerpo físico: se mueven aquí (los demás, en output()).
-      if (!this.bodies.has(id)) {
-        const o = objOf(this.s.scene, id);
-        if (o && st.anim) { const W = this.s.worldMatrix(o).clone(); if (st.mod) W.multiply(st.mod); this.hooks.world.set(id, W); }
-        // Al terminar: un fotograma en su sitio y luego vuelve a mandar el proyecto (keyframes).
-        else if (o) { this.hooks.world.set(id, this.s.worldMatrix(o).clone()); this.release.add(id); }
+    }
+  }
+
+  // ---------------------------------------------------------------- PNGTuber
+
+  /** Audio de la escena (pistas, micrófono, nivel y «hablando»). */
+  readonly audio: LiveAudio;
+  /** Estado PNGTuber de cada dibujo: textura mostrada, parpadeo y rebote al hablar. */
+  private tub = new Map<string, { shown: string | null | undefined; nextBlink: number; blinkEnd: number; amp: number; hc: number }>();
+  /** Matrices locales de cada dibujo (transición de pose × rebote al hablar). */
+  private mods = new Map<string, T.Matrix4>();
+  /** Balanceo de las partes (pelo, orejas…). */
+  private parts = new Map<string, { ang: number; angV: number; prev: T.Vector3 | null }>();
+  /** ¿Habla este dibujo? (con un actor elegido, sólo él; si no, todos). */
+  private speaks(id: string) {
+    if (!this.actor) return true;
+    let o = objOf(this.s.scene, id);
+    while (o) { if (o.id === this.actor.id) return true; o = o.parent ? objOf(this.s.scene, o.parent) : undefined; }
+    return false;
+  }
+  /**
+   * Boca, parpadeo y rebote: la textura mostrada sale de la expresión actual (pose)
+   * y de si habla o parpadea; el rebote y el aplastado se suman a la transición de
+   * pose y a la física. Sólo se cambia la textura cuando cambia algo.
+   */
+  private tuberStep(dt: number) {
+    const sc = this.s.scene, au = this.audio, th = sc.audio?.threshold ?? 0.08;
+    const lvl = au.active ? Math.max(0, (au.level - th) / Math.max(0.05, 1 - th)) : 0;
+    for (const o of sc.objects) {
+      const c = o.card;
+      if (!c) continue;
+      const tb = c.tuber, poseMod = this.poses.get(o.id)?.mod ?? null;
+      let st = this.tub.get(o.id);
+      if (tb) {
+        if (!st) {
+          const v = o.mesh?.v ?? []; let hc = 0; for (let i = 1; i < v.length; i += 3) hc = Math.max(hc, v[i]);
+          st = { shown: undefined, nextBlink: this.time + 1 + Math.random() * Math.max(0.5, tb.blinkEvery), blinkEnd: 0, amp: 0, hc };
+          this.tub.set(o.id, st);
+        }
+        const talking = au.talking && this.speaks(o.id);
+        // Expresión actual y sus variantes.
+        const cur = this.poses.get(o.id)?.cur ?? null;
+        const pose = cur ? c.poses?.find(p => p.tex === cur) : null;
+        const talkTex = pose ? pose.talk : tb.talk, blinkTex = pose ? pose.blink : tb.blink;
+        // (al menos un fotograma visible aunque vaya lento)
+        if (tb.blinkEvery > 0 && this.time >= st.nextBlink) { st.blinkEnd = this.time + Math.max(0.13, dt * 1.5); st.nextBlink = this.time + tb.blinkEvery * (0.6 + Math.random() * 0.8); }
+        const blinking = this.time < st.blinkEnd && !!blinkTex;
+        const show = blinking ? blinkTex! : talking && talkTex ? talkTex : cur;
+        // (comparando con lo que se muestra: un cambio de pose también la cambia)
+        if (this.hooks.cardTex!.get(o.id) !== show) this.hooks.cardTex!.set(o.id, show);
+        st.shown = show;
+        // Rebote al hablar (amplitud suavizada con el nivel).
+        const want = talking ? Math.min(1, 0.35 + lvl * 1.6) : 0;
+        st.amp += (want - st.amp) * Math.min(1, dt * (want > st.amp ? 18 : 7));
+        if (tb.glow > 0) this.hooks.cardGlow!.set(o.id, st.amp * tb.glow * 0.6);
       }
+      const amp = st && tb ? st.amp : 0;
+      if (amp > 1e-3 || poseMod) {
+        const m = this.mods.get(o.id) ?? new T.Matrix4();
+        if (poseMod) m.copy(poseMod); else m.identity();
+        if (amp > 1e-3 && tb && st) {
+          const wob = Math.sin(this.time * 18) * 0.5 + 0.5;
+          const dy = tb.bounce * 0.12 * st.hc * amp * (0.6 + 0.4 * wob);
+          const sy = 1 + tb.squash * 0.14 * amp * wob, sx = 1 - tb.squash * 0.07 * amp * wob;
+          m.multiply(this._m.makeTranslation(0, dy, 0)).multiply(this._m.makeScale(sx, sy, 1));
+        }
+        this.mods.set(o.id, m);
+      } else if (this.mods.has(o.id)) {
+        this.mods.delete(o.id);
+        // Sin cuerpo: un fotograma en su sitio y luego vuelve a mandar el proyecto (keyframes).
+        if (!this.bodies.has(o.id)) { this.hooks.world.set(o.id, this.s.worldMatrix(o).clone()); this.release.add(o.id); }
+      }
+      // Dibujos sin cuerpo físico: se mueven aquí (los demás, en output()).
+      const mm = this.mods.get(o.id);
+      if (mm && !this.bodies.has(o.id)) this.hooks.world.set(o.id, this.s.worldMatrix(o).clone().multiply(mm));
+    }
+  }
+  /**
+   * Partes que se balancean: siguen a su padre (su matriz se calcula desde la del
+   * padre en vivo) con un muelle que se inclina al acelerar, como pelo u orejas.
+   */
+  private partsStep(dt: number) {
+    if (dt <= 0) return;
+    const sc = this.s.scene, world = this.hooks.world;
+    for (const o of sc.objects) {
+      if (!o.part || o.part.sway <= 0 || !o.parent || this.bodies.has(o.id)) continue;
+      const PW = world.get(o.parent);
+      if (!PW) continue;
+      let st = this.parts.get(o.id);
+      if (!st) { st = { ang: 0, angV: 0, prev: null }; this.parts.set(o.id, st); }
+      const pos = this._v.setFromMatrixPosition(PW);
+      const right = this._s.setFromMatrixColumn(PW, 0).normalize();
+      const vx = st.prev ? pos.clone().sub(st.prev).dot(right) / dt : 0;
+      (st.prev ??= new T.Vector3()).copy(pos);
+      const target = Math.max(-0.9, Math.min(0.9, -vx * 0.14 * o.part.sway));
+      // Muelle amortiguado en pasos pequeños (estable aunque el fotograma sea largo).
+      for (let t = Math.min(dt, 0.25); t > 1e-6; t -= 1 / 120) {
+        const h = Math.min(1 / 120, t);
+        st.angV += (-(st.ang - target) * 60 - st.angV * 5) * h;
+        st.ang = Math.max(-1, Math.min(1, st.ang + st.angV * h));
+      }
+      const W = world.get(o.id) ?? new T.Matrix4();
+      // Gira alrededor de su punto de giro (donde se une al cuerpo).
+      const v = o.mesh?.v ?? [], pv = o.part.pivot ?? [0.5, 0];
+      const px = v.length >= 12 ? v[0] + (v[3] - v[0]) * pv[0] : 0, py = v.length >= 12 ? v[1] + (v[7] - v[1]) * pv[1] : 0;
+      W.copy(PW).multiply(this.s.localMatrix(o, this.s.time)).multiply(this._m.makeTranslation(px, py, 0)).multiply(this._m2.makeRotationZ(st.ang)).multiply(this._m.makeTranslation(-px, -py, 0));
+      const pm = this.mods.get(o.id);
+      if (pm) W.multiply(pm);
+      world.set(o.id, W);
     }
   }
   /** Pose actual de un dibujo (para el programa y las pruebas). */
@@ -546,7 +657,7 @@ export class Live {
     for (const b of this.bodies.values()) {
       if (b.ph.zone) continue;
       if (b.obj.gen?.type === 'terrain' && b.body.type === C.Body.STATIC) continue;
-      const pm = this.poses.get(b.id)?.mod;
+      const pm = this.mods.get(b.id);
       const prev = world.get(b.id);
       // Quieto: lo estático no se mueve y lo dormido sin gelatina ni transición tampoco.
       const still = b.body.type === C.Body.STATIC || (b.body.sleepState === C.Body.SLEEPING && Math.abs(b.jig) < 1e-4 && Math.abs(b.jigV) < 1e-3);
@@ -735,6 +846,8 @@ export class Live {
       case 'slowmo': { const prev = this.timescale; this.timescale = Math.max(0.05, Math.min(4, a.value ?? 0.3)); if (dur) this.after(dur, () => { this.timescale = prev; }); break; }
       case 'stop': this.stop(); break;
       case 'script': if (a.code) this.runScript(a.code, self); break;
+      case 'pose': { const o = this.s.obj(id); const c = o?.card; if (o && c) { const p = a.param ? c.poses?.find(x => x.name === a.param || x.id === a.param) : null; if (!a.param || p) this.setPose(o, p ? p.tex : null); } break; }
+      case 'audio': if (a.param) { if ((a.value ?? 1) > 0) this.audio.play(a.param); else this.audio.stopTrack(a.param); } else if ((a.value ?? 1) <= 0) this.audio.stopTrack(); break;
     }
   }
   private jump(b: BodyInfo, v: number) { if (b.grounded || !b.ctrl) { b.body.wakeUp(); b.body.velocity.y = v; } }
@@ -819,6 +932,14 @@ export class Live {
       gravity: (g: number) => live.act({ type: 'gravity', target: '', value: g }),
       slowmo: (k: number, dur = 0) => live.act({ type: 'slowmo', target: '', value: k, dur }),
       stop: () => live.stop(),
+      /** Audio (PNGTuber): nivel 0..1, si habla, reproducir y parar pistas, micrófono. */
+      audio: {
+        get level() { return live.audio.level; },
+        get talking() { return live.audio.talking; },
+        play: (name: string) => live.audio.play(name),
+        stop: (name?: string) => live.audio.stopTrack(name),
+        mic: (on = true) => live.audio.useMic(on),
+      },
       time: () => live.time,
       random: (a = 0, b = 1) => a + Math.random() * (b - a),
       log: (...m: unknown[]) => live.log(m.map(String).join(' ')),

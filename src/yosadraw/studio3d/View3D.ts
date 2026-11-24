@@ -21,6 +21,8 @@ export interface LiveHooks {
   actor?: string | null;
   /** Poses: textura de cada dibujo (null = la original) y su opacidad durante un fundido. */
   cardTex?: Map<string, string | null>; cardAlpha?: Map<string, number>;
+  /** Brillo extra de un dibujo (PNGTuber: se ilumina al hablar). */
+  cardGlow?: Map<string, number>;
 }
 
 const D2R = Math.PI / 180;
@@ -415,9 +417,9 @@ export class View3D {
       }
     }
     // Poses de los dibujos: textura y opacidad (sin tocar el proyecto).
-    if (L.cardTex?.size || L.cardAlpha?.size) for (const [id, n] of this.nodes) {
-      const tid = L.cardTex?.get(id), a = L.cardAlpha?.get(id);
-      if (tid === undefined && a === undefined) continue;
+    if (L.cardTex?.size || L.cardAlpha?.size || L.cardGlow?.size) for (const [id, n] of this.nodes) {
+      const tid = L.cardTex?.get(id), a = L.cardAlpha?.get(id), gl = L.cardGlow?.get(id);
+      if (tid === undefined && a === undefined && gl === undefined) continue;
       const m0 = n.mesh && (Array.isArray(n.mesh.material) ? n.mesh.material[0] : n.mesh.material) as T.MeshStandardMaterial | undefined;
       if (!m0) continue;
       if (tid !== undefined) {
@@ -427,6 +429,7 @@ export class View3D {
         if (dm && map && dm.map !== map) { dm.map = map; dm.needsUpdate = true; }
       }
       if (a !== undefined) { m0.opacity = a; m0.transparent = a < 0.999; m0.alphaTest = 0.5 * Math.max(0.02, a); }
+      if (gl !== undefined && m0.emissive) { m0.emissive.setScalar(Math.max(0, gl)); m0.emissiveIntensity = 1; if (m0.emissiveMap !== m0.map) { m0.emissiveMap = m0.map; m0.needsUpdate = true; } }
     }
     if (L.matColor.size) for (const [key, m] of this.mats) { const id = key.split('|')[1]; const c = L.matColor.get(id); if (c) (m as T.MeshStandardMaterial).color?.set(c); }
     this.root.updateMatrixWorld(true);

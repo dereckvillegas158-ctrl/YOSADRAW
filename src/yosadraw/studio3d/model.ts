@@ -46,14 +46,39 @@ export interface Obj3 {
     baseKey?: string; nextKey?: string;
     /** Transición al cambiar de pose. */
     trans?: { type: TransType; dur: number };
+    /** PNGTuber: boca, parpadeo y reacción al audio. */
+    tuber?: Tuber3;
   };
+  /** Parte de un personaje (hijo de otro dibujo): balanceo secundario. */
+  part?: Part3;
   /** Estilo propio (shaders) sólo para este objeto: se ve en los modos Materiales y Render, en vivo y en los renders. */
   style?: ObjStyle;
   /** Comportamiento de una luz en vivo. */
   lightFx?: 'none' | 'flicker' | 'pulse' | 'orbit';
 }
 /** Pose de un dibujo: textura y tecla para cambiar a ella en vivo. */
-export interface Pose3 { id: string; name: string; tex: string; key: string }
+export interface Pose3 {
+  id: string; name: string; tex: string; key: string;
+  /** PNGTuber: la misma expresión hablando (boca abierta) y con los ojos cerrados. */
+  talk?: string; blink?: string;
+}
+/**
+ * PNGTuber: cómo se comporta un dibujo con el audio. Boca abierta y ojos cerrados
+ * del dibujo original (las poses tienen los suyos), parpadeo, y rebote y aplastado
+ * al hablar (se suman a la física y a las transiciones).
+ */
+export interface Tuber3 {
+  talk?: string; blink?: string;
+  /** Cada cuántos segundos parpadea (0 = nunca). */
+  blinkEvery: number;
+  /** Rebote al hablar (salto, 0..1) y aplastado al hablar (squash, 0..1). */
+  bounce: number; squash: number;
+  /** Se ilumina un poco al hablar (0..1). */
+  glow: number;
+}
+export const defaultTuber = (): Tuber3 => ({ blinkEvery: 4, bounce: 0.35, squash: 0.25, glow: 0 });
+/** Parte de un personaje (pelo, orejas, accesorios): se balancea con el movimiento de su padre. */
+export interface Part3 { sway: number; /** Punto de giro (u, v de 0 a 1 desde abajo a la izquierda). */ pivot?: [number, number] }
 /** Transiciones entre poses (populares en animación 2D dentro de 3D). */
 export type TransType = 'squash' | 'flip' | 'spin' | 'pop' | 'fade' | 'jump' | 'shake' | 'cut';
 export const TRANS_TYPES: [TransType, string][] = [['squash', 'Squash and stretch (aplastar y estirar)'], ['flip', 'Volteo (girar como una carta)'], ['spin', 'Giro'], ['pop', 'Pop (encoger y rebotar)'], ['fade', 'Fundido'], ['jump', 'Salto'], ['shake', 'Sacudida'], ['cut', 'Corte (sin transición)']];
@@ -164,8 +189,10 @@ export interface Fx3 {
 export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, preview: false, godrays: 0, godColor: '#ffe2b0', cones: 0, bloom: 0, chroma: 0, glitch: 0, tint: '#ffffff', tintAmt: 0, vignette: 0, grain: 0, shadows: 2, squiggle: 0, squigFps: 8, squigSize: 40, ink: 0, inkColor: '#1a1420', posterize: 0, halftone: 0, pixel: 0, paint: 0, paper: 0, scan: 0, gravity: 9.81, ground: true, ao: 0, actorClick: true, cel: null, line: null });
 
 /** Disparador: cuando pasa algo, se hacen acciones. */
-export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release';
-export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script';
+/** Sucesos: también los del audio (empieza a hablar, se calla, sonido fuerte). */
+export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release' | 'talk' | 'quiet' | 'loud';
+/** Acciones: también cambiar de pose (expresión) y reproducir o parar un audio. */
+export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script' | 'pose' | 'audio';
 export interface Act3 { type: ActType; target: string; v?: [number, number, number]; value?: number; color?: string; param?: string; dur?: number; code?: string }
 export interface Rule3 { id: string; name: string; enabled: boolean; once: boolean; on: { type: EventType; t?: number; key?: string; a?: string; b?: string }; do: Act3[] }
 export interface Mat3 {
@@ -188,7 +215,17 @@ export interface Scene3 {
   fx?: Fx3;
   rules?: Rule3[];
   script?: string;
+  /** Audio del modo En vivo (PNGTuber): pistas y micrófono. */
+  audio?: Audio3;
 }
+/** Pista de audio importada (se guarda en el proyecto). */
+export interface Track3 { id: string; name: string; src: string; auto: boolean; loop: boolean; volume: number }
+/**
+ * Audio de la escena: pistas, micrófono y cómo se detecta que el personaje habla
+ * (umbral del nivel y cuánto aguanta la boca abierta tras callarse).
+ */
+export interface Audio3 { tracks: Track3[]; mic: boolean; threshold: number; hold: number; loud: number }
+export const defaultAudio = (): Audio3 => ({ tracks: [], mic: false, threshold: 0.08, hold: 0.18, loud: 0.45 });
 export interface RenderSet { w: number; h: number; quality: 1 | 2 | 3; shadows: 0 | 1 | 2 | 3; transparent: boolean; /** Aplicar los efectos y el estilo (shaders) de la escena al render. */ fx: boolean }
 export interface Studio3 {
   version: number;
@@ -492,6 +529,10 @@ export function normalizeStudio(v: unknown): Studio3 | null {
     if (sc.fx.line && !isObj(sc.fx.line)) sc.fx.line = null;
     sc.rules = Array.isArray(sc.rules) ? sc.rules.filter(r => isObj(r) && isObj(r.on) && Array.isArray(r.do)).map(r => ({ ...r, id: typeof r.id === 'string' ? r.id : sid('ru'), name: typeof r.name === 'string' ? r.name : 'Regla', enabled: r.enabled !== false, once: !!r.once, do: r.do.filter(isObj) as Act3[] })) : [];
     sc.script = typeof sc.script === 'string' ? sc.script : '';
+    if (sc.audio !== undefined) {
+      if (!isObj(sc.audio)) delete sc.audio;
+      else sc.audio = { ...defaultAudio(), ...sc.audio, tracks: Array.isArray(sc.audio.tracks) ? sc.audio.tracks.filter(t => isObj(t) && typeof t.src === 'string').map(t => ({ id: typeof t.id === 'string' ? t.id : sid('au'), name: typeof t.name === 'string' ? t.name : 'Audio', src: t.src, auto: t.auto !== false, loop: !!t.loop, volume: isNum(t.volume) ? t.volume : 1 })) : [] };
+    }
     for (const o of sc.objects) {
       if (o.phys !== undefined) o.phys = isObj(o.phys) ? { ...defaultPhys(), ...o.phys } : undefined;
       if (o.ctrl !== undefined) o.ctrl = isObj(o.ctrl) ? { ...defaultCtrl(), ...o.ctrl, lock: { ...defaultCtrl().lock, ...(isObj(o.ctrl.lock) ? o.ctrl.lock : {}) } } : undefined;
@@ -499,8 +540,10 @@ export function normalizeStudio(v: unknown): Studio3 | null {
       if (o.style?.cel) o.style.cel = isObj(o.style.cel) ? { ...defaultCel(), ...o.style.cel } : null;
       if (o.style?.line) o.style.line = isObj(o.style.line) ? { width: isNum(o.style.line.width) ? o.style.line.width : 2, color: typeof o.style.line.color === 'string' ? o.style.line.color : '#111111' } : null;
       if (o.card) {
-        if (o.card.poses !== undefined) o.card.poses = Array.isArray(o.card.poses) ? o.card.poses.filter(p => isObj(p) && typeof p.tex === 'string').map(p => ({ id: typeof p.id === 'string' ? p.id : sid('ps'), name: typeof p.name === 'string' ? p.name : 'Pose', tex: p.tex, key: typeof p.key === 'string' ? p.key : '' })) : [];
+        if (o.card.poses !== undefined) o.card.poses = Array.isArray(o.card.poses) ? o.card.poses.filter(p => isObj(p) && typeof p.tex === 'string').map(p => ({ id: typeof p.id === 'string' ? p.id : sid('ps'), name: typeof p.name === 'string' ? p.name : 'Pose', tex: p.tex, key: typeof p.key === 'string' ? p.key : '', ...(typeof p.talk === 'string' ? { talk: p.talk } : {}), ...(typeof p.blink === 'string' ? { blink: p.blink } : {}) })) : [];
         if (o.card.trans && !isObj(o.card.trans)) delete o.card.trans;
+        if (o.part !== undefined && !(isObj(o.part) && isNum(o.part.sway))) delete o.part;
+        if (o.card.tuber !== undefined) { if (isObj(o.card.tuber)) o.card.tuber = { ...defaultTuber(), ...o.card.tuber }; else delete o.card.tuber; }
       }
       if (o.style === undefined) delete o.style;
       if (o.phys === undefined) delete o.phys;

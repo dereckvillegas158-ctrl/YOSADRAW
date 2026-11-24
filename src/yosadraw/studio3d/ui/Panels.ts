@@ -35,6 +35,34 @@ export async function drawingToUrl(deps: PanelDeps, id: string): Promise<string>
   return canvasToUrl(c);
 }
 
+/**
+ * Capas de un dibujo de YOSADRAW por separado (para un personaje PNGTuber por
+ * partes): cada capa visible a tamaño completo (así encajan solas) y su punto de
+ * giro en el borde inferior de lo dibujado.
+ */
+export async function drawingLayersToUrls(deps: PanelDeps, id: string): Promise<{ aspect: number; layers: { src: string; name: string; pivot: [number, number] }[] }> {
+  const f = await readProject(await deps.projects.read(id), browserImageCodec);
+  const doc = f.doc;
+  const k = Math.min(1, 2048 / Math.max(doc.width, doc.height));
+  const vis = doc.layers.map(l => l.visible);
+  const out: { src: string; name: string; pivot: [number, number] }[] = [];
+  try {
+    for (let i = 0; i < doc.layers.length; i++) {
+      if (!vis[i]) continue;
+      doc.layers.forEach((l, j) => { l.visible = j === i; });
+      const fr = new FrameRenderer(deps.painter, doc, 64 * 1024 * 1024);
+      const c = fr.renderFrame(0, k, document.createElement('canvas'), { background: false, includeReference: false });
+      // Lo dibujado: caja de lo que no es transparente (si está vacía, se salta).
+      const g = c.getContext('2d', { willReadFrequently: true })!, d = g.getImageData(0, 0, c.width, c.height).data;
+      let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < c.height; y += 2) for (let x = 0; x < c.width; x += 2) if (d[(y * c.width + x) * 4 + 3] > 16) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < 0) continue;
+      out.push({ src: canvasToUrl(c), name: doc.layers[i].name, pivot: [Math.round(((x0 + x1) / 2 / c.width) * 1000) / 1000, Math.round((1 - y1 / c.height) * 1000) / 1000] });
+    }
+  } finally { doc.layers.forEach((l, j) => { l.visible = vis[j]; }); }
+  return { aspect: doc.width / Math.max(1, doc.height), layers: out };
+}
+
 // ---------------------------------------------------------------- piezas de interfaz
 
 export class Rows {
@@ -125,7 +153,7 @@ export class Rows {
 
 export class AddPanel {
   readonly el = h('div', { class: 'mo-insp-body s3-add' });
-  constructor(private s: Studio3D, private ui: { importModel: () => void; card: (src: 'drawing' | 'image') => void; house: () => void; picked: () => void }) { this.render(); s.on('tool', () => this.mark()); }
+  constructor(private s: Studio3D, private ui: { importModel: () => void; card: (src: 'drawing' | 'image' | 'layers' | 'tuber' | 'stage') => void; house: () => void; picked: () => void }) { this.render(); s.on('tool', () => this.mark()); }
   render() {
     const s = this.s;
     const grid = (items: [string, string, () => void, string][]) => h('div', { class: 's3-grid' }, ...items.map(([icon, label, run, title]) => h('button', { type: 'button', class: 's3-tile', title, on: { click: run } }, h('span', { html: icon }), h('span', null, label))));
@@ -152,6 +180,12 @@ export class AddPanel {
       h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Dibujos en 3D'),
         h('p', { class: 'ctl-help' }, 'Tus dibujos como carteles dentro de la escena: reciben las luces, las sombras y los efectos, y proyectan la sombra de su silueta.'),
         h('div', { class: 'mo-btnrow' }, h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.card('drawing') } }, 'Dibujo de YOSADRAW…'), h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.card('image') } }, 'Imagen como cartel…'))),
+      h('details', { class: 'mo-sec', open: true }, h('summary', null, 'PNGTuber'),
+        h('p', { class: 'ctl-help' }, 'Personajes 2D que hablan con tu voz o con un audio (boca, parpadeo, rebote), cambian de expresión con teclas o disparadores, se agarran y sacuden con el ratón y viven en la escena 3D con sus luces y efectos.'),
+        h('div', { class: 'mo-btnrow' },
+          h('button', { type: 'button', class: 'btn sm', title: 'Cada capa del dibujo es una parte: la de abajo es el cuerpo y las demás se balancean (pelo, orejas…)', on: { click: () => this.ui.card('layers') } }, 'Personaje por capas (dibujo)…'),
+          h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.card('tuber') } }, 'Personaje desde un PNG…'),
+          h('button', { type: 'button', class: 'btn sm', title: 'Cámara de frente, luz de escenario y efectos para grabar o emitir', on: { click: () => this.ui.card('stage') } }, 'Escenario PNGTuber'))),
       h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Importar'),
         h('div', { class: 'mo-btnrow' }, h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.importModel() } }, 'Modelo 3D (GLB, glTF, OBJ, STL)…'))));
     this.mark();
