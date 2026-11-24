@@ -11,6 +11,7 @@ import { Assistant } from './Assistant';
 import { I3 } from './icons3';
 import { AddPanel, Hierarchy, Inspector3, drawingLayersToUrls, drawingToUrl, editMenu, objectMenu, type PanelDeps } from './Panels';
 import { Live } from '../live/Live';
+import { TuberPanel } from './TuberPanel';
 import { setMeterSource } from './LivePanel';
 import { LiveGifRecorder, LiveRecorder, REC_SIZES, recDims, type LiveRec, type RecSize } from '../live/recorder';
 import { encodeGif } from '../../anim/webexport';
@@ -44,7 +45,10 @@ export class UI3D {
   private rails = new Map<Tool3, HTMLButtonElement>();
   private leftTabs = h('div', { class: 'mo-tabs', role: 'tablist' });
   private leftBody = h('div', { class: 'mo-leftbody' });
-  private leftTab: 'add' | 'scene' = 'add';
+  private leftTab: 'tuber' | 'add' | 'scene' = 'add';
+  /** Módulo PNGTuber (proyecto 2D con el motor del 3D Studio). */
+  private tuber!: TuberPanel;
+  private brand = h('span', { class: 'mo-brand' }, '3D STUDIO');
   private vbar: HTMLElement;
   private editbar: HTMLElement;
   private paintbar: HTMLElement;
@@ -68,6 +72,7 @@ export class UI3D {
     this.add = new AddPanel(s, { importModel: () => void this.importPick(), card: src => void this.addCard(src), house: () => { this.closeSheet(); this.house(); }, picked: () => { if (this.simple) { this.closeSheet(); toast('Toca el suelo del visor para ponerlo'); } } });
     this.hier = new Hierarchy(s);
     this.insp = new Inspector3(s, this.view, { ...deps, renderDialog: () => this.renderDialog(), play: () => void this.play() });
+    this.tuber = new TuberPanel(s, { card: src => void this.addCard(src), play: () => void this.play(), pick: k => this.insp.pickArt(k), frame: () => this.frame2D() });
     this.tl = new Timeline3(s);
     this.assist = new Assistant(s, () => { s.prefs.assistant = false; s.deps.persist(); this.syncAssist(); });
     this.view.onContext = (x, y) => objectMenu(s, x, y);
@@ -77,7 +82,7 @@ export class UI3D {
     this.undoBtn = ib(I3.undo, 'Deshacer (Ctrl+Z)', () => s.undo());
     this.redoBtn = ib(I3.redo, 'Rehacer (Ctrl+Mayús+Z)', () => s.redo());
     this.sceneSel.addEventListener('change', () => { if (this.sceneSel.value === '+') { s.addScene(); return; } s.openScene(this.sceneSel.value); });
-    const chip = h('button', { type: 'button', class: 'mo-chipbtn', title: 'Proyecto', on: { click: (e: Event) => deps.projectMenu(e.currentTarget as HTMLElement) } }, h('span', { class: 'mo-brand' }, '3D STUDIO'), this.nameEl, this.dirtyEl);
+    const chip = h('button', { type: 'button', class: 'mo-chipbtn', title: 'Proyecto', on: { click: (e: Event) => deps.projectMenu(e.currentTarget as HTMLElement) } }, this.brand, this.nameEl, this.dirtyEl);
     const top = h('header', { class: 'mo-top' },
       ib(I3.grid, 'Galería', () => deps.gallery()), chip, ib(I3.save, 'Guardar (Ctrl+S)', () => deps.save()),
       h('span', { class: 'mo-sep' }), this.undoBtn, this.redoBtn, h('span', { class: 'mo-sep' }), this.sceneSel,
@@ -163,7 +168,7 @@ export class UI3D {
     s.on('select', () => this.syncBars());
     s.on('view', () => this.syncBars());
     s.on('change', () => { this.syncTop(); this.syncBars(); });
-    s.on('open', on => { this.el.hidden = !on; if (on) { this.layout(); this.syncTop(); this.syncBars(); this.syncAssist(); s.setTool('move'); this.checkDrawings(); if (!s.prefs.tutorialSeen) { s.prefs.tutorialSeen = true; s.deps.persist(); toast('¿Primera vez en 3D? Pulsa ? (arriba) para el tutorial «Tu primera casa».', 'info', { label: 'Empezar', run: () => this.tutorial() }); } } });
+    s.on('open', on => { this.el.hidden = !on; if (on) { this.layout(); this.applyKind(); this.syncTop(); this.syncBars(); this.syncAssist(); s.setTool('move'); this.checkDrawings(); if (!s.prefs.tutorialSeen && !this.isTuber) { s.prefs.tutorialSeen = true; s.deps.persist(); toast('¿Primera vez en 3D? Pulsa ? (arriba) para el tutorial «Tu primera casa».', 'info', { label: 'Empezar', run: () => this.tutorial() }); } } });
     watchDevice(() => this.layout());
     window.addEventListener('focus', () => { if (s.active) this.checkDrawings(); });
   }
@@ -188,14 +193,33 @@ export class UI3D {
   }
   private renderLeft() {
     const t = this.leftTab;
-    this.leftTabs.replaceChildren(...([['add', 'Añadir'], ['scene', 'Escena']] as const).map(([id, l]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(t === id), on: { click: () => { this.leftTab = id; this.renderLeft(); } } }, l)));
-    this.leftBody.replaceChildren(t === 'add' ? this.add.el : this.hier.el);
+    const tabs: ['tuber' | 'add' | 'scene', string][] = this.isTuber ? [['tuber', 'PNGTuber'], ['add', 'Añadir'], ['scene', 'Escena']] : [['add', 'Añadir'], ['scene', 'Escena']];
+    this.leftTabs.replaceChildren(...tabs.map(([id, l]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(t === id), on: { click: () => { this.leftTab = id; this.renderLeft(); } } }, l)));
+    this.leftBody.replaceChildren(t === 'tuber' ? this.tuber.el : t === 'add' ? this.add.el : this.hier.el);
     if (t === 'scene') this.hier.render();
+    if (t === 'tuber') this.tuber.render();
+  }
+  get isTuber() { return this.s.active && this.s.s.kind === 'tuber'; }
+  /** PNGTuber: vista plana de frente con los personajes encuadrados. */
+  private frame2D() {
+    this.view.setView('front');
+    const chars = this.s.scene.objects.filter(o => o.card && !o.part);
+    if (chars.length) { const prev = this.s.sel; this.s.select(chars.map(o => o.id)); this.view.frameSelected(); this.s.select(prev); }
+    else this.view.frameAll();
+  }
+  /** Al abrir: módulo PNGTuber (2D) o 3D Studio. */
+  private applyKind() {
+    const t = this.isTuber;
+    this.el.classList.toggle('s3-tuber', t);
+    this.brand.textContent = t ? 'PNGTUBER' : '3D STUDIO';
+    this.leftTab = t ? 'tuber' : this.leftTab === 'tuber' ? 'add' : this.leftTab;
+    this.renderLeft();
+    if (t) { if (this.s.prefs.shading !== 'render') this.s.setShading('render'); this.frame2D(); }
   }
   private sheetClose: (() => void) | null = null;
   private closeSheet() { this.sheetClose?.(); this.sheetClose = null; }
   private sheet(title: string, el: HTMLElement) { openSheet(title, close => { this.sheetClose = close; return [h('div', { class: 'mo-sheetbody' }, el)]; }); }
-  private syncAssist() { this.assist.el.hidden = !this.s.prefs.assistant; this.assist.render(); }
+  private syncAssist() { this.assist.el.hidden = !this.s.prefs.assistant || this.isTuber; this.assist.render(); }
   private syncTop() {
     const s = this.s, hs = s.hist;
     if (!hs) return;

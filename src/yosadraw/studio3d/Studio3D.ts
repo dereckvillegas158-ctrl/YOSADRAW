@@ -684,7 +684,7 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
       const tex = sid('tx');
       const mat = newMaterial(l.name, { color: '#ffffff', rough: 0.85 });
       mat.tex = tex; mat.cut = true;
-      const o = newObject('mesh', i === 0 ? name : l.name, [0, 0, i === 0 ? 0 : round(0.004 * i)]);
+      const o = newObject('mesh', i === 0 ? name : l.name, [0, 0, i === 0 ? 0 : round(0.03 * i)]);
       o.mesh = quad(); o.mats = [mat.id];
       o.card = { billboard: false };
       if (i === 0) { o.phys = cardPhys(); o.card.tuber = defaultTuber(); }

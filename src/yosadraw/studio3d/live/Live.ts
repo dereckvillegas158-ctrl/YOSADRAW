@@ -206,6 +206,8 @@ export class Live {
       body.linearFactor.set(ctrl.lock.x ? 0 : 1, ctrl.lock.y ? 0 : 1, ctrl.lock.z ? 0 : 1);
       body.allowSleep = false;
     }
+    // PNGTuber (2D): todo se mueve en el plano de la pantalla.
+    if (s.s.kind === 'tuber' && type === 'dynamic') body.linearFactor.z = 0;
     body.updateMassProperties();
     this.world.addBody(body);
     const info: BodyInfo = { id: o.id, obj: o, body, center, scale: sc, rot0: q.clone(), ctrl, origin: wc.clone(), patrolSign: 1, target: null, yaw: 0, jig: 0, jigV: 0, prevV: new T.Vector3(), grounded: false, kinematic: type === 'kinematic', free: 0, ph, tilt: 0, tiltV: 0, tiltAxis: new T.Vector3(0, 0, -1), tiltPivot: new T.Vector3() };

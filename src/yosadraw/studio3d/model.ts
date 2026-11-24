@@ -209,7 +209,13 @@ export interface Tex3 { id: string; name: string; src: string; project?: { id: s
 export interface Scene3 {
   id: string; name: string; objects: Obj3[];
   camera: string | null;
-  env: { bg: string; transparent: boolean; envLight: number; exposure: number; fog: number };
+  env: {
+    bg: string; transparent: boolean; envLight: number; exposure: number; fog: number;
+    /** Imagen de fondo (escenario dibujado), cubre todo el encuadre y no se mueve. */
+    bgTex?: string | null;
+    /** Sin luces: los dibujos se ven con sus colores originales (2D). */
+    unlit?: boolean;
+  };
   fps: number; dur: number;
   /** Modo En vivo: efectos, disparadores y programa. */
   fx?: Fx3;
@@ -236,6 +242,8 @@ export interface Studio3 {
   render: RenderSet;
   time: number;
   grid: { size: number; snap: boolean; show: boolean; axes: boolean };
+  /** Tipo de proyecto: 3D Studio o PNGTuber (2D, con el mismo motor). */
+  kind?: 'tuber';
 }
 
 let seq = 0;
@@ -388,6 +396,29 @@ export function newScene(name: string, mats: Mat3[]): Scene3 {
   return sc;
 }
 
+/** Fondos de un proyecto PNGTuber. */
+export const TUBER_BG: [string, string, string][] = [['green', 'Pantalla verde (para OBS)', '#00b140'], ['blue', 'Pantalla azul', '#0047bb'], ['magenta', 'Pantalla magenta', '#ff00ff'], ['dark', 'Escenario oscuro', '#1d1830'], ['transparent', 'Transparente (renders)', '#00b140']];
+/**
+ * Proyecto PNGTuber: todo en 2D. Fondo de color (pantalla verde por defecto) o
+ * dibujado, sin suelo, sin luces (colores originales) y vista plana de frente; el
+ * motor es el del 3D Studio (física, audio, poses, efectos y grabación).
+ */
+export function newTuberStudio(bg = 'green'): Studio3 {
+  const st = newStudio();
+  st.kind = 'tuber';
+  st.grid = { ...st.grid, show: false, axes: false };
+  const sc = st.scenes[0];
+  sc.name = 'Escenario';
+  const col = TUBER_BG.find(b => b[0] === bg)?.[2] ?? '#00b140';
+  sc.env = { ...sc.env, bg: col, transparent: bg === 'transparent', unlit: true, envLight: 1 };
+  // Sin suelo ni cubo; una luz suave por si se activan las luces.
+  sc.objects = sc.objects.filter(o => o.kind === 'light');
+  sc.camera = null;
+  sc.fx = { ...defaultFx(), shadows: 0, ground: false, adaptive: true };
+  sc.audio = defaultAudio();
+  return st;
+}
+
 export function newStudio(): Studio3 {
   const base = newMaterial('Material', { color: '#9d8cff', rough: 0.45 });
   const floor = newMaterial('Suelo', { color: '#8a8597', rough: 0.9 });
@@ -491,6 +522,7 @@ export function normalizeStudio(v: unknown): Studio3 | null {
   const s = clone(v) as unknown as Studio3;
   const base = newStudio();
   s.version = S3D_VERSION;
+  if (s.kind !== 'tuber') delete s.kind;
   s.materials = Array.isArray(s.materials) ? s.materials.filter(m => isObj(m) && typeof m.id === 'string') : [];
   for (const m of s.materials) {
     const d = newMaterial(m.name ?? 'Material');
@@ -562,4 +594,8 @@ export function normalizeStudio(v: unknown): Studio3 | null {
 }
 
 /** Resumen para la galería. */
-export const studioMeta = (s: Studio3) => ({ scenes: s.scenes.length, objects: s.scenes.reduce((a, sc) => a + sc.objects.filter(o => o.kind === 'mesh').length, 0) });
+export const studioMeta = (s: Studio3) => ({
+  scenes: s.scenes.length, objects: s.scenes.reduce((a, sc) => a + sc.objects.filter(o => o.kind === 'mesh').length, 0),
+  // PNGTuber: personajes (dibujos que no son partes de otro).
+  ...(s.kind === 'tuber' ? { tuber: s.scenes.reduce((a, sc) => a + sc.objects.filter(o => o.card && !o.part).length, 0) } : {}),
+});

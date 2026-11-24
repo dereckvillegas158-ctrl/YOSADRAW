@@ -372,6 +372,7 @@ Proyectos 3D dentro de YOSADRAW («Nuevo proyecto → 3D»): modelado poligonal,
 | Interfaz (paneles, jerarquía, línea de tiempo, asistente) | `src/yosadraw/studio3d/ui/*` |
 | Modo En vivo: física (cannon-es), personajes, actores con tecla, ratón, disparadores, programa, grabación | `src/yosadraw/studio3d/live/Live.ts` |
 | Cel shading y lineart de caricatura | `src/yosadraw/studio3d/toon.ts` |
+| Módulo PNGTuber 2D (panel, fondo, vista plana) | `src/yosadraw/studio3d/ui/TuberPanel.ts` |
 | PNGTuber: audio en vivo (pistas, micrófono, hablar) | `src/yosadraw/studio3d/live/audio.ts` |
 | Grabación en vivo (MP4 con audio, GIF) | `src/yosadraw/studio3d/live/recorder.ts` |
 | Efectos en tiempo real (luz volumétrica, bloom, aberración, glitch, tinte) y estilos de render (squiggle, tinta, óleo, cómic, píxel, papel, TV), también por objeto; volumen (oclusión ambiental); haces de luz con sombra | `src/yosadraw/studio3d/live/fx.ts` |

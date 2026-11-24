@@ -65,7 +65,7 @@ export interface ProjectMeta {
   /** Vídeo de YOSADRAW MOTION: FPS y duración en segundos (null = no es vídeo). */
   motion?: { fps: number; dur: number } | null;
   /** Proyecto 3D: escenas y objetos (null = no es 3D). */
-  s3d?: { scenes: number; objects: number } | null;
+  s3d?: { scenes: number; objects: number; /** PNGTuber: número de personajes. */ tuber?: number } | null;
   /** Formato de origen (yosa, png, jpeg, webp) si se creó importando. */
   source: string;
   /** Guardados realizados (detecta que otra ventana guardó antes: no se sobrescribe sin preguntar). */
@@ -235,6 +235,8 @@ function s3dOut(doc: Document) {
   const s = doc.s3d!;
   const used = new Set(s.materials.map(m => m.tex).filter(Boolean));
   // Poses de los dibujos (cambian en vivo).
+  // Fondos dibujados (PNGTuber).
+  for (const sc of s.scenes) if (sc.env.bgTex) used.add(sc.env.bgTex);
   for (const sc of s.scenes) for (const o of sc.objects) {
     for (const p of o.card?.poses ?? []) { used.add(p.tex); if (p.talk) used.add(p.talk); if (p.blink) used.add(p.blink); }
     // PNGTuber: boca abierta y ojos cerrados del original.
@@ -373,7 +375,7 @@ export function normalizeMeta(v: unknown, fallbackId = ''): ProjectMeta {
     layers: num(o.layers, 1),
     anim: o.anim && typeof o.anim === 'object' ? { frames: Math.max(1, Math.round(num((o.anim as J).frames, 1))), fps: Math.max(1, num((o.anim as J).fps, 12)) } : null,
     motion: o.motion && typeof o.motion === 'object' ? { fps: Math.max(1, num((o.motion as J).fps, 30)), dur: Math.max(0, num((o.motion as J).dur, 0)) } : null,
-    s3d: o.s3d && typeof o.s3d === 'object' ? { scenes: Math.max(1, num((o.s3d as J).scenes, 1)), objects: Math.max(0, num((o.s3d as J).objects, 0)) } : null,
+    s3d: o.s3d && typeof o.s3d === 'object' ? { scenes: Math.max(1, num((o.s3d as J).scenes, 1)), objects: Math.max(0, num((o.s3d as J).objects, 0)), ...(typeof (o.s3d as J).tuber === 'number' ? { tuber: Math.max(0, num((o.s3d as J).tuber, 0)) } : {}) } : null,
     source: str(o.source, 'yosa'), rev: num(o.rev, 0), app: str(o.app, ''),
   };
 }

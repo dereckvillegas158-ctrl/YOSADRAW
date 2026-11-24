@@ -295,6 +295,7 @@ export class View3D {
     const sh = live?.shake;
     if (sh && sh.lengthSq() > 0) cam.position.add(sh);
     // Estilos propios de los objetos: en los modos Materiales y Render (y en vivo).
+    this.fitBackground((this.el.clientWidth || 1) / (this.el.clientHeight || 1));
     const objStyles = live || this.mode === 'material' || this.mode === 'render' ? this.styleSlots() : this.styleSlots(true);
     this.actorRing(live);
     if (FxPipeline.needed(fx, objStyles.length)) {
@@ -429,7 +430,8 @@ export class View3D {
         if (dm && map && dm.map !== map) { dm.map = map; dm.needsUpdate = true; }
       }
       if (a !== undefined) { m0.opacity = a; m0.transparent = a < 0.999; m0.alphaTest = 0.5 * Math.max(0.02, a); }
-      if (gl !== undefined && m0.emissive) { m0.emissive.setScalar(Math.max(0, gl)); m0.emissiveIntensity = 1; if (m0.emissiveMap !== m0.map) { m0.emissiveMap = m0.map; m0.needsUpdate = true; } }
+      if (gl !== undefined && (m0 as unknown as T.MeshBasicMaterial).isMeshBasicMaterial) (m0 as unknown as T.MeshBasicMaterial).color.setScalar(1 + Math.max(0, gl));
+      else if (gl !== undefined && m0.emissive) { m0.emissive.setScalar(Math.max(0, gl)); m0.emissiveIntensity = 1; if (m0.emissiveMap !== m0.map) { m0.emissiveMap = m0.map; m0.needsUpdate = true; } }
     }
     if (L.matColor.size) for (const [key, m] of this.mats) { const id = key.split('|')[1]; const c = L.matColor.get(id); if (c) (m as T.MeshStandardMaterial).color?.set(c); }
     this.root.updateMatrixWorld(true);
@@ -506,7 +508,9 @@ export class View3D {
     const s = this.s, mode = this.mode, t = s.time;
     const m = s.mat(id);
     if (mode === 'wire' || mode === 'solid') cel = null;
-    const key = `${mode}|${id}|${op < 1 ? op.toFixed(3) : 1}${cel ? `|cel|${celKey(cel)}` : ''}`;
+    // 2D (PNGTuber): sin luces, el dibujo con sus colores originales (salvo con cel shading).
+    const unlit = !!s.scene.env.unlit && !cel && (mode === 'material' || mode === 'render');
+    const key = `${mode}|${id}|${op < 1 ? op.toFixed(3) : 1}${cel ? `|cel|${celKey(cel)}` : ''}${unlit ? '|flat' : ''}`;
     let out = this.mats.get(key);
     const col = m ? valueAt(m.color, t) : '#cccccc';
     if (mode === 'wire') {
@@ -518,6 +522,23 @@ export class View3D {
       if (!out) { out = new T.MeshStandardMaterial({ roughness: 0.75, metalness: 0 }); this.mats.set(key, out); }
       const mm = out as T.MeshStandardMaterial;
       mm.color.set('#c8c3d4'); mm.opacity = op * (m ? valueAt(m.opacity, t) : 1); mm.transparent = mm.opacity < 1;
+      return out;
+    }
+    if (unlit) {
+      if (!(out instanceof T.MeshBasicMaterial)) { out?.dispose(); out = new T.MeshBasicMaterial(); this.mats.set(key, out); }
+      const mb = out as T.MeshBasicMaterial;
+      mb.color.set(col);
+      const o = op * (m ? valueAt(m.opacity, t) : 1);
+      mb.opacity = o; mb.transparent = o < 0.999; mb.depthWrite = o > 0.6;
+      let map: T.Texture | null = null;
+      if (m?.tex) { const tx = s.s.textures.find(x => x.id === m.tex); if (tx) map = this.tex.image(tx.id, tx.src); }
+      else if (m?.proc) map = this.tex.procedural(m.proc);
+      if (map) map.repeat.set(m!.texScale, m!.texScale);
+      if (mb.map !== map) { mb.map = map; mb.needsUpdate = true; }
+      const cut = !!m?.cut;
+      if (mb.alphaTest !== (cut ? 0.5 : 0)) { mb.alphaTest = cut ? 0.5 : 0; mb.needsUpdate = true; }
+      mb.side = cut ? T.DoubleSide : T.FrontSide;
+      if (cut) { mb.transparent = o < 0.999; mb.depthWrite = true; }
       return out;
     }
     const toon = !!m?.toon || !!cel;
@@ -555,9 +576,11 @@ export class View3D {
     this.rig.visible = !lit;
     this.scene.environment = lit ? this.envTex : null;
     this.scene.environmentIntensity = sc.env.envLight;
-    this.scene.background = sc.env.transparent ? null : new T.Color(sc.env.bg);
+    this.scene.background = sc.env.transparent ? null : this.bgTexture(sc.env.bgTex) ?? new T.Color(sc.env.bg);
     this.scene.fog = sc.env.fog > 0 ? new T.FogExp2(sc.env.bg, sc.env.fog * 0.05) : null;
     this.renderer.toneMappingExposure = sc.env.exposure;
+    // 2D (PNGTuber, sin luces): colores exactos (la pantalla verde y el dibujo tal cual).
+    this.renderer.toneMapping = sc.env.unlit ? T.NoToneMapping : T.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = mode === 'render' && (fx?.shadows ?? 2) > 0;
     const sel = new Set(s.sel);
     for (const o of sc.objects) {
@@ -1191,7 +1214,9 @@ export class View3D {
     for (const n of this.nodes.values()) if (n.light && 'shadow' in n.light && (n.light as T.DirectionalLight).shadow) { const l = n.light as T.DirectionalLight; l.castShadow = l.castShadow && sh > 0; l.shadow.mapSize.set(size, size); l.shadow.map?.dispose(); l.shadow.map = null as never; }
     if (o.transparent) this.scene.background = null;
     let cam: T.Camera | null = o.useView ? null : this.sceneCamFor(W / H);
+    if (!cam && s.s.kind === 'tuber') cam = this.flatCamFor(W / H);
     if (!cam) { const c = this.persp.clone(); c.aspect = W / H; c.updateProjectionMatrix(); cam = c; }
+    this.fitBackground(W / H);
     // Efectos y estilo (shaders) de la escena, si están activados para el render.
     const fx = (o.fx ?? s.s.render.fx !== false) ? { ...defaultFx(), ...(s.scene.fx ?? {}) } : null;
     // Todo render pasa por la misma cadena (tono y exposición como en la vista); los
@@ -1238,6 +1263,14 @@ export class View3D {
     }
     return out;
   }
+  /** PNGTuber: la vista plana actual (ortográfica de frente) con la forma del render. */
+  private flatCamFor(aspect: number): T.OrthographicCamera {
+    const o = this.ortho, c = o.clone();
+    const hh = (o.top - o.bottom) / 2, cy = (o.top + o.bottom) / 2, cx = (o.right + o.left) / 2;
+    c.top = cy + hh; c.bottom = cy - hh; c.left = cx - hh * aspect; c.right = cx + hh * aspect;
+    c.updateProjectionMatrix(); c.updateMatrixWorld(true);
+    return c;
+  }
   private sceneCamFor(aspect: number): T.PerspectiveCamera | null {
     const id = this.s.scene.camera, n = id ? this.nodes.get(id) : null;
     if (!n?.cam) return null;
@@ -1252,6 +1285,24 @@ export class View3D {
   nodeOf(id: string) { return this.nodes.get(id) ?? null; }
   /** Copia creada en vivo (se mueve con la física y desaparece al parar). */
   registerExtra(id: string, node: T.Object3D) { const mesh = node.children.find(c => (c as T.Mesh).isMesh) as T.Mesh | undefined; this.nodes.set(id, { node: node as T.Group, mesh }); }
+  /** Fondo dibujado (PNGTuber): la textura y su encaje para cubrir el encuadre sin deformarse. */
+  private bgTexture(id: string | null | undefined): T.Texture | null {
+    if (!id) return null;
+    const t = this.poseTexture(id);
+    if (!t) return null;
+    t.colorSpace = T.SRGBColorSpace;
+    return t;
+  }
+  /** Ajusta el fondo dibujado a la forma del lienzo (cubrir, centrado). */
+  private fitBackground(aspect: number) {
+    const bg = this.scene.background as T.Texture | null;
+    if (!bg || !(bg as T.Texture).isTexture) return;
+    const img = bg.image as { width?: number; height?: number } | undefined;
+    if (!img?.width || !img.height) return;
+    const ia = img.width / img.height;
+    if (aspect > ia) { bg.repeat.set(1, ia / aspect); bg.offset.set(0, (1 - ia / aspect) / 2); }
+    else { bg.repeat.set(aspect / ia, 1); bg.offset.set((1 - aspect / ia) / 2, 0); }
+  }
   /** Textura de una pose (se carga una vez y se reutiliza). */
   poseTexture(texId: string): T.Texture | null {
     const tx = this.s.s.textures.find(x => x.id === texId);
