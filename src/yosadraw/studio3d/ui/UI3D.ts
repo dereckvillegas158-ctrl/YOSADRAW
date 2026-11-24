@@ -49,6 +49,7 @@ export class UI3D {
   /** Módulo PNGTuber (proyecto 2D con el motor del 3D Studio). */
   private tuber!: TuberPanel;
   private brand = h('span', { class: 'mo-brand' }, '3D STUDIO');
+  private wasTuber = false;
   private vbar: HTMLElement;
   private editbar: HTMLElement;
   private paintbar: HTMLElement;
@@ -168,7 +169,9 @@ export class UI3D {
     s.on('select', () => this.syncBars());
     s.on('view', () => this.syncBars());
     s.on('change', () => { this.syncTop(); this.syncBars(); });
-    s.on('open', on => { this.el.hidden = !on; if (on) { this.layout(); this.applyKind(); this.syncTop(); this.syncBars(); this.syncAssist(); s.setTool('move'); this.checkDrawings(); if (!s.prefs.tutorialSeen && !this.isTuber) { s.prefs.tutorialSeen = true; s.deps.persist(); toast('¿Primera vez en 3D? Pulsa ? (arriba) para el tutorial «Tu primera casa».', 'info', { label: 'Empezar', run: () => this.tutorial() }); } } });
+    // Al cerrar o cambiar de proyecto, el modo En vivo se para (si no, seguía dibujando el
+    // proyecto anterior encima de todo y la interfaz no respondía).
+    s.on('open', on => { this.endLive(); this.el.hidden = !on; if (on) { this.layout(); this.applyKind(); this.syncTop(); this.syncBars(); this.syncAssist(); s.setTool('move'); this.checkDrawings(); if (!s.prefs.tutorialSeen && !this.isTuber) { s.prefs.tutorialSeen = true; s.deps.persist(); toast('¿Primera vez en 3D? Pulsa ? (arriba) para el tutorial «Tu primera casa».', 'info', { label: 'Empezar', run: () => this.tutorial() }); } } });
     watchDevice(() => this.layout());
     window.addEventListener('focus', () => { if (s.active) this.checkDrawings(); });
   }
@@ -215,6 +218,9 @@ export class UI3D {
     this.leftTab = t ? 'tuber' : this.leftTab === 'tuber' ? 'add' : this.leftTab;
     this.renderLeft();
     if (t) { if (this.s.prefs.shading !== 'render') this.s.setShading('render'); this.frame2D(); }
+    // Después de un PNGTuber, un proyecto 3D vuelve a la vista en perspectiva.
+    else if (this.wasTuber) { this.view.setView('persp'); this.view.frameAll(); }
+    this.wasTuber = t;
   }
   private sheetClose: (() => void) | null = null;
   private closeSheet() { this.sheetClose?.(); this.sheetClose = null; }
@@ -356,6 +362,19 @@ export class UI3D {
     this.renderHud();
     this.view.el.focus?.();
     if (!live.bodyCount && !(s.scene.rules?.length) && !code) toast('Consejo: en Objeto → «Física y control» haz los objetos dinámicos o personajes para que se muevan y se puedan agarrar.');
+  }
+  /** Termina el modo En vivo sin preguntar (al cerrar o cambiar de proyecto). */
+  private endLive() {
+    const live = this.live;
+    this.el.classList.remove('s3-playing', 's3-clean');
+    this.hud.hidden = true;
+    if (!live) return;
+    if (this.video) this.stopVideo();
+    if (live.recording) live.stopRec(false);
+    live.onState = () => {};
+    live.stop();
+    this.live = null;
+    this.playBtn.innerHTML = '▶ <span>En vivo</span>';
   }
   private async stopLive() {
     const live = this.live;

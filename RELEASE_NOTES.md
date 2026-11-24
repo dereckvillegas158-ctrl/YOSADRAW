@@ -14,6 +14,9 @@ Simulación de líquidos en tiempo real en el modo **En vivo**: **Añadir → L�
 - **Rendimiento:** partículas ligeras con rejilla de vecinos y un solo dibujo por emisor; las gotas que se quedan quietas se convierten en manchas (menos partículas), y el número máximo depende de la calidad de los efectos (700, 1600 o 3200 gotas).
 - Se graban con el vídeo y el GIF del modo En vivo.
 
+### Corrección
+- **3D: al crear o abrir otro proyecto ya no se queda la imagen del anterior.** Si salías a la galería con el modo En vivo en marcha (sobre todo con la interfaz oculta), seguía dibujando el proyecto anterior encima de todo y no se podía hacer nada. Ahora el modo En vivo se para al cerrar o cambiar de proyecto (sin preguntar; si se estaba grabando un vídeo, se guarda), y un proyecto 3D abierto después de un PNGTuber vuelve a la vista en perspectiva.
+
 ### Versión anterior: YOSADRAW 1.18.0
 
 ### Descargas

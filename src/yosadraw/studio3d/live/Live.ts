@@ -248,6 +248,8 @@ export class Live {
 
   private loop(now: number) {
     if (!this.running) return;
+    // El proyecto se cerró: no seguir dibujando nada.
+    if (!this.s.active) { this.stop(); return; }
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     const t0 = performance.now();
