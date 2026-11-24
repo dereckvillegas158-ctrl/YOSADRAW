@@ -9,7 +9,7 @@ import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
 import * as M from './mesh';
 import {
-  History3, PRIMS, cameraObject, cardPhys, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, LIQUIDS, PRIMS, cameraObject, cardPhys, defaultFluid, type Fluid3, type LiquidType, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
@@ -699,6 +699,32 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
     this.sel = [body.id];
     this.emit('select', undefined);
     return body;
+  }
+  /** Emisor de líquido nuevo (una esfera pequeña que no se ve en vivo). */
+  addFluid(liquid: LiquidType, at: [number, number, number] = [0, 1.5, 0]) {
+    const mat = newMaterial(LIQUIDS[liquid].label, { color: LIQUIDS[liquid].color, rough: 0.2 });
+    const o = primObject('sphere', mat.id, at, { r: 0.12, seg: 16, rings: 8 });
+    o.name = `Líquido: ${LIQUIDS[liquid].label}`;
+    o.fluid = defaultFluid(liquid);
+    o.castShadow = false;
+    this.edit(`Añadir ${LIQUIDS[liquid].label.toLowerCase()}`, (st, sc) => { st.materials.push(mat); o.name = this.uniqueName(sc, o.name); sc.objects.push(o); });
+    this.sel = [o.id];
+    this.emit('select', undefined);
+    return o;
+  }
+  /** Cambia el líquido de los objetos elegidos (null = quitarlo). */
+  setFluid(ids: string[], patch: Partial<Fluid3> | null, live = false) {
+    const fn = (_s: Studio3, sc: Scene3) => {
+      for (const id of ids) {
+        const o = objOf(sc, id); if (!o) continue;
+        if (patch === null) { delete o.fluid; continue; }
+        const prev = o.fluid;
+        // Otro líquido: sus valores (color, espesor, manchas, estilo), conservando caudal y dirección.
+        if (prev && patch.liquid && patch.liquid !== prev.liquid) { const d = defaultFluid(patch.liquid); o.fluid = { ...d, rate: prev.rate, burst: prev.burst, speed: prev.speed, spread: prev.spread, dir: prev.dir, showSource: prev.showSource, ...patch }; }
+        else o.fluid = { ...defaultFluid(patch.liquid ?? prev?.liquid ?? 'blood'), ...(prev ?? {}), ...patch };
+      }
+    };
+    if (live) this.live(fn); else this.edit('Líquido', fn);
   }
   /** Guarda una imagen como textura del proyecto y la usa (boca, ojos, variantes de pose). */
   addTexture(src: string, name: string, project: { id: string; rev: number } | null, use: (texId: string, sc: Scene3) => void, label = 'Imagen') {
