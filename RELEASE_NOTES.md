@@ -1,4 +1,20 @@
-## YOSADRAW 1.18.0
+## YOSADRAW 1.19.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.19.0-x64.exe` (instalador), `YOSADRAW-1.19.0-x64-portable.exe` o `YOSADRAW-1.19.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.19.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo en 3D Studio: líquidos
+Simulación de líquidos en tiempo real en el modo **En vivo**: **Añadir → Líquidos**.
+- **Líquidos:** **sangre** (late como un corazón a chorros, se oscurece y deja charcos y salpicaduras), **agua** (clara y transparente; sus manchas se secan), **lava** (brilla), **slime** (espeso y pegajoso), **pintura** y **tinta**.
+- **Estilos:** **realista** (brillo húmedo), **cel shading** (tonos y contorno), **caricatura** (color plano, contorno grueso y brillo blanco), **tinta** (manga) y **neón** (brilla con el resplandor). Cualquier líquido con cualquier estilo y color.
+- **Comportamiento:** caen con la gravedad, se estiran como lágrimas al volar, se juntan en hilos y charcos (cohesión), son más o menos espesos (viscosidad), chocan con el suelo y con los objetos con física (también girados) y dejan **manchas** donde caen.
+- **Emisores:** cualquier objeto puede soltar líquido (Objeto → «Líquido»): caudal continuo, chorro al empezar, dirección, velocidad, apertura y tamaño de gota. Ponlo como hijo de un personaje para que sangre al moverse.
+- **Disparadores y programa:** nueva acción **Líquido** (chorro, abrir, cerrar) y plantillas como «al chocar, salpicar sangre» o «tecla B: chorro de sangre»; en el programa `obj("Sangre").splash(80)` y `.pour(true)`.
+- **Rendimiento:** partículas ligeras con rejilla de vecinos y un solo dibujo por emisor; las gotas que se quedan quietas se convierten en manchas (menos partículas), y el número máximo depende de la calidad de los efectos (700, 1600 o 3200 gotas).
+- Se graban con el vídeo y el GIF del modo En vivo.
+
+### Versión anterior: YOSADRAW 1.18.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.18.0-x64.exe` (instalador), `YOSADRAW-1.18.0-x64-portable.exe` o `YOSADRAW-1.18.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

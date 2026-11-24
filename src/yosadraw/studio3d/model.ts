@@ -51,11 +51,52 @@ export interface Obj3 {
   };
   /** Parte de un personaje (hijo de otro dibujo): balanceo secundario. */
   part?: Part3;
+  /** Emisor de líquido (sangre, agua, lava…) en el modo En vivo. */
+  fluid?: Fluid3;
   /** Estilo propio (shaders) sólo para este objeto: se ve en los modos Materiales y Render, en vivo y en los renders. */
   style?: ObjStyle;
   /** Comportamiento de una luz en vivo. */
   lightFx?: 'none' | 'flicker' | 'pulse' | 'orbit';
 }
+/** Líquidos del modo En vivo. */
+export type LiquidType = 'blood' | 'water' | 'lava' | 'slime' | 'paint' | 'ink';
+export type LiquidStyle = 'real' | 'cel' | 'cartoon' | 'ink' | 'neon';
+/**
+ * Emisor de líquido: qué líquido y con qué estilo se dibuja, cuánto sale (caudal
+ * continuo y chorros), hacia dónde (eje del objeto, apertura, velocidad), cómo se
+ * comporta (tamaño de gota, viscosidad, cohesión) y si deja manchas.
+ */
+export interface Fluid3 {
+  liquid: LiquidType; style: LiquidStyle; color: string;
+  /** Gotas por segundo (0 = sólo chorros con disparadores o el programa). */
+  rate: number;
+  /** Gotas al empezar (chorro inicial). */
+  burst: number;
+  speed: number; spread: number;
+  /** Dirección en el objeto: +y arriba, -y abajo, +z delante… */
+  dir: 'up' | 'down' | 'front' | 'back' | 'left' | 'right';
+  size: number; visc: number; cohesion: number;
+  /** Probabilidad de dejar mancha al tocar el suelo o algo quieto (0..1). */
+  stick: number;
+  /** Late como un corazón (chorros a pulsos; para la sangre). */
+  pulse: boolean;
+  /** Se ve el objeto emisor en vivo (si no, sólo el líquido). */
+  showSource: boolean;
+}
+/** Líquidos listos: color, comportamiento y estilo por defecto. */
+export const LIQUIDS: Record<LiquidType, { label: string; color: string; size: number; visc: number; cohesion: number; stick: number; pulse: boolean; style: LiquidStyle }> = {
+  blood: { label: 'Sangre', color: '#8a0614', size: 0.045, visc: 0.35, cohesion: 0.35, stick: 0.75, pulse: true, style: 'real' },
+  water: { label: 'Agua', color: '#3a8fe8', size: 0.04, visc: 0.05, cohesion: 0.15, stick: 0.25, pulse: false, style: 'real' },
+  lava: { label: 'Lava', color: '#ff5a00', size: 0.07, visc: 0.85, cohesion: 0.55, stick: 0.9, pulse: false, style: 'neon' },
+  slime: { label: 'Slime', color: '#5cff3a', size: 0.07, visc: 0.9, cohesion: 0.85, stick: 0.5, pulse: false, style: 'cartoon' },
+  paint: { label: 'Pintura', color: '#ff3ad1', size: 0.05, visc: 0.5, cohesion: 0.45, stick: 0.95, pulse: false, style: 'cel' },
+  ink: { label: 'Tinta', color: '#16101f', size: 0.04, visc: 0.25, cohesion: 0.3, stick: 0.95, pulse: false, style: 'ink' },
+};
+export const LIQUID_STYLES: [LiquidStyle, string][] = [['real', 'Realista'], ['cel', 'Cel shading'], ['cartoon', 'Caricatura'], ['ink', 'Tinta (manga)'], ['neon', 'Neón (brilla)']];
+export const defaultFluid = (liquid: LiquidType = 'blood'): Fluid3 => {
+  const L = LIQUIDS[liquid];
+  return { liquid, style: L.style, color: L.color, rate: 60, burst: 0, speed: 3, spread: 18, dir: 'up', size: L.size, visc: L.visc, cohesion: L.cohesion, stick: L.stick, pulse: L.pulse, showSource: false };
+};
 /** Pose de un dibujo: textura y tecla para cambiar a ella en vivo. */
 export interface Pose3 {
   id: string; name: string; tex: string; key: string;
@@ -192,7 +233,7 @@ export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, previe
 /** Sucesos: también los del audio (empieza a hablar, se calla, sonido fuerte). */
 export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release' | 'talk' | 'quiet' | 'loud';
 /** Acciones: también cambiar de pose (expresión) y reproducir o parar un audio. */
-export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script' | 'pose' | 'audio';
+export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script' | 'pose' | 'audio' | 'fluid';
 export interface Act3 { type: ActType; target: string; v?: [number, number, number]; value?: number; color?: string; param?: string; dur?: number; code?: string }
 export interface Rule3 { id: string; name: string; enabled: boolean; once: boolean; on: { type: EventType; t?: number; key?: string; a?: string; b?: string }; do: Act3[] }
 export interface Mat3 {
@@ -569,6 +610,7 @@ export function normalizeStudio(v: unknown): Studio3 | null {
       if (o.phys !== undefined) o.phys = isObj(o.phys) ? { ...defaultPhys(), ...o.phys } : undefined;
       if (o.ctrl !== undefined) o.ctrl = isObj(o.ctrl) ? { ...defaultCtrl(), ...o.ctrl, lock: { ...defaultCtrl().lock, ...(isObj(o.ctrl.lock) ? o.ctrl.lock : {}) } } : undefined;
       if (o.style !== undefined) o.style = isObj(o.style) ? { ...defaultObjStyle(), ...o.style } : undefined;
+      if (o.fluid !== undefined) { if (isObj(o.fluid) && typeof o.fluid.liquid === 'string' && o.fluid.liquid in LIQUIDS) o.fluid = { ...defaultFluid(o.fluid.liquid as LiquidType), ...o.fluid }; else delete o.fluid; }
       if (o.style?.cel) o.style.cel = isObj(o.style.cel) ? { ...defaultCel(), ...o.style.cel } : null;
       if (o.style?.line) o.style.line = isObj(o.style.line) ? { width: isNum(o.style.line.width) ? o.style.line.width : 2, color: typeof o.style.line.color === 'string' ? o.style.line.color : '#111111' } : null;
       if (o.card) {

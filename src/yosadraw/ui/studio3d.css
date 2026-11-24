@@ -149,3 +149,6 @@ body.s3d-mode #app { visibility: hidden; }
 .s3-tuber .mo-brand { background: linear-gradient(90deg, #4cd98a, #7a6cff); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .s3-tuberplay { width: 100%; margin: 4px 0; }
 .s3-poserow.on .btn { border-color: var(--accent, #7a6cff); }
+
+/* Líquidos */
+.s3-liq { display: inline-block; width: 18px; height: 18px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: inset -3px -3px 0 rgba(0,0,0,0.25); }

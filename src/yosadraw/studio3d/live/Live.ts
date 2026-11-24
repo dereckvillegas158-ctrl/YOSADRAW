@@ -5,6 +5,7 @@ import { bounds } from '../mesh';
 import { cardPhys, defaultAudio, defaultCtrl, defaultFx, defaultPhys, effVisible, objOf, type Act3, type Ctrl3, type EventType, type Fx3, type Obj3, type Phys3, type TransType, type Rule3 } from '../model';
 import { round, type Studio3D } from '../Studio3D';
 import { LiveAudio } from './audio';
+import { FluidSystem, type FluidCollider } from './fluid';
 import type { LiveHooks, View3D } from '../View3D';
 
 /**
@@ -140,6 +141,18 @@ export class Live {
     for (const o of sc.objects) if (o.light && o.lightFx === 'orbit') this.lightBase.set(o.id, new T.Vector3().setFromMatrixPosition(s.worldMatrix(o)));
     this.rules = (sc.rules ?? []).filter(r => r.enabled).map(r => ({ ...structuredClone(r), fired: false, next: r.on.type === 'every' ? (r.on.t ?? 1) : 0 }));
     if (runScript && sc.script?.trim()) this.runScript(sc.script);
+    // Líquidos: un sistema para todos los emisores (sólo si la escena tiene alguno).
+    const emitters = sc.objects.filter(o => o.fluid && effVisible(sc, o));
+    if (emitters.length) {
+      this.fluids = new FluidSystem(this.fx.quality, this.fx.ground);
+      this.view.rootNode.add(this.fluids.root);
+      for (const o of emitters) {
+        const f = o.fluid!;
+        this.fluids.addEmitter(o.id, f, this.liveWorld(o), f.rate > 0, 0);
+        if (f.burst > 0) this.fluids.burst(o.id, f.burst);
+        if (!f.showSource) this.hooks.hidden.add(o.id);
+      }
+    }
     // Poses: se cargan ya sus texturas (el cambio en vivo es instantáneo).
     for (const o of sc.objects) for (const p of o.card?.poses ?? []) this.view.poseTexture(p.tex);
     this.view.live = this.hooks;
@@ -163,6 +176,7 @@ export class Live {
     window.removeEventListener('keyup', this.keyUpFn, true);
     this.held.clear();
     this.audio.stop();
+    this.fluids?.dispose(); this.fluids = null;
     this.view.resetLive();
     this.onState();
   }
@@ -268,6 +282,7 @@ export class Live {
     this.shake(realDt);
     this.output(dt);
     this.partsStep(dt);
+    this.fluidStep(dt);
     if (this.rec) this.record();
   }
 
@@ -451,6 +466,42 @@ export class Live {
       if (u >= 1) { st.anim = null; st.mod = null; if (!a.swapped) this.swapPose(id, st, a.to); }
       // Dibujos sin cuerpo físico: se mueven aquí (los demás, en output()).
     }
+  }
+
+  // ---------------------------------------------------------------- líquidos
+
+  private fluids: FluidSystem | null = null;
+  private cols: FluidCollider[] = [];
+  /** Gotas en la escena (para la barra y las pruebas). */
+  get fluidCount() { return this.fluids?.count ?? 0; }
+  get stainCount() { return this.fluids?.stains ?? 0; }
+  /** Matriz del objeto en vivo (también si es hijo de algo que se mueve, p. ej. sangre de un personaje). */
+  private liveWorld(o: Obj3): T.Matrix4 {
+    const W = this.hooks.world.get(o.id);
+    if (W) return W;
+    const par = o.parent ? objOf(this.s.scene, o.parent) : undefined;
+    return par ? this.liveWorld(par).clone().multiply(this.s.localMatrix(o, this.s.time)) : this.s.worldMatrix(o);
+  }
+  /** Mueve los emisores con sus objetos, reúne con qué chocan las gotas y avanza el líquido. */
+  private fluidStep(dt: number) {
+    const F = this.fluids;
+    if (!F) return;
+    for (const o of this.s.scene.objects) if (o.fluid) { const i = F.indexOf(o.id); if (i >= 0) F.setWorld(i, this.liveWorld(o)); }
+    let n = 0;
+    for (const b of this.bodies.values()) {
+      if (b.ph.zone || this.hooks.hidden.has(b.id)) continue;
+      const sh = b.body.shapes[0];
+      if (!(sh instanceof C.Box) && !(sh instanceof C.Sphere)) continue;
+      const c = (this.cols[n] ??= { kind: 'box', pos: new T.Vector3(), quat: new T.Quaternion(), half: new T.Vector3(), radius: 0, still: true });
+      const bp = b.body.position, bq = b.body.quaternion;
+      c.pos.set(bp.x, bp.y, bp.z); c.quat.set(bq.x, bq.y, bq.z, bq.w);
+      if (sh instanceof C.Box) { c.kind = 'box'; c.half.set(sh.halfExtents.x, sh.halfExtents.y, sh.halfExtents.z); } else { c.kind = 'sphere'; c.radius = sh.radius; }
+      c.still = b.body.type === C.Body.STATIC || b.body.sleepState === C.Body.SLEEPING;
+      c.skip = b.obj.fluid ? b.id : undefined;
+      n++;
+    }
+    this.cols.length = n;
+    F.step(dt, this.time, -this.world.gravity.y, this.cols);
   }
 
   // ---------------------------------------------------------------- PNGTuber
@@ -849,6 +900,7 @@ export class Live {
       case 'stop': this.stop(); break;
       case 'script': if (a.code) this.runScript(a.code, self); break;
       case 'pose': { const o = this.s.obj(id); const c = o?.card; if (o && c) { const p = a.param ? c.poses?.find(x => x.name === a.param || x.id === a.param) : null; if (!a.param || p) this.setPose(o, p ? p.tex : null); } break; }
+      case 'fluid': { if (!this.fluids) break; if (a.param === 'on' || a.param === 'off') this.fluids.setOn(id, a.param === 'on'); else this.fluids.burst(id, Math.max(1, Math.min(600, a.value ?? 40))); break; }
       case 'audio': if (a.param) { if ((a.value ?? 1) > 0) this.audio.play(a.param); else this.audio.stopTrack(a.param); } else if ((a.value ?? 1) <= 0) this.audio.stopTrack(); break;
     }
   }
@@ -910,6 +962,9 @@ export class Live {
         behavior(b2: string) { live.act({ type: 'behavior', target: id, param: b2 }); },
         color(c: string, dur = 0) { live.act({ type: 'color', target: id, color: c, dur }); },
         hide() { live.act({ type: 'hide', target: id }); }, show() { live.act({ type: 'show', target: id }); },
+        /** Líquido: chorro de `n` gotas, o abrir y cerrar el caudal continuo. */
+        splash(n = 40) { live.act({ type: 'fluid', target: id, value: n }); },
+        pour(on = true) { live.act({ type: 'fluid', target: id, param: on ? 'on' : 'off' }); },
         /** Cambia la pose de un dibujo (nombre o número; 0 = original) con su transición. */
         pose(p: string | number) { const o = objOf(live.s.scene, id); const c = o?.card; if (!o || !c) return; const ps = c.poses ?? []; const t = typeof p === 'number' ? (p <= 0 ? null : ps[p - 1]?.tex) : p === '' ? null : ps.find(x => x.name === p)?.tex; if (t !== undefined) live.setPose(o, t ?? null); },
         spawn(x = 0, y = 2, z = 0) { return handle(live.spawn(id, [x, y, z])); },

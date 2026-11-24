@@ -1,5 +1,5 @@
 import { h, pickFiles, toast } from '../../ui/dom';
-import { TRANS_TYPES, cardPhys, defaultAudio, defaultCel, defaultTuber, sid as newId, defaultCtrl, defaultFx, defaultObjStyle, defaultPhys, styled, sid, type Cel3, type Line3, type Pose3, type TransType, type Tuber3, type Act3, type ActType, type Track3, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
+import { LIQUIDS, LIQUID_STYLES, TRANS_TYPES, cardPhys, defaultAudio, defaultCel, defaultTuber, sid as newId, defaultCtrl, defaultFx, defaultObjStyle, defaultPhys, styled, sid, type Cel3, type Fluid3, type Line3, type LiquidType, type Pose3, type TransType, type Tuber3, type Act3, type ActType, type Track3, type EventType, type Fx3, type Obj3, type Rule3 } from '../model';
 import type { Studio3D } from '../Studio3D';
 import type { Rows } from './Panels';
 
@@ -51,6 +51,7 @@ export function physicsSection(r: Rows, s: Studio3D, o: Obj3, pick?: PickArt) {
   kids.push(h('p', { class: 'ctl-help' }, 'Pulsa «En vivo» (F5) para ejecutar la escena: agarra y sacude lo dinámico con el ratón, Espacio hace saltar a los personajes.'));
   r.sec('Física y control (En vivo)', ...kids);
   if (o.card && pick) { tuberSection(r, s, o, pick); posesSection(r, s, o, pick); }
+  fluidSection(r, s, o, ids);
   if (o.card && o.parent && s.obj(o.parent)?.card) partSection(r, s, o);
   styleSection(r, s, o, ids);
 }
@@ -84,6 +85,32 @@ function styleSection(r: Rows, s: Studio3D, o: Obj3, ids: string[]) {
   r.sec('Dibujo animado del objeto (cel shading y lineart)',
     h('p', { class: 'ctl-help' }, o.card ? 'En los dibujos, el lineart es el contorno de su silueta.' : 'Sólo este objeto; anula el de la escena. Se ve en los modos Materiales y Render, en vivo y en los renders.'),
     ...toonControls(r, o.style?.cel ?? null, o.style?.line ?? null, c => s.setStyle(ids, { cel: c }), (l, live) => s.setStyle(ids, { line: l }, live)));
+}
+
+/** Líquido que sale del objeto: tipo, estilo, caudal, dirección y comportamiento. */
+function fluidSection(r: Rows, s: Studio3D, o: Obj3, ids: string[]) {
+  const f = o.fluid;
+  const set = (patch: Partial<Fluid3>, live = false) => s.setFluid(ids, patch, live);
+  const kids: (Node | null)[] = [r.check('Sale líquido de este objeto (en vivo)', !!f, v => s.setFluid(ids, v ? { liquid: 'blood' } : null))];
+  if (f) {
+    kids.push(
+      r.select('Líquido', f.liquid, (Object.keys(LIQUIDS) as LiquidType[]).map(k => [k, LIQUIDS[k].label] as [string, string]), v => { const L = LIQUIDS[v as LiquidType]; set({ liquid: v as LiquidType, color: L.color, size: L.size, visc: L.visc, cohesion: L.cohesion, stick: L.stick, pulse: L.pulse, style: L.style }); }),
+      r.select('Estilo', f.style, LIQUID_STYLES, v => set({ style: v as Fluid3['style'] })),
+      color('Color', f.color, v => set({ color: v })),
+      r.range('Caudal', f.rate, 0, 400, 5, (v, live) => set({ rate: v }, live), v => (v > 0 ? `${Math.round(v)} gotas/s` : 'Sólo chorros')),
+      r.range('Chorro al empezar', f.burst, 0, 400, 5, (v, live) => set({ burst: v }, live), v => (v > 0 ? `${Math.round(v)} gotas` : 'No')),
+      r.select('Dirección', f.dir, [['up', 'Hacia arriba del objeto'], ['down', 'Hacia abajo'], ['front', 'Hacia delante'], ['back', 'Hacia atrás'], ['left', 'Izquierda'], ['right', 'Derecha']], v => set({ dir: v as Fluid3['dir'] })),
+      r.range('Velocidad', f.speed, 0, 15, 0.1, (v, live) => set({ speed: v }, live), v => `${v.toFixed(1)} m/s`),
+      r.range('Apertura', f.spread, 0, 90, 1, (v, live) => set({ spread: v }, live), v => `${Math.round(v)}°`),
+      r.range('Tamaño de gota', f.size, 0.01, 0.2, 0.005, (v, live) => set({ size: v }, live), v => `${Math.round(v * 100)} cm`),
+      r.range('Espesor (viscosidad)', f.visc, 0, 1, 0.05, (v, live) => set({ visc: v }, live)),
+      r.range('Cohesión (se juntan)', f.cohesion, 0, 1, 0.05, (v, live) => set({ cohesion: v }, live)),
+      r.range('Manchas', f.stick, 0, 1, 0.05, (v, live) => set({ stick: v }, live)),
+      r.check('Late como un corazón (chorros a pulsos)', f.pulse, v => set({ pulse: v })),
+      r.check('Se ve el objeto que lo suelta', f.showSource, v => set({ showSource: v })),
+      h('p', { class: 'ctl-help' }, 'Pon el emisor como hijo de un personaje para que sangre al moverse. Disparadores: «Líquido» (chorro, abrir, cerrar); en el programa: obj("Nombre").splash(60) y .pour(true).'));
+  }
+  r.sec('Líquido (en vivo)', ...kids);
 }
 
 /** Nivel del audio en vivo para el medidor del panel (lo pone la interfaz; null = sin audio). */
@@ -233,7 +260,7 @@ function toonSection(r: Rows, s: Studio3D) {
 }
 
 const EVENTS: [EventType, string][] = [['start', 'Al empezar'], ['time', 'En el segundo…'], ['every', 'Cada … segundos'], ['key', 'Al pulsar la tecla…'], ['click', 'Al hacer clic en…'], ['collide', 'Al chocar…'], ['enter', 'Al entrar en la zona…'], ['grab', 'Al agarrar…'], ['release', 'Al soltar…'], ['talk', 'Al empezar a hablar (audio)'], ['quiet', 'Al callarse (audio)'], ['loud', 'Con un sonido fuerte (audio)']];
-const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código'], ['pose', 'Cambiar de expresión (pose)'], ['audio', 'Reproducir o parar audio']];
+const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código'], ['pose', 'Cambiar de expresión (pose)'], ['audio', 'Reproducir o parar audio'], ['fluid', 'Líquido (chorro, abrir, cerrar)']];
 const FX_PARAMS: [keyof Fx3, string, number][] = [['godrays', 'Luz volumétrica', 2], ['cones', 'Conos de luz', 2], ['bloom', 'Resplandor (bloom)', 3], ['chroma', 'Aberración cromática', 3], ['glitch', 'Glitch', 1], ['tintAmt', 'Tinte de color', 1], ['vignette', 'Viñeta', 1], ['grain', 'Grano', 1], ['ao', 'Volumen (oclusión ambiental)', 1]];
 
 /** Plantillas de reglas para empezar rápido. */
@@ -241,6 +268,7 @@ function presets(s: Studio3D): [string, () => Rule3][] {
   const ch = s.scene.objects.find(o => o.ctrl)?.id ?? '', zone = s.scene.objects.find(o => o.phys?.zone)?.id ?? '', dyn = s.scene.objects.find(o => o.phys?.body === 'dynamic' && !o.ctrl)?.id ?? '';
   const light = s.scene.objects.find(o => o.light?.type === 'point' || o.light?.type === 'spot')?.id ?? '';
   const tub = s.scene.objects.find(o => o.card?.tuber)?.id ?? '';
+  const blood = s.scene.objects.find(o => o.fluid?.liquid === 'blood')?.id ?? s.scene.objects.find(o => o.fluid)?.id ?? '';
   const R = (name: string, on: Rule3['on'], acts: Act3[]): Rule3 => ({ id: sid('ru'), name, enabled: true, once: false, on, do: acts });
   return [
     ['Espacio: saltar', () => R('Espacio: saltar', { type: 'key', key: ' ' }, [{ type: 'jump', target: ch, value: 6 }])],
@@ -252,6 +280,8 @@ function presets(s: Studio3D): [string, () => Rule3][] {
     ['PNGTuber: al callarse, quitar el resplandor', () => R('Callar: sin brillo', { type: 'quiet' }, [{ type: 'fx', target: '', param: 'bloom', value: 0.2, dur: 0.4 }])],
     ['PNGTuber: grito → sorpresa, temblor y glitch', () => R('Grito', { type: 'loud' }, [...(tub ? [{ type: 'pose' as const, target: tub, param: s.obj(tub)?.card?.poses?.[0]?.name ?? '' }] : []), { type: 'shake', target: '', value: 0.25, dur: 0.35 }, { type: 'fx', target: '', param: 'glitch', value: 0.6, dur: 0.12 }, { type: 'fx', target: '', param: 'chroma', value: 1.2, dur: 0.12 }])],
     ['PNGTuber: al callarse, volver a la expresión normal', () => R('Volver a normal', { type: 'quiet' }, tub ? [{ type: 'pose', target: tub }] : [])],
+    ['Líquido: al chocar, salpicar sangre', () => R('Choque: sangre', { type: 'collide', a: dyn || ch }, blood ? [{ type: 'fluid', target: blood, param: 'burst', value: 80 }, { type: 'shake', target: '', value: 0.15, dur: 0.25 }] : [])],
+    ['Líquido: tecla B, chorro de sangre', () => R('Tecla B: sangre', { type: 'key', key: 'b' }, blood ? [{ type: 'fluid', target: blood, param: 'burst', value: 120 }] : [])],
     ['A los 3 s: girar y acelerar', () => R('Giro', { type: 'time', t: 3 }, [{ type: 'setdir', target: ch, value: 90 }, { type: 'speed', target: ch, value: 4 }])],
   ];
 }
@@ -352,6 +382,7 @@ function ruleCard(r: Rows, s: Studio3D, rule: Rule3, objs: [string, string][]) {
     const p: (Node | null)[] = [sel(a.type, ACTS, v => ua(x => { x.type = v as ActType; }), 'Acción')];
     if (!['fx', 'shake', 'gravity', 'slowmo', 'stop', 'script', 'audio'].includes(a.type)) p.push(sel(a.target, objs, v => ua(x => { x.target = v; }), 'Objeto'));
     if (a.type === 'pose') { const o = a.target ? s.obj(a.target) : null; const ps = o?.card?.poses ?? []; p.push(sel(a.param ?? '', [['', 'Original'], ...ps.map(x => [x.name, x.name] as [string, string])], v => ua(x => { x.param = v; }), 'Expresión')); }
+    if (a.type === 'fluid') p.push(sel(a.param ?? 'burst', [['burst', 'Chorro'], ['on', 'Abrir (caudal)'], ['off', 'Cerrar']], v => ua(x => { x.param = v; }), 'Qué hacer'), ...((a.param ?? 'burst') === 'burst' ? [num(a.value ?? 40, v => ua(x => { x.value = Math.max(1, Math.round(v)); }), 'Gotas', 5)] : []));
     if (a.type === 'audio') { const ts = s.scene.audio?.tracks ?? []; p.push(sel(a.param ?? '', [['', '(todas)'], ...ts.map(t => [t.name, t.name] as [string, string])], v => ua(x => { x.param = v; }), 'Audio'), sel(String((a.value ?? 1) > 0 ? 1 : 0), [['1', 'Reproducir'], ['0', 'Parar']], v => ua(x => { x.value = Number(v); }), 'Qué hacer')); }
     const v3 = () => { const v = a.v ?? [0, 5, 0]; return (['x', 'y', 'z'] as const).map((n, k) => num(v[k], val => ua(x => { const w = [...(x.v ?? [0, 5, 0])] as [number, number, number]; w[k] = val; x.v = w; }), n.toUpperCase())); };
     if (a.type === 'impulse' || a.type === 'spawn') p.push(...v3());
