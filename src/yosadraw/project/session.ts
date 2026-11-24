@@ -2,7 +2,7 @@ import { ClipComposer } from '../doc/clip';
 import { folderOf, layerVisible } from '../doc/folders';
 import { newAnimation, newCel } from '../anim/model';
 import { newMotion } from '../motion/model';
-import { newStudio, studioMeta } from '../studio3d/model';
+import { newStudio, newTuberStudio, studioMeta } from '../studio3d/model';
 import { Document, type DocProfile } from '../doc/Document';
 import type { CanvasEngine } from '../engine';
 import { blendOp, ItemRenderer } from '../doc/ItemRenderer';
@@ -12,7 +12,7 @@ import { browserImageCodec, motionMeta, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SI
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.17.0';
+export const APP_VERSION = '1.18.0';
 
 export interface NewProjectSpec {
   name: string;
@@ -27,6 +27,8 @@ export interface NewProjectSpec {
   motion?: { fps: number; dur: number } | null;
   /** Proyecto 3D (YOSADRAW 3D Studio). */
   s3d?: boolean;
+  /** Proyecto PNGTuber (2D, con el motor del 3D Studio) y su fondo. */
+  tuber?: { bg: string } | null;
 }
 
 export interface SessionState {
@@ -151,6 +153,12 @@ export class ProjectSession extends Emitter<{ state: SessionState }> {
       // Vídeo: el documento lleva el proyecto de YOSADRAW MOTION (las capas de dibujo no se usan).
       doc.motion = newMotion(doc.width, doc.height, spec.motion.fps, spec.motion.dur);
       doc.layers[0].name = 'Vídeo';
+    } else if (spec.tuber) {
+      // PNGTuber: todo en 2D (fondo de color o dibujado) con el motor del 3D Studio.
+      doc.s3d = newTuberStudio(spec.tuber.bg);
+      doc.s3d.render.w = doc.width; doc.s3d.render.h = doc.height;
+      doc.s3d.render.transparent = spec.tuber.bg === 'transparent';
+      doc.layers[0].name = 'PNGTuber';
     } else if (spec.s3d) {
       // 3D: el documento lleva el proyecto de YOSADRAW 3D Studio (el tamaño es el del render).
       doc.s3d = newStudio();

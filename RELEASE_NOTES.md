@@ -1,4 +1,20 @@
-## YOSADRAW 1.17.0
+## YOSADRAW 1.18.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.18.0-x64.exe` (instalador), `YOSADRAW-1.18.0-x64-portable.exe` o `YOSADRAW-1.18.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.18.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo: módulo PNGTuber (2D)
+El PNGTuber ya tiene su propio módulo: **Nuevo proyecto → Tipo: PNGTuber**. Todo en 2D: tu personaje sobre una **pantalla verde** o un **escenario dibujado**, listo para emitir o grabar.
+- **Fondo:** pantalla verde (para recortarla en OBS con «Chroma Key»), azul, magenta, escenario oscuro, cualquier color, transparente (para renders) o un **escenario dibujado**: un dibujo de YOSADRAW o una imagen que cubre todo el encuadre y no se mueve.
+- **Vista plana de frente** y **colores originales del dibujo** (sin luces ni ajustes de tono: el verde y el personaje salen exactos). Si quieres, se pueden activar las luces y sombras.
+- **Panel PNGTuber** con todo a mano: personajes (por capas o desde un PNG), fondo, aspecto, audio y micrófono con medidor, y **▶ Empezar**.
+- Todo lo del PNGTuber sigue igual: boca y parpadeo, expresiones con teclas, rebote y squash al hablar, partes que se balancean, agarrar y sacudir con el ratón (ahora siempre en el plano de la pantalla), disparadores, programa, efectos y grabación MP4 con audio y GIF.
+- **Para OBS:** pulsa H en vivo para ocultar la interfaz y captura la ventana; con la pantalla verde se recorta el fondo.
+- En la galería los proyectos aparecen como «PNGTuber · N personajes».
+- Las partes de un personaje por capas quedan un poco más separadas para que siempre se vean delante del cuerpo.
+
+### Versión anterior: YOSADRAW 1.17.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.17.0-x64.exe` (instalador), `YOSADRAW-1.17.0-x64-portable.exe` o `YOSADRAW-1.17.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

@@ -194,7 +194,7 @@ function toonControls(r: Rows, cel: Cel3 | null, line: Line3 | null, setCel: (c:
 }
 
 /** Audio de la escena (PNGTuber): pistas, micrófono, umbral para hablar y medidor. */
-function audioSection(r: Rows, s: Studio3D) {
+export function audioSection(r: Rows, s: Studio3D) {
   const au = { ...defaultAudio(), ...(s.scene.audio ?? {}) };
   const add = async () => {
     const files = await pickFiles('audio/*,.mp3,.ogg,.wav,.m4a,.aac,.webm', true);

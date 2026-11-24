@@ -50,3 +50,23 @@ describe('PNGTuber', () => {
     expect(x.part).toBeUndefined();
   });
 });
+
+import { newTuberStudio, studioMeta } from '../src/yosadraw/studio3d/model';
+describe('Módulo PNGTuber 2D', () => {
+  it('proyecto nuevo: pantalla verde, sin suelo ni cubo, sin luces y su tipo se conserva al abrir', () => {
+    const st = newTuberStudio('green');
+    const sc = st.scenes[0];
+    expect(st.kind).toBe('tuber');
+    expect(sc.env.bg).toBe('#00b140');
+    expect(sc.env.unlit).toBe(true);
+    expect(sc.objects.filter(o => o.kind === 'mesh')).toHaveLength(0);
+    expect(st.grid.show).toBe(false);
+    expect(newTuberStudio('transparent').scenes[0].env.transparent).toBe(true);
+    const back = normalizeStudio(JSON.parse(JSON.stringify(st)))!;
+    expect(back.kind).toBe('tuber');
+    expect(back.scenes[0].env.unlit).toBe(true);
+    expect(normalizeStudio({ ...JSON.parse(JSON.stringify(st)), kind: 'otro' })!.kind).toBeUndefined();
+    expect(studioMeta(st)).toMatchObject({ tuber: 0 });
+    expect('tuber' in studioMeta(newStudio())).toBe(false);
+  });
+});

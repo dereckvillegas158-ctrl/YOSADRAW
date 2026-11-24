@@ -1,3 +1,4 @@
+import { TUBER_BG } from '../studio3d/model';
 import type { DocProfile } from '../doc/Document';
 import { MAX_DOC_SIDE } from '../project/format';
 import { docSizeProblem, type NewProjectSpec } from '../project/session';
@@ -33,8 +34,9 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     const spec: NewProjectSpec = {
       name: defaultName, width: last?.width ?? 2048, height: last?.height ?? 2048, dpi: last?.dpi ?? 300,
       background: last?.background === null ? null : '#ffffff', profile: last?.profile ?? 'srgb',
-      anim: last?.anim ?? null, motion: last?.motion ?? null, s3d: !!last?.s3d,
+      anim: last?.anim ?? null, motion: last?.motion ?? null, s3d: !!last?.s3d, tuber: last?.tuber ?? null,
     };
+    if (spec.tuber) { spec.s3d = false; spec.anim = null; spec.motion = null; }
     if (spec.motion || spec.s3d) spec.anim = null;
     if (spec.s3d) spec.motion = null;
     let animSpec = { fps: last?.anim?.fps ?? 12, frames: last?.anim?.frames ?? 48 };
@@ -114,11 +116,18 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     const syncMotion = () => { motionSpec = { fps: Number(mFps.value), dur: Math.max(1, Math.min(36000, Number(mDur.value) || 30)) }; if (spec.motion) spec.motion = { ...motionSpec }; };
     mFps.addEventListener('change', syncMotion); mDur.addEventListener('input', syncMotion);
     const motionBox = h('div', { class: 'np-dims np-anim', hidden: !spec.motion }, h('label', null, h('span', null, 'FPS'), mFps), h('label', null, h('span', null, 'Duración (s)'), mDur));
-    const kindSeg = seg<string>('Tipo', spec.s3d ? 's3d' : spec.motion ? 'motion' : spec.anim ? 'anim' : 'draw', [['draw', 'Dibujo'], ['anim', 'Animación'], ['motion', 'Vídeo'], ['s3d', '3D']], v => {
+    // PNGTuber: el fondo (pantalla verde para OBS, otros colores o transparente).
+    let tuberBg = last?.tuber?.bg ?? 'green';
+    const bgSel = h('select', { 'aria-label': 'Fondo del PNGTuber' }, ...TUBER_BG.map(([v, l]) => h('option', { value: v, selected: v === tuberBg }, l)));
+    bgSel.addEventListener('change', () => { tuberBg = bgSel.value; if (spec.tuber) spec.tuber = { bg: tuberBg }; });
+    const tuberBox = h('div', { class: 'np-dims np-anim', hidden: !spec.tuber }, h('label', null, h('span', null, 'Fondo'), bgSel), h('p', { class: 'np-info' }, 'Personaje 2D sobre pantalla verde o un escenario dibujado (también puedes poner uno después).'));
+    const kindSeg = seg<string>('Tipo', spec.tuber ? 'tuber' : spec.s3d ? 's3d' : spec.motion ? 'motion' : spec.anim ? 'anim' : 'draw', [['draw', 'Dibujo'], ['anim', 'Animación'], ['motion', 'Vídeo'], ['s3d', '3D'], ['tuber', 'PNGTuber']], v => {
       spec.anim = v === 'anim' ? { ...animSpec } : null;
       spec.motion = v === 'motion' ? { ...motionSpec } : null;
       spec.s3d = v === 's3d';
-      if (spec.s3d && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === 'hd')!);
+      spec.tuber = v === 'tuber' ? { bg: tuberBg } : null;
+      if ((spec.s3d || spec.tuber) && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === 'hd')!);
+      tuberBox.hidden = !spec.tuber;
       animBox.hidden = !spec.anim;
       motionBox.hidden = !spec.motion;
       if (spec.motion && spec.width === 2048 && spec.height === 2048) applyTemplate(TEMPLATES.find(t => t.id === (document.documentElement.classList.contains('phone') ? 'phone' : 'hd'))!);
@@ -134,7 +143,7 @@ export function openNewProject(defaultName: string, last: Partial<NewProjectSpec
     createBtn.addEventListener('click', () => { sync(); if (!createBtn.disabled) finish({ ...spec, name: spec.name.trim() || defaultName }); });
     const form = h('div', { class: 'np-form' },
       h('label', { class: 'np-field' }, h('span', { class: 'ex-label' }, 'Nombre'), nameIn),
-      kindSeg, animBox, motionBox,
+      kindSeg, animBox, motionBox, tuberBox,
       h('div', { class: 'np-field' }, h('span', { class: 'ex-label' }, 'Tamaño (píxeles)'),
         h('div', { class: 'np-dims' }, h('label', null, h('span', null, 'Ancho'), wIn), swap, h('label', null, h('span', null, 'Alto'), hIn), h('label', null, h('span', null, 'Resolución (ppp)'), dpiIn))),
       h('div', { class: 'np-summary' }, preview, info),
