@@ -64,6 +64,8 @@ export class UI3D {
   /** Deslizadores de efectos en la barra del modo En vivo (plegados para no tapar la escena). */
   private hudFx = false;
   /** Calidad del vídeo en vivo (se recuerda en este equipo). */
+  /** Fotogramas por segundo del vídeo en vivo (30 o 60; se recuerda en este equipo). */
+  private recFps: number = (() => { try { const v = Number(localStorage.getItem('yosadraw.s3d.recFps')); return v === 30 || v === 60 ? v : 60; } catch { return 60; } })();
   private recSize: RecSize = (() => { try { const v = localStorage.getItem('yosadraw.s3d.recSize'); return REC_SIZES.some(([k]) => k === v) ? v as RecSize : '1080'; } catch { return '1080' as RecSize; } })();
   /** Para el tutorial: ¿giró la vista? ¿renderizó? */
   private orbits = 0; private renders = 0;
@@ -409,7 +411,9 @@ export class UI3D {
     const slow = h('select', { class: 'mo-sel', 'aria-label': 'Velocidad', title: 'Cámara lenta' }, ...[[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [2, '2×']].map(([v, l]) => h('option', { value: String(v) }, String(l))));
     slow.addEventListener('change', () => { live.timescale = Number(slow.value); });
     const recSel = h('select', { class: 'mo-sel', 'aria-label': 'Calidad del vídeo', title: 'Calidad del vídeo en vivo' }, ...REC_SIZES.map(([v, l]) => h('option', { value: v, selected: v === this.recSize }, l)));
-    recSel.addEventListener('change', () => { this.recSize = recSel.value as RecSize; try { localStorage.setItem('yosadraw.s3d.recSize', this.recSize); } catch { /* sin almacenamiento */ } });
+    recSel.addEventListener('change', () => { this.recSize = recSel.value as RecSize; try { localStorage.setItem('yosadraw.s3d.recSize', this.recSize); } catch { /* sin almacenamiento */ } this.renderHud(); });
+    const fpsSel = h('select', { class: 'mo-sel', 'aria-label': 'Fotogramas del vídeo', title: 'Fotogramas por segundo del vídeo (el máximo; si el equipo dibuja menos, se graba lo que dibuja)' }, ...[30, 60].map(v => h('option', { value: String(v), selected: v === this.recFps }, `${v} fps`)));
+    fpsSel.addEventListener('change', () => { this.recFps = Number(fpsSel.value); try { localStorage.setItem('yosadraw.s3d.recFps', String(this.recFps)); } catch { /* sin almacenamiento */ } });
     const slider = (k: 'godrays' | 'bloom' | 'chroma' | 'glitch' | 'tintAmt' | 'squiggle' | 'ink', label: string, max: number) => {
       const r = h('input', { type: 'range', min: '0', max: String(max), step: '0.01', value: String(live.fx[k]), 'aria-label': label, title: label });
       r.addEventListener('input', () => { live.fx[k] = Number(r.value); });
@@ -424,6 +428,7 @@ export class UI3D {
         b(this.video ? '⏺ Parar vídeo' : '⏺ Grabar vídeo', 'Graba en vídeo lo que se ve, con los efectos (F9)', () => { if (this.video) this.stopVideo(); else this.startVideo(); this.renderHud(); }, `btn sm${this.video ? ' s3-rec' : ''}`),
         this.video ? null : b('⏺ Grabar sin interfaz', 'Oculta la interfaz y empieza a grabar el vídeo (H vuelve a mostrarla, F9 para)', () => { this.toggleClean(true); this.startVideo(); this.renderHud(); }),
         this.video ? null : recSel,
+        this.video || this.recSize === 'gif' ? null : fpsSel,
         b(live.audio.micOn ? '🎤 Micrófono: sí' : '🎤 Micrófono', 'Tu voz mueve a los personajes PNGTuber (boca, rebote, sucesos de audio)', () => void live.audio.useMic(!live.audio.micOn).then(ok => { if (!ok) toast('No se pudo usar el micrófono (permiso denegado o no hay micrófono).', 'error'); this.renderHud(); }), `btn sm${live.audio.micOn ? ' primary' : ''}`),
         h('span', { class: 's3-hudmeter', title: 'Nivel del audio' }, h('i')),
         b(this.hudFx ? '✨ Efectos ▴' : '✨ Efectos ▾', 'Mostrar u ocultar los deslizadores de efectos', () => { this.hudFx = !this.hudFx; this.renderHud(); }, `btn sm${this.hudFx ? ' primary' : ''}`),
@@ -445,7 +450,7 @@ export class UI3D {
     if (!live.running) { void this.afterStop(); return; }
     this.playBtn.innerHTML = live.running ? '■ <span>Parar</span>' : '▶ <span>En vivo</span>';
     const fps = this.hud.querySelector('.s3-fps');
-    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos${live.fluidCount ? ` · ${live.fluidCount} gotas` : ''} · ${live.time.toFixed(1)} s`; const hm = this.hud.querySelector<HTMLElement>('.s3-hudmeter i'); if (hm) { hm.style.width = `${Math.round(Math.min(1, live.audio.level) * 100)}%`; hm.parentElement!.classList.toggle('on', live.audio.talking); hm.parentElement!.hidden = !live.audio.active; } const rt = this.hud.querySelector('.s3-rectime'); if (rt) { const v = this.video; rt.textContent = v ? `● ${Math.floor(v.seconds / 60)}:${String(Math.floor(v.seconds % 60)).padStart(2, '0')}` : ''; } setTimeout(tick, 500); }; tick(); }
+    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos${live.fluidCount ? ` · ${live.fluidCount} gotas` : ''} · ${live.time.toFixed(1)} s`; const hm = this.hud.querySelector<HTMLElement>('.s3-hudmeter i'); if (hm) { hm.style.width = `${Math.round(Math.min(1, live.audio.level) * 100)}%`; hm.parentElement!.classList.toggle('on', live.audio.talking); hm.parentElement!.hidden = !live.audio.active; } const rt = this.hud.querySelector('.s3-rectime'); if (rt) { const v = this.video; rt.textContent = v ? `● ${Math.floor(v.seconds / 60)}:${String(Math.floor(v.seconds % 60)).padStart(2, '0')}${v.seconds > 1 ? ` · ${Math.round(v.frames / v.seconds)} fps` : ''}` : ''; } setTimeout(tick, 500); }; tick(); }
     // Actores: quién se controla (clic en uno para elegirlo; en el activo, para soltarlo).
     const bar = this.hud.querySelector<HTMLElement>('.s3-actors');
     if (bar) {
@@ -486,7 +491,7 @@ export class UI3D {
     // Forma del vídeo: la de lo que se ve al empezar (pantalla completa si la interfaz está oculta).
     const box = this.view.el.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
     const dims = recDims(this.recSize, box.width / Math.max(1, box.height), { w: box.width * dpr, h: box.height * dpr });
-    const fps = Math.max(24, Math.min(60, this.s.fps));
+    const fps = this.recFps;
     let rec: LiveRec;
     if (this.recSize === 'gif') {
       // GIF: fotogramas pequeños y, al parar, el codificador GIF del módulo de animación.

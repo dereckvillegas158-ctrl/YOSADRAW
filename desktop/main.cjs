@@ -264,6 +264,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
+      // Sin frenar el dibujo cuando la ventana queda detrás de otra (OBS) o minimizada: el modo en vivo y sus grabaciones siguen a su ritmo.
+      backgroundThrottling: false,
       additionalArguments: [`--yosadraw-version=${app.getVersion()}`],
     },
   });

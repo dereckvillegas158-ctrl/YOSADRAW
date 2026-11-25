@@ -38,7 +38,10 @@ export async function startLiveVideo(w: number, h: number, fps: number, done: Re
   const codec = typeof VideoFrame !== 'undefined' ? await mp4Codec(w, h, fps) : null;
   if (codec) {
     const ac = audio ? await audioCodec(audio.ctx.sampleRate) : null;
-    return new LiveRecorder(w, h, fps, codec, done, first, audio && ac ? { ...audio, codec: ac } : null);
+    // Codificador de la tarjeta gráfica si lo hay (más fotogramas por segundo sin frenar el dibujo).
+    let hw = false;
+    try { hw = !!(await VideoEncoder.isConfigSupported({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), hardwareAcceleration: 'prefer-hardware' })).supported; } catch { hw = false; }
+    return new LiveRecorder(w, h, fps, codec, done, first, audio && ac ? { ...audio, codec: ac } : null, hw);
   }
   return new MediaRec(w, h, fps, done, first, audio?.track ?? null);
 }
@@ -83,8 +86,9 @@ export class LiveRecorder implements LiveRec {
   private aStart = -1;
   private aSamples = 0;
   frames = 0;
+  dropped = 0;
   readonly mime = 'video/mp4';
-  constructor(readonly w: number, readonly h: number, readonly fps: number, codec: string, private done: RecDone, first?: HTMLCanvasElement, audio?: (RecAudio & { codec: 'aac' | 'opus' }) | null) {
+  constructor(readonly w: number, readonly h: number, readonly fps: number, codec: string, private done: RecDone, first?: HTMLCanvasElement, audio?: (RecAudio & { codec: 'aac' | 'opus' }) | null, hw = false) {
     this.canvas.width = w; this.canvas.height = h;
     this.g = this.canvas.getContext('2d', { alpha: false })!;
     this.g.fillStyle = '#000'; this.g.fillRect(0, 0, w, h);
@@ -97,7 +101,7 @@ export class LiveRecorder implements LiveRec {
     });
     const fail = (e: unknown) => { this.failure ??= e instanceof Error ? e : new Error(String(e)); };
     this.venc = new VideoEncoder({ output: (c, m) => this.muxer.addVideoChunk(c, m), error: fail });
-    this.venc.configure({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), latencyMode: 'realtime', avc: { format: 'avc' } });
+    this.venc.configure({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), latencyMode: 'realtime', hardwareAcceleration: hw ? 'prefer-hardware' : 'no-preference', avc: { format: 'avc' } });
     if (audio) {
       this.aenc = new AudioEncoder({ output: (c, m) => this.muxer.addAudioChunk(c, m), error: fail });
       this.aenc.configure({ codec: audio.codec === 'aac' ? 'mp4a.40.2' : 'opus', sampleRate: sr, numberOfChannels: 2, bitrate: 192_000 });
@@ -108,7 +112,9 @@ export class LiveRecorder implements LiveRec {
       src.connect(sp); sp.connect(mute); mute.connect(ctx.destination);
       this.audioNodes = [src, sp, mute];
     }
-    if (first) this.frame(first);
+    // (Sin «primer fotograma» aparte: el codificador se prepara de forma asíncrona y para
+    // entonces la imagen del visor ya se borró; el vídeo empieza con el siguiente dibujo.)
+    void first;
   }
   static supported() { return (typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined') || (typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype); }
   get seconds() { return (performance.now() - this.t0) / 1000; }
@@ -116,12 +122,14 @@ export class LiveRecorder implements LiveRec {
     if (this.stopped || this.failure) return;
     const slot = Math.floor(((performance.now() - this.t0) / 1000) * this.fps);
     if (slot <= this.slot) return;
-    // Si el codificador va atrasado, se salta el fotograma (el anterior dura más).
-    if (this.venc.encodeQueueSize > 6) return;
-    if (!fit(this.g, src, this.w, this.h)) return;
+    // Si el codificador va muy atrasado, se salta el fotograma (el anterior dura más).
+    if (this.venc.encodeQueueSize > 12) { this.dropped++; return; }
+    // Mismo tamaño que el vídeo: el fotograma sale directo del visor (sin copiarlo antes).
+    const direct = src.width === this.w && src.height === this.h;
+    if (!direct && !fit(this.g, src, this.w, this.h)) return;
     this.slot = slot;
     const us = 1e6 / this.fps;
-    const vf = new VideoFrame(this.canvas, { timestamp: Math.round(slot * us), duration: Math.round(us) });
+    const vf = new VideoFrame(direct ? src : this.canvas, { timestamp: Math.round(slot * us), duration: Math.round(us) });
     const key = slot - this.lastKey >= this.fps * 2;
     if (key) this.lastKey = slot;
     this.venc.encode(vf, { keyFrame: key });
