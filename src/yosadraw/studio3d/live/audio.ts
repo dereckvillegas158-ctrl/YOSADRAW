@@ -83,6 +83,11 @@ export class LiveAudio {
   /** Pista de audio para la grabación de vídeo (lo que suena y el micrófono). */
   get recordTrack(): MediaStreamTrack | null { return this.dest?.stream.getAudioTracks()[0] ?? null; }
   /** Prepara el audio para grabarlo (si la escena tiene pistas o micrófono). */
+  /** Lo necesario para grabar el audio: el contexto y la pista con la mezcla (null = sin audio). */
+  recordAudio(): { ctx: AudioContext; track: MediaStreamTrack } | null {
+    const track = this.recordable();
+    return track && this.ctx ? { ctx: this.ctx, track } : null;
+  }
   recordable(): MediaStreamTrack | null {
     if (!this.cfg.tracks.length && !this.cfg.mic && !this.els.size && !this.mic) return null;
     this.ensure();

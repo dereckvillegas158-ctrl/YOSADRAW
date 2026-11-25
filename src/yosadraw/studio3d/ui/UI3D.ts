@@ -13,7 +13,7 @@ import { AddPanel, Hierarchy, Inspector3, drawingLayersToUrls, drawingToUrl, edi
 import { Live } from '../live/Live';
 import { TuberPanel } from './TuberPanel';
 import { setMeterSource } from './LivePanel';
-import { LiveGifRecorder, LiveRecorder, REC_SIZES, recDims, type LiveRec, type RecSize } from '../live/recorder';
+import { LiveGifRecorder, LiveRecorder, REC_SIZES, startLiveVideo, recDims, type LiveRec, type RecSize } from '../live/recorder';
 import { encodeGif } from '../../anim/webexport';
 import { fileToDataUrl } from '../textures';
 import { confirmDialog } from '../../ui/modal';
@@ -505,17 +505,24 @@ export class UI3D {
       toast('Grabando GIF (F9 para parar)');
       return;
     }
-    try {
-      rec = new LiveRecorder(dims.w, dims.h, fps, async (blob, mime) => {
-        const name = `${this.deps.name()}-en-vivo.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
-        await saveFile(name, new Uint8Array(await blob.arrayBuffer()));
-        toast(`Vídeo guardado: ${name} (${dims.w} × ${dims.h})`, 'ok');
-      }, cv, live.audio.recordable());
-    } catch (e) { toast(`No se pudo grabar: ${e instanceof Error ? e.message : String(e)}`, 'error'); return; }
-    this.view.setRecordHeight(dims.h);
-    live.onFrame = () => rec.frame(cv);
-    this.video = rec;
-    toast(`Grabando vídeo a ${dims.w} × ${dims.h}, ${fps} fps (F9 para parar)`);
+    // Se prepara el codificador (unos milisegundos); mientras, no se graba nada.
+    const token = {};
+    this.video = { frame() {}, stop() {}, seconds: 0, frames: 0 };
+    (this.video as { token?: object }).token = token;
+    void startLiveVideo(dims.w, dims.h, fps, (data, ext, note) => void (async () => {
+      if (note || !data.length) { toast(`No se pudo guardar el vídeo: ${note || 'sin fotogramas'}`, 'error'); return; }
+      const name = `${this.deps.name()}-en-vivo.${ext}`;
+      await saveFile(name, data);
+      toast(`Vídeo guardado: ${name} (${dims.w} × ${dims.h})`, 'ok');
+    })(), cv, live.audio.recordAudio()).then(r => {
+      // Se paró (o se cerró el modo en vivo) mientras se preparaba.
+      const L = this.live;
+      if ((this.video as { token?: object } | null)?.token !== token || !L?.running) { r.cancel?.(); return; }
+      this.video = r;
+      this.view.setRecordHeight(dims.h);
+      L.onFrame = () => r.frame(cv);
+      toast(`Grabando vídeo a ${dims.w} × ${dims.h}, ${fps} fps (F9 para parar)`);
+    }).catch(e => { this.video = null; this.renderHud(); toast(`No se pudo grabar: ${e instanceof Error ? e.message : String(e)}`, 'error'); });
   }
   private stopVideo() {
     const v = this.video;
