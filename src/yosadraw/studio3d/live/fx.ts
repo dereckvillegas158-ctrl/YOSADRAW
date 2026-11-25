@@ -205,11 +205,13 @@ class StyleMask {
     });
     for (const o of hidden) o.visible = false;
     const bg = scene.background, fog = scene.fog, cc = renderer.getClearColor(new T.Color()), ca = renderer.getClearAlpha();
+    const prevRT = renderer.getRenderTarget();
     scene.background = null; scene.fog = null;
     renderer.setRenderTarget(this.rt);
     renderer.setClearColor(0x000000, 1); renderer.clear();
     renderer.render(scene, cam);
     renderer.setClearColor(cc, ca);
+    renderer.setRenderTarget(prevRT);
     scene.background = bg; scene.fog = fog;
     for (const [m, mat] of swapped) m.material = mat;
     for (const o of hidden) o.visible = true;
@@ -392,6 +394,9 @@ export class FxPipeline {
       if (n > 0) { this.mask.render(this.composer.renderer, scene, camera); st.tMask.value = this.mask.rt.texture; }
     }
     this.composer.render();
+    // Siempre se termina dibujando en la pantalla (si un pase dejó otro destino, la vista
+    // se quedaría congelada con la última imagen).
+    this.composer.renderer.setRenderTarget(null);
     this.tick(f);
   }
   /** Mide los FPS y, con «adaptativa», baja la calidad si van lentos (y la sube si sobran). */

@@ -307,6 +307,8 @@ export class View3D {
       const fps = Math.max(0, ...objStyles.filter(x => x.squiggle > 0).map(x => x.squigFps), fx && fx.squiggle > 0 ? fx.squigFps : 0);
       if (!live && fps > 0 && !this.boil) this.boil = window.setTimeout(() => { this.boil = 0; this.request(); }, 1000 / Math.min(30, fps));
     } else {
+      // A la pantalla (no a un lienzo interno que haya quedado de los efectos o de un render).
+      this.renderer.setRenderTarget(null);
       this.renderer.render(this.scene, cam);
       if (fx && this.fxp) this.fxp.tick(fx);
     }
