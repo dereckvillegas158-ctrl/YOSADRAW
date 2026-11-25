@@ -1,4 +1,13 @@
-## YOSADRAW 1.19.0
+## YOSADRAW 1.19.1
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.19.1-x64.exe` (instalador), `YOSADRAW-1.19.1-x64-portable.exe` o `YOSADRAW-1.19.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.19.1.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Corrección
+- **3D: un proyecto nuevo ya no muestra la imagen del anterior.** Si el proyecto 3D anterior usaba efectos, estilos (shaders) o cel shading, al crear o abrir otro el visor se quedaba con la última imagen del anterior y no se veía nada de lo que hacías. Ahora el visor siempre vuelve a dibujar en la pantalla.
+
+### Versión anterior: YOSADRAW 1.19.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.19.0-x64.exe` (instalador), `YOSADRAW-1.19.0-x64-portable.exe` o `YOSADRAW-1.19.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
