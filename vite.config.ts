@@ -23,9 +23,24 @@ export function base64Plugin(): Plugin {
   };
 }
 
+/**
+ * Las fuentes de @fontsource traen woff2 y woff; todos los destinos (navegadores
+ * actuales, Electron y el WebView de Android) usan woff2, así que el woff sobra.
+ */
+export function woff2OnlyPlugin(): Plugin {
+  return {
+    name: 'yosadraw-woff2-only',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('@fontsource') || !id.endsWith('.css')) return null;
+      return { code: code.replace(/,\s*url\([^)]*\.woff\)\s*format\('woff'\)/g, ''), map: null };
+    },
+  };
+}
+
 export default defineConfig({
   base: './',
-  plugins: [base64Plugin()],
+  plugins: [base64Plugin(), woff2OnlyPlugin()],
   worker: { format: 'es', plugins: () => [base64Plugin()] },
   build: {
     target: 'es2020',

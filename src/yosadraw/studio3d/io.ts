@@ -2,9 +2,9 @@ import * as T from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import dracoWrapper from 'three/examples/jsm/libs/draco/gltf/draco_wasm_wrapper.js?url';
+import dracoWasm from 'three/examples/jsm/libs/draco/gltf/draco_decoder.wasm?url';
 import { desktopBridge } from '../brush/storage';
 import { valueAt } from '../motion/keys';
 import { encodeGif, encodeMp4, mp4Codec } from '../anim/webexport';
@@ -122,22 +122,78 @@ function objMtl(scene: T.Scene): string {
 
 // ---------------------------------------------------------------- importar modelos
 
-export const MODEL_ACCEPT = '.glb,.gltf,.obj,.stl';
+export const MODEL_ACCEPT = '.glb,.gltf,.fbx,.obj,.mtl,.dae,.ply,.3mf,.stl,.bin,.png,.jpg,.jpeg,.webp,.tga,.bmp,.blend';
+const MODEL_EXTS = ['glb', 'gltf', 'fbx', 'obj', 'dae', 'ply', '3mf', 'stl'];
+/** Máximo de triángulos de un modelo importado (todas sus piezas e instancias). */
+const MAX_TRIS = 400000;
 
-/** Importa un modelo como objetos editables (una malla por pieza, con sus materiales y texturas). */
-export async function importModel(s: Studio3D, f: File): Promise<number> {
-  const ext = f.name.split('.').pop()!.toLowerCase();
-  const buf = await f.arrayBuffer();
-  let root: T.Object3D;
-  if (ext === 'glb' || ext === 'gltf') root = (await new GLTFLoader().parseAsync(ext === 'glb' ? buf : new TextDecoder().decode(buf), '')).scene;
-  else if (ext === 'obj') root = new OBJLoader().parse(new TextDecoder().decode(buf));
-  else if (ext === 'stl') { const g = new STLLoader().parse(buf); root = new T.Mesh(g, new T.MeshStandardMaterial({ color: '#b8b2c8' })); }
-  else throw new Error('Formato no admitido (GLB, glTF, OBJ o STL).');
+/** Lee el modelo de cualquier formato admitido con sus archivos de apoyo (.bin, texturas, .mtl). */
+async function loadModel(main: File, side: Map<string, string>): Promise<{ root: T.Object3D; anims: number }> {
+  const ext = main.name.split('.').pop()!.toLowerCase();
+  const buf = await main.arrayBuffer();
+  const text = () => new TextDecoder().decode(buf);
+  // Los archivos que el modelo nombra (texturas, .bin) se buscan entre los elegidos por su nombre.
+  const mgr = new T.LoadingManager();
+  const blobs = new Set(side.values());
+  mgr.setURLModifier(url => {
+    if (url.startsWith('data:') || blobs.has(url)) return url;
+    const base = decodeURIComponent(url.split(/[\\/]/).pop()!.split('?')[0]).toLowerCase();
+    return side.get(base) ?? DECODERS[base] ?? url;
+  });
+  // Las texturas de FBX y OBJ se cargan después de leer el modelo: se esperan (como mucho 10 s).
+  let pend = 0;
+  mgr.onStart = (_u, l, t) => { pend = t - l; };
+  mgr.onProgress = (_u, l, t) => { pend = t - l; };
+  mgr.onError = () => { pend = Math.max(0, pend - 1); };
+  const settle = async <R>(r: R): Promise<R> => { for (let i = 0; i < 200 && pend > 0; i++) await new Promise(res => setTimeout(res, 50)); return r; };
+  switch (ext) {
+    case 'glb': case 'gltf': {
+      const gl = new (await import('three/examples/jsm/loaders/GLTFLoader.js')).GLTFLoader(mgr);
+      const draco = new (await import('three/examples/jsm/loaders/DRACOLoader.js')).DRACOLoader(mgr); draco.setDecoderPath('draco/'); gl.setDRACOLoader(draco);
+      gl.setMeshoptDecoder((await import('three/examples/jsm/libs/meshopt_decoder.module.js')).MeshoptDecoder);
+      try { const r = await gl.parseAsync(ext === 'glb' ? buf : text(), ''); return { root: r.scene, anims: r.animations.length }; }
+      finally { draco.dispose(); }
+    }
+    case 'fbx': { const r = new (await import('three/examples/jsm/loaders/FBXLoader.js')).FBXLoader(mgr).parse(buf, ''); return settle({ root: r, anims: r.animations?.length ?? 0 }); }
+    case 'obj': {
+      const ol = new (await import('three/examples/jsm/loaders/OBJLoader.js')).OBJLoader(mgr);
+      const mtl = [...side.keys()].find(k => k.endsWith('.mtl'));
+      if (mtl) { const mt = await new (await import('three/examples/jsm/loaders/MTLLoader.js')).MTLLoader(mgr).loadAsync(side.get(mtl)!); mt.preload(); ol.setMaterials(mt); }
+      return settle({ root: ol.parse(text()), anims: 0 });
+    }
+    case 'dae': { const r = new (await import('three/examples/jsm/loaders/ColladaLoader.js')).ColladaLoader(mgr).parse(text(), ''); return settle({ root: r.scene, anims: r.scene.animations?.length ?? 0 }); }
+    case 'ply': { const g = new (await import('three/examples/jsm/loaders/PLYLoader.js')).PLYLoader(mgr).parse(buf); return { root: g.index ? new T.Mesh(g, new T.MeshStandardMaterial({ color: '#b8b2c8' })) : new T.Points(g), anims: 0 }; }
+    case '3mf': return { root: new (await import('three/examples/jsm/loaders/3MFLoader.js')).ThreeMFLoader(mgr).parse(buf), anims: 0 };
+    case 'stl': { const g = new (await import('three/examples/jsm/loaders/STLLoader.js')).STLLoader().parse(buf); return { root: new T.Mesh(g, new T.MeshStandardMaterial({ color: '#b8b2c8' })), anims: 0 }; }
+    case 'blend': throw new Error('Los archivos .blend no se pueden leer directamente. En Blender: Archivo → Exportar → glTF 2.0 (.glb). Para las partículas, activa «Instancias de GPU» (Mesh → GPU Instances) o conviértelas antes con Objeto → Aplicar → Hacer reales las instancias.');
+    default: throw new Error('Formato no admitido (GLB, glTF, FBX, OBJ, DAE, PLY, 3MF o STL).');
+  }
+}
+/** Decodificadores de Draco (los glTF comprimidos de Blender), servidos con la app. */
+const DECODERS: Record<string, string> = { 'draco_wasm_wrapper.js': dracoWrapper, 'draco_decoder.wasm': dracoWasm };
+
+/**
+ * Importa un modelo (Blender y otros programas) como objetos editables: una pieza
+ * por malla con sus materiales y texturas. Las instancias (partículas de Blender
+ * exportadas como «Instancias de GPU», o un objeto repetido) se juntan en una
+ * pieza por malla; las nubes de puntos (cachés de partículas) se vuelven pequeñas
+ * gotas. Se pueden elegir a la vez el modelo y sus archivos (.bin, texturas, .mtl).
+ */
+export async function importModel(s: Studio3D, files: File | File[]): Promise<{ pieces: number; instances: number; points: number; anims: number; name: string }> {
+  const list = Array.isArray(files) ? files : [files];
+  const main = list.find(f => MODEL_EXTS.includes(f.name.split('.').pop()!.toLowerCase())) ?? list.find(f => f.name.toLowerCase().endsWith('.blend'));
+  if (!main) throw new Error('Elige el archivo del modelo (GLB, glTF, FBX, OBJ, DAE, PLY, 3MF o STL), y si hace falta sus texturas y .bin.');
+  const side = new Map<string, string>();
+  for (const f of list) if (f !== main) side.set(f.name.toLowerCase(), URL.createObjectURL(f));
+  let loaded: { root: T.Object3D; anims: number };
+  try { loaded = await loadModel(main, side); }
+  finally { setTimeout(() => { for (const u of side.values()) URL.revokeObjectURL(u); }, 30000); }
+  const root = loaded.root;
   root.updateMatrixWorld(true);
-  const meshes: T.Mesh[] = [];
-  root.traverse(o => { if (o instanceof T.Mesh && o.geometry?.attributes.position) meshes.push(o); });
-  if (!meshes.length) throw new Error('El archivo no tiene mallas.');
-  // Escala: que el modelo quepa en unos 4 m si viene en otra unidad.
+  const meshes: T.Mesh[] = [], points: T.Points[] = [];
+  root.traverse(o => { if (o instanceof T.Mesh && o.geometry?.attributes.position) meshes.push(o); else if (o instanceof T.Points && o.geometry?.attributes.position) points.push(o); });
+  if (!meshes.length && !points.length) throw new Error('El archivo no tiene mallas.');
+  // Escala: que el modelo quepa en unos 4 m si viene en otra unidad (cm de FBX, km…).
   const box = new T.Box3().setFromObject(root);
   const size = box.getSize(new T.Vector3()).length();
   const k = size > 40 ? 4 / size : size < 0.05 && size > 0 ? 1 / size : 1;
@@ -146,44 +202,84 @@ export async function importModel(s: Studio3D, f: File): Promise<number> {
   const toMat = (m: T.Material): string => {
     let id = matMap.get(m);
     if (id) return id;
-    const sm = m as T.MeshStandardMaterial;
-    const mt = newMaterial(m.name || `Material ${mats.length + 1}`, { color: sm.color ? `#${sm.color.getHexString()}` : '#cccccc', rough: sm.roughness ?? 0.6, metal: sm.metalness ?? 0, opacity: sm.transparent ? sm.opacity : 1 });
-    const img = sm.map?.image as CanvasImageSource & { width: number; height: number } | undefined;
+    const sm = m as T.MeshStandardMaterial & T.MeshPhongMaterial;
+    // Phong / Lambert (FBX, OBJ): el brillo se vuelve rugosidad.
+    const rough = sm.roughness ?? (sm.shininess !== undefined ? Math.max(0.05, 1 - Math.sqrt(sm.shininess / 100)) : 0.6);
+    const em = sm.emissive && (sm.emissive.r + sm.emissive.g + sm.emissive.b) > 0.01 ? `#${sm.emissive.getHexString()}` : '#000000';
+    const mt = newMaterial(m.name || `Material ${mats.length + 1}`, { color: sm.color ? `#${sm.color.getHexString()}` : '#cccccc', rough, metal: sm.metalness ?? 0, opacity: sm.transparent ? sm.opacity : 1, emissive: em, emissiveI: em === '#000000' ? 0 : sm.emissiveIntensity ?? 1 });
+    const img = (sm.map?.image ?? sm.emissiveMap?.image) as CanvasImageSource & { width: number; height: number } | undefined;
     if (img && img.width) {
       const c = document.createElement('canvas'); const kk = Math.min(1, 2048 / Math.max(img.width, img.height));
       c.width = Math.max(1, Math.round(img.width * kk)); c.height = Math.max(1, Math.round(img.height * kk));
-      c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+      const g = c.getContext('2d')!;
+      g.drawImage(img, 0, 0, c.width, c.height);
       const tid = sid('tx'); texs.push({ id: tid, name: mt.name, src: canvasToUrl(c) }); mt.tex = tid;
+      if (sm.alphaTest > 0 || (sm.transparent && sm.map)) mt.cut = true;
     }
     mats.push(mt); matMap.set(m, mt.id);
     return mt.id;
   };
   const objs: Obj3[] = [];
-  const group = newObject('group', f.name.replace(/\.[^.]+$/, '') || 'Modelo');
-  for (const mesh of meshes) {
-    let g = mesh.geometry as T.BufferGeometry;
-    if (g.index && g.index.count > 600000) throw new Error('Modelo demasiado grande (más de 200 000 triángulos).');
-    const W = mesh.matrixWorld.clone().premultiply(new T.Matrix4().makeScale(k, k, k));
-    g = g.clone().applyMatrix4(W);
+  const group = newObject('group', main.name.replace(/\.[^.]+$/, '') || 'Modelo');
+  const S = new T.Matrix4().makeScale(k, k, k);
+  let tris = 0, instances = 0, nPoints = 0;
+  const triCount = (g: T.BufferGeometry) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+  const addPiece = (g: T.BufferGeometry, ms: T.Material[], name: string) => {
     const pos = g.attributes.position.array as ArrayLike<number>;
     const uv = g.attributes.uv?.array as ArrayLike<number> | undefined;
-    const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const groups = g.groups.length ? g.groups.map(x => ({ start: x.start, count: x.count, mat: x.materialIndex ?? 0 })) : undefined;
     const m = fromTriangles(pos, g.index ? g.index.array : null, uv ?? null, groups);
     g.dispose();
-    if (!m.f.length) continue;
-    const o = newObject('mesh', mesh.name || `Pieza ${objs.length + 1}`);
+    if (!m.f.length) return;
+    const o = newObject('mesh', name || `Pieza ${objs.length + 1}`);
     o.mesh = m; o.mats = ms.map(toMat); o.smooth = true; o.parent = group.id;
     objs.push(o);
+  };
+  for (const mesh of meshes) {
+    const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const base = mesh.geometry as T.BufferGeometry;
+    if (mesh instanceof T.InstancedMesh) {
+      // Instancias (partículas de Blender, hierba, rocas repetidas): se juntan en una pieza.
+      const per = triCount(base), n = Math.max(0, Math.min(mesh.count, Math.floor((MAX_TRIS - tris) / Math.max(1, per))));
+      if (!n) continue;
+      const parts: T.BufferGeometry[] = [], IM = new T.Matrix4();
+      const src = base.index ? base.toNonIndexed() : base.clone();
+      for (const key of Object.keys(src.attributes)) if (key !== 'position' && key !== 'uv' && key !== 'normal') src.deleteAttribute(key);
+      for (let i = 0; i < n; i++) { mesh.getMatrixAt(i, IM); parts.push(src.clone().applyMatrix4(IM.clone().premultiply(mesh.matrixWorld).premultiply(S))); }
+      const merged = mergeGeometries(parts, false);
+      for (const p of parts) p.dispose(); src.dispose();
+      if (!merged) continue;
+      tris += per * n; instances += n;
+      addPiece(merged, ms, `${mesh.name || 'Instancias'} (${n})`);
+      continue;
+    }
+    if (tris + triCount(base) > MAX_TRIS) throw new Error(`Modelo demasiado grande (más de ${MAX_TRIS / 1000} 000 triángulos). Redúcelo en Blender con el modificador «Diezmar» (Decimate).`);
+    tris += triCount(base);
+    addPiece(base.clone().applyMatrix4(mesh.matrixWorld.clone().premultiply(S)), ms, mesh.name);
   }
+  // Nubes de puntos (caché de partículas exportada como puntos): una gota pequeña por punto.
+  for (const pts of points) {
+    const pos = pts.geometry.attributes.position, n = Math.min(pos.count, 6000);
+    const r = Math.max(0.004, (size * k) / 400);
+    const dot = new T.OctahedronGeometry(r, 0).toNonIndexed(); dot.deleteAttribute('normal');
+    const parts: T.BufferGeometry[] = [], v = new T.Vector3(), W = pts.matrixWorld.clone().premultiply(S);
+    for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(W); parts.push(dot.clone().translate(v.x, v.y, v.z)); }
+    const merged = parts.length ? mergeGeometries(parts, false) : null;
+    for (const p of parts) p.dispose();
+    if (!merged) continue;
+    nPoints += n;
+    const pm = pts.material as T.PointsMaterial;
+    addPiece(merged, [new T.MeshStandardMaterial({ color: pm.color ?? new T.Color('#ffffff'), name: 'Partículas' })], `${pts.name || 'Partículas'} (${n} puntos)`);
+  }
+  if (!objs.length) throw new Error('El modelo no tiene caras que se puedan importar.');
   // El grupo, apoyado en el suelo y centrado.
   const b = new T.Box3();
   for (const o of objs) for (let i = 0; i < o.mesh!.v.length; i += 3) b.expandByPoint(new T.Vector3(o.mesh!.v[i], o.mesh!.v[i + 1], o.mesh!.v[i + 2]));
   const c = b.getCenter(new T.Vector3());
   for (const o of objs) for (let i = 0; i < o.mesh!.v.length; i += 3) { o.mesh!.v[i] = round(o.mesh!.v[i] - c.x); o.mesh!.v[i + 1] = round(o.mesh!.v[i + 1] - b.min.y); o.mesh!.v[i + 2] = round(o.mesh!.v[i + 2] - c.z); }
-  s.edit(`Importar ${f.name}`, (st, sc) => { st.materials.push(...mats); st.textures.push(...texs); sc.objects.push(group, ...objs); });
+  s.edit(`Importar ${main.name}`, (st, sc) => { st.materials.push(...mats); st.textures.push(...texs); group.name = s.uniqueName(sc, group.name); sc.objects.push(group, ...objs); });
   s.select([group.id]);
-  return objs.length;
+  return { pieces: objs.length, instances, points: nPoints, anims: loaded.anims, name: group.name };
 }
 
 // ---------------------------------------------------------------- render de animaciones

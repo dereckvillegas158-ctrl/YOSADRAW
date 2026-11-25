@@ -7,7 +7,7 @@ import { menu } from '../../ui/motion/util';
 import { GENERATORS, genDef, type GenType } from '../generators';
 import { vcount } from '../mesh';
 import {
-  LIQUIDS, MATERIAL_PRESETS, PRIM_PARAMS, PRIMS, effLocked, objOf, rebuild, type LiquidType, type Mat3, type Obj3, type PrimType, type LightType,
+  LIQUIDS, PART_TYPES, type PartType, MATERIAL_PRESETS, PRIM_PARAMS, PRIMS, effLocked, objOf, rebuild, type LiquidType, type Mat3, type Obj3, type PrimType, type LightType,
 } from '../model';
 import type { Studio3D } from '../Studio3D';
 import { canvasToUrl, fileToDataUrl } from '../textures';
@@ -183,6 +183,9 @@ export class AddPanel {
       h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Líquidos'),
         h('p', { class: 'ctl-help' }, 'Sangre, agua, lava, slime, pintura o tinta que salen de un objeto en vivo: caen, chocan con lo que tiene física, dejan manchas y se pueden ver realistas, con cel shading, de caricatura, de tinta o de neón.'),
         h('div', { class: 's3-grid' }, ...(Object.keys(LIQUIDS) as LiquidType[]).map(k => h('button', { type: 'button', class: 's3-tile', title: `Añadir: ${LIQUIDS[k].label}`, on: { click: () => { s.addFluid(k); this.ui.picked(); } } }, h('span', { class: 's3-liq', style: { background: LIQUIDS[k].color } }), h('span', null, LIQUIDS[k].label))))),
+      h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Partículas'),
+        h('p', { class: 'ctl-help' }, 'Chispas, fogonazo de arma (con luz), explosión, fuego, humo, órganos, huesos, carne, escombros, confeti y más, en vivo. Cambia su forma por cualquier objeto o modelo importado (Blender) o por una imagen.'),
+        h('div', { class: 's3-grid' }, ...(Object.keys(PART_TYPES) as PartType[]).map(k => h('button', { type: 'button', class: 's3-tile', title: `Añadir: ${PART_TYPES[k].label}`, on: { click: () => { s.addParticles(k); this.ui.picked(); } } }, h('span', { class: 's3-picon' }, PART_TYPES[k].icon), h('span', null, PART_TYPES[k].label))))),
       h('details', { class: 'mo-sec', open: true }, h('summary', null, 'PNGTuber'),
         h('p', { class: 'ctl-help' }, 'Personajes 2D que hablan con tu voz o con un audio (boca, parpadeo, rebote), cambian de expresión con teclas o disparadores, se agarran y sacuden con el ratón y viven en la escena 3D con sus luces y efectos.'),
         h('div', { class: 'mo-btnrow' },
@@ -190,7 +193,7 @@ export class AddPanel {
           h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.card('tuber') } }, 'Personaje desde un PNG…'),
           h('button', { type: 'button', class: 'btn sm', title: 'Cámara de frente, luz de escenario y efectos para grabar o emitir', on: { click: () => this.ui.card('stage') } }, 'Escenario PNGTuber'))),
       h('details', { class: 'mo-sec', open: true }, h('summary', null, 'Importar'),
-        h('div', { class: 'mo-btnrow' }, h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.importModel() } }, 'Modelo 3D (GLB, glTF, OBJ, STL)…'))));
+        h('div', { class: 'mo-btnrow' }, h('button', { type: 'button', class: 'btn sm', on: { click: () => this.ui.importModel() } }, 'Modelo 3D (Blender: GLB, glTF, FBX, OBJ, DAE, PLY, STL)…'))));
     this.mark();
   }
   private mark() {

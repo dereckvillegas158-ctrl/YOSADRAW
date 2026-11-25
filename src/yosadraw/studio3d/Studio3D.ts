@@ -9,7 +9,7 @@ import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
 import * as M from './mesh';
 import {
-  History3, LIQUIDS, PRIMS, cameraObject, cardPhys, defaultFluid, type Fluid3, type LiquidType, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, LIQUIDS, PRIMS, cameraObject, cardPhys, defaultFluid, type Fluid3, type LiquidType, PART_TYPES, defaultParticles, type Particles3, type PartType, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
@@ -167,7 +167,7 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
 
   // ---------------------------------------------------------------- crear objetos
 
-  private uniqueName(sc: Scene3, base: string) {
+  uniqueName(sc: Scene3, base: string) {
     const names = new Set(sc.objects.map(o => o.name));
     if (!names.has(base)) return base;
     for (let i = 2; ; i++) if (!names.has(`${base} ${i}`)) return `${base} ${i}`;
@@ -725,6 +725,32 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
       }
     };
     if (live) this.live(fn); else this.edit('Líquido', fn);
+  }
+  /** Emisor de partículas nuevo (una esfera pequeña que no se ve en vivo). */
+  addParticles(type: PartType, at: [number, number, number] = [0, 1.5, 0]) {
+    const P = PART_TYPES[type], d = defaultParticles(type);
+    const mat = newMaterial(P.label, { color: d.color === '#ffffff' ? '#c8c0d8' : d.color, rough: 0.4 });
+    const o = primObject('sphere', mat.id, at, { r: 0.1, seg: 16, rings: 8 });
+    o.name = `Partículas: ${P.label}`;
+    o.particles = d;
+    o.castShadow = false;
+    this.edit(`Añadir ${P.label.toLowerCase()}`, (st, sc) => { st.materials.push(mat); o.name = this.uniqueName(sc, o.name); sc.objects.push(o); });
+    this.sel = [o.id];
+    this.emit('select', undefined);
+    return o;
+  }
+  /** Cambia las partículas de los objetos elegidos (null = quitarlas). Otro tipo trae sus valores. */
+  setParticles(ids: string[], patch: Partial<Particles3> | null, live = false) {
+    const fn = (_s: Studio3, sc: Scene3) => {
+      for (const id of ids) {
+        const o = objOf(sc, id); if (!o) continue;
+        if (patch === null) { delete o.particles; continue; }
+        const prev = o.particles;
+        if (prev && patch.type && patch.type !== prev.type) o.particles = { ...defaultParticles(patch.type), dir: prev.dir, showSource: prev.showSource, shape: prev.shape, shapeObj: prev.shapeObj, shapeTex: prev.shapeTex, ...patch };
+        else o.particles = { ...defaultParticles(patch.type ?? prev?.type ?? 'sparks'), ...(prev ?? {}), ...patch };
+      }
+    };
+    if (live) this.live(fn); else this.edit('Partículas', fn);
   }
   /** Guarda una imagen como textura del proyecto y la usa (boca, ojos, variantes de pose). */
   addTexture(src: string, name: string, project: { id: string; rev: number } | null, use: (texId: string, sc: Scene3) => void, label = 'Imagen') {
