@@ -1,4 +1,13 @@
-## YOSADRAW 1.20.0
+## YOSADRAW 1.20.1
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.20.1-x64.exe` (instalador), `YOSADRAW-1.20.1-x64-portable.exe` o `YOSADRAW-1.20.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.20.1.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Corrección
+- **3D: las grabaciones del modo En vivo ya no salen corruptas.** El MP4 que hacía el navegador tenía los tiempos de los fotogramas rotos (muchos reproductores y editores lo daban por dañado, sin duración o sin poder avanzar). Ahora el vídeo se codifica con WebCodecs (H.264, y el audio en AAC u Opus) en un MP4 normal: duración correcta, se puede avanzar y retroceder, y abre en cualquier reproductor o editor. Si el sistema no tiene WebCodecs, se graba en WebM.
+
+### Versión anterior: YOSADRAW 1.20.0
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.20.0-x64.exe` (instalador), `YOSADRAW-1.20.0-x64-portable.exe` o `YOSADRAW-1.20.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
