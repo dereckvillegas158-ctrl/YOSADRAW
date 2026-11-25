@@ -277,9 +277,14 @@ export class UI3D {
     toast('Casa creada: cada pared, el tejado y la puerta se pueden cambiar en «Objeto» (doble clic para elegir una pieza).', 'ok');
   }
   private async importPick() {
-    const [f] = await pickFiles(MODEL_ACCEPT, false);
-    if (!f) return;
-    try { const n = await importModel(this.s, f); this.view.frameSelected(); toast(`«${f.name}» importado: ${n} ${n === 1 ? 'pieza editable' : 'piezas editables'}`, 'ok'); }
+    // Se pueden elegir a la vez el modelo y sus archivos (.bin, texturas, .mtl).
+    const files = await pickFiles(MODEL_ACCEPT, true);
+    if (!files.length) return;
+    try {
+      const r = await importModel(this.s, files); this.view.frameSelected();
+      const extra = [r.instances ? `${r.instances} instancias` : '', r.points ? `${r.points} partículas` : '', r.anims ? 'las animaciones no se importan (usa keyframes)' : ''].filter(Boolean).join(' · ');
+      toast(`«${r.name}» importado: ${r.pieces} ${r.pieces === 1 ? 'pieza editable' : 'piezas editables'}${extra ? ` · ${extra}` : ''}. Úsalo también como forma de partículas.`, 'ok');
+    }
     catch (e) { toast(`No se pudo importar: ${e instanceof Error ? e.message : String(e)}`, 'error'); }
   }
   private exportMenu(e: MouseEvent) {

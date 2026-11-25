@@ -53,6 +53,8 @@ export interface Obj3 {
   part?: Part3;
   /** Emisor de líquido (sangre, agua, lava…) en el modo En vivo. */
   fluid?: Fluid3;
+  /** Emisor de partículas (chispas, fogonazo, órganos, humo…) en el modo En vivo. */
+  particles?: Particles3;
   /** Estilo propio (shaders) sólo para este objeto: se ve en los modos Materiales y Render, en vivo y en los renders. */
   style?: ObjStyle;
   /** Comportamiento de una luz en vivo. */
@@ -97,6 +99,65 @@ export const defaultFluid = (liquid: LiquidType = 'blood'): Fluid3 => {
   const L = LIQUIDS[liquid];
   return { liquid, style: L.style, color: L.color, rate: 60, burst: 0, speed: 3, spread: 18, dir: 'up', size: L.size, visc: L.visc, cohesion: L.cohesion, stick: L.stick, pulse: L.pulse, showSource: false };
 };
+/** Partículas del modo En vivo. */
+export type PartType = 'sparks' | 'muzzle' | 'explosion' | 'embers' | 'fire' | 'smoke' | 'organs' | 'bones' | 'gibs' | 'debris' | 'confetti' | 'coins' | 'stars' | 'leaves' | 'bubbles' | 'magic' | 'custom';
+export type PartStyle = 'real' | 'cel' | 'cartoon' | 'flat' | 'neon';
+/**
+ * Emisor de partículas: qué sale (forma por defecto, un objeto o modelo de la
+ * escena o una imagen), cuánto (caudal y ráfagas), hacia dónde, cómo se mueve
+ * (gravedad, rozamiento, giro, rebote, choques), cómo se ve (estilo, colores,
+ * brillo, se desvanece) y si ilumina lo que tiene cerca (luz dinámica).
+ */
+export interface Particles3 {
+  type: PartType; style: PartStyle;
+  /** Color al nacer y al morir (blanco = los colores propios de la forma). */
+  color: string; color2: string;
+  /** Forma: la de serie, un objeto de la escena (también un modelo importado) o una imagen. */
+  shape: 'default' | 'object' | 'texture'; shapeObj?: string; shapeTex?: string;
+  /** Por segundo (0 = sólo ráfagas con disparadores o el programa) y ráfaga al empezar. */
+  rate: number; burst: number;
+  speed: number; spread: number;
+  dir: 'up' | 'down' | 'front' | 'back' | 'left' | 'right';
+  /** Tamaño (radio, m), variación (0..1) y vida (s). */
+  size: number; sizeVar: number; life: number;
+  /** Gravedad (1 = normal, negativa = suben), rozamiento con el aire y giro. */
+  gravity: number; drag: number; spin: number;
+  /** Rebote (0..1), choca con el suelo y la física, y se quedan en el suelo hasta morir. */
+  bounce: number; collide: boolean; stay: boolean;
+  /** Se desvanecen al final de su vida; brillo propio (0..2). */
+  fade: boolean; glow: number;
+  /** Luz dinámica: intensidad (0 = sin luz) y alcance (m). */
+  light: number; lightRange: number; lightColor: string;
+  /** Sangran al volar y al chocar (usa el líquido sangre). 0..1 */
+  bleed: number;
+  /** Se ve el objeto que las suelta. */
+  showSource: boolean;
+}
+export const PART_TYPES: Record<PartType, { label: string; icon: string; p: Partial<Particles3> }> = {
+  sparks: { label: 'Chispas', icon: '✦', p: { style: 'neon', color: '#fff3b0', color2: '#ff4a00', rate: 80, speed: 6, spread: 35, size: 0.025, sizeVar: 0.5, life: 0.7, gravity: 1, drag: 0.4, spin: 0, bounce: 0.45, collide: true, stay: false, fade: true, glow: 1.6, light: 1.2, lightRange: 4, lightColor: '#ffb040' } },
+  muzzle: { label: 'Fogonazo (arma)', icon: '💥', p: { style: 'neon', color: '#fff6c8', color2: '#ff6a10', rate: 0, burst: 0, speed: 9, spread: 14, dir: 'front', size: 0.22, sizeVar: 0.3, life: 0.07, gravity: 0, drag: 2, spin: 0, bounce: 0.3, collide: false, stay: false, fade: true, glow: 2, light: 6, lightRange: 7, lightColor: '#ffbb55' } },
+  explosion: { label: 'Explosión', icon: '💣', p: { style: 'neon', color: '#ffc860', color2: '#b21800', rate: 0, burst: 90, speed: 7, spread: 180, size: 0.35, sizeVar: 0.6, life: 0.9, gravity: -0.15, drag: 2.4, spin: 1, bounce: 0.2, collide: false, stay: false, fade: true, glow: 1.6, light: 8, lightRange: 10, lightColor: '#ff8a30' } },
+  embers: { label: 'Brasas', icon: '•', p: { style: 'neon', color: '#ffd060', color2: '#ff2a00', rate: 25, speed: 1.2, spread: 40, size: 0.02, sizeVar: 0.5, life: 3, gravity: -0.12, drag: 0.8, spin: 0, bounce: 0.2, collide: false, stay: false, fade: true, glow: 1.4, light: 0.8, lightRange: 3, lightColor: '#ff7a20' } },
+  fire: { label: 'Fuego', icon: '🔥', p: { style: 'neon', color: '#ffe680', color2: '#d01800', rate: 70, speed: 1.4, spread: 18, size: 0.22, sizeVar: 0.4, life: 0.9, gravity: -0.35, drag: 1.2, spin: 0.5, bounce: 0, collide: false, stay: false, fade: true, glow: 1.3, light: 2.5, lightRange: 5, lightColor: '#ff8a30' } },
+  smoke: { label: 'Humo', icon: '☁', p: { style: 'flat', color: '#9a96a0', color2: '#3a3840', rate: 14, speed: 0.8, spread: 20, size: 0.3, sizeVar: 0.4, life: 3.5, gravity: -0.06, drag: 0.9, spin: 0.3, bounce: 0, collide: false, stay: false, fade: true, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
+  organs: { label: 'Órganos', icon: '🫀', p: { style: 'real', color: '#ffffff', color2: '#ffffff', rate: 0, burst: 8, speed: 4.5, spread: 55, size: 0.16, sizeVar: 0.35, life: 14, gravity: 1, drag: 0.1, spin: 6, bounce: 0.25, collide: true, stay: true, fade: false, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff', bleed: 0.7 } },
+  bones: { label: 'Huesos', icon: '🦴', p: { style: 'cartoon', color: '#ffffff', color2: '#ffffff', rate: 0, burst: 10, speed: 4, spread: 60, size: 0.16, sizeVar: 0.3, life: 14, gravity: 1, drag: 0.1, spin: 8, bounce: 0.35, collide: true, stay: true, fade: false, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
+  gibs: { label: 'Trozos de carne', icon: '🥩', p: { style: 'real', color: '#ffffff', color2: '#ffffff', rate: 0, burst: 24, speed: 5, spread: 70, size: 0.07, sizeVar: 0.6, life: 12, gravity: 1, drag: 0.15, spin: 9, bounce: 0.2, collide: true, stay: true, fade: false, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff', bleed: 0.5 } },
+  debris: { label: 'Escombros', icon: '🪨', p: { style: 'real', color: '#ffffff', color2: '#ffffff', rate: 0, burst: 30, speed: 4, spread: 70, size: 0.08, sizeVar: 0.7, life: 10, gravity: 1, drag: 0.05, spin: 7, bounce: 0.3, collide: true, stay: true, fade: false, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
+  confetti: { label: 'Confeti', icon: '🎉', p: { style: 'flat', color: '#ffffff', color2: '#ffffff', rate: 60, speed: 5, spread: 40, size: 0.05, sizeVar: 0.3, life: 6, gravity: 0.35, drag: 2.2, spin: 10, bounce: 0, collide: true, stay: true, fade: false, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
+  coins: { label: 'Monedas', icon: '🪙', p: { style: 'real', color: '#ffffff', color2: '#ffffff', rate: 0, burst: 20, speed: 5, spread: 40, size: 0.08, sizeVar: 0.15, life: 8, gravity: 1, drag: 0.1, spin: 10, bounce: 0.45, collide: true, stay: true, fade: false, glow: 0.2, light: 0, lightRange: 3, lightColor: '#ffd040' } },
+  stars: { label: 'Estrellas', icon: '★', p: { style: 'cartoon', color: '#ffe14a', color2: '#ff9a2a', rate: 12, speed: 3, spread: 50, size: 0.09, sizeVar: 0.4, life: 1.6, gravity: 0.4, drag: 0.8, spin: 6, bounce: 0.4, collide: false, stay: false, fade: true, glow: 0.8, light: 0, lightRange: 3, lightColor: '#ffe14a' } },
+  leaves: { label: 'Hojas', icon: '🍂', p: { style: 'cel', color: '#ffffff', color2: '#ffffff', rate: 6, speed: 0.6, spread: 70, size: 0.08, sizeVar: 0.4, life: 8, gravity: 0.15, drag: 2.5, spin: 3, bounce: 0, collide: true, stay: true, fade: true, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
+  bubbles: { label: 'Burbujas', icon: '◯', p: { style: 'real', color: '#bfe8ff', color2: '#e6f7ff', rate: 10, speed: 0.8, spread: 30, size: 0.06, sizeVar: 0.6, life: 4, gravity: -0.12, drag: 1, spin: 0, bounce: 0, collide: false, stay: false, fade: true, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
+  magic: { label: 'Magia', icon: '✨', p: { style: 'neon', color: '#b46bff', color2: '#3ae0ff', rate: 40, speed: 1, spread: 180, size: 0.05, sizeVar: 0.6, life: 1.5, gravity: -0.1, drag: 1.5, spin: 2, bounce: 0, collide: false, stay: false, fade: true, glow: 1.5, light: 1.5, lightRange: 4, lightColor: '#9a6bff' } },
+  custom: { label: 'Personalizado', icon: '❖', p: { style: 'real', color: '#ffffff', color2: '#ffffff', rate: 10, speed: 3, spread: 30, size: 0.1, sizeVar: 0.3, life: 4, gravity: 1, drag: 0.2, spin: 3, bounce: 0.3, collide: true, stay: false, fade: true, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
+};
+export const PART_STYLES: [PartStyle, string][] = [['real', 'Realista (videojuego)'], ['cel', 'Cel shading'], ['cartoon', 'Caricatura (contorno)'], ['flat', 'Plano'], ['neon', 'Neón (brilla)']];
+export const defaultParticles = (type: PartType = 'sparks'): Particles3 => ({
+  type, style: 'real', color: '#ffffff', color2: '#ffffff', shape: 'default', rate: 20, burst: 0, speed: 3, spread: 30, dir: 'up',
+  size: 0.1, sizeVar: 0.3, life: 2, gravity: 1, drag: 0.2, spin: 0, bounce: 0.3, collide: true, stay: false, fade: true, glow: 0,
+  light: 0, lightRange: 3, lightColor: '#ffffff', bleed: 0, showSource: false, ...PART_TYPES[type].p,
+});
 /** Pose de un dibujo: textura y tecla para cambiar a ella en vivo. */
 export interface Pose3 {
   id: string; name: string; tex: string; key: string;
@@ -233,7 +294,7 @@ export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, previe
 /** Sucesos: también los del audio (empieza a hablar, se calla, sonido fuerte). */
 export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release' | 'talk' | 'quiet' | 'loud';
 /** Acciones: también cambiar de pose (expresión) y reproducir o parar un audio. */
-export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script' | 'pose' | 'audio' | 'fluid';
+export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script' | 'pose' | 'audio' | 'fluid' | 'particles';
 export interface Act3 { type: ActType; target: string; v?: [number, number, number]; value?: number; color?: string; param?: string; dur?: number; code?: string }
 export interface Rule3 { id: string; name: string; enabled: boolean; once: boolean; on: { type: EventType; t?: number; key?: string; a?: string; b?: string }; do: Act3[] }
 export interface Mat3 {
@@ -611,6 +672,7 @@ export function normalizeStudio(v: unknown): Studio3 | null {
       if (o.ctrl !== undefined) o.ctrl = isObj(o.ctrl) ? { ...defaultCtrl(), ...o.ctrl, lock: { ...defaultCtrl().lock, ...(isObj(o.ctrl.lock) ? o.ctrl.lock : {}) } } : undefined;
       if (o.style !== undefined) o.style = isObj(o.style) ? { ...defaultObjStyle(), ...o.style } : undefined;
       if (o.fluid !== undefined) { if (isObj(o.fluid) && typeof o.fluid.liquid === 'string' && o.fluid.liquid in LIQUIDS) o.fluid = { ...defaultFluid(o.fluid.liquid as LiquidType), ...o.fluid }; else delete o.fluid; }
+      if (o.particles !== undefined) { if (isObj(o.particles) && typeof o.particles.type === 'string' && o.particles.type in PART_TYPES) o.particles = { ...defaultParticles(o.particles.type as PartType), ...o.particles }; else delete o.particles; }
       if (o.style?.cel) o.style.cel = isObj(o.style.cel) ? { ...defaultCel(), ...o.style.cel } : null;
       if (o.style?.line) o.style.line = isObj(o.style.line) ? { width: isNum(o.style.line.width) ? o.style.line.width : 2, color: typeof o.style.line.color === 'string' ? o.style.line.color : '#111111' } : null;
       if (o.card) {

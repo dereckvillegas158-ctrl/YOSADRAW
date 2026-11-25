@@ -6,6 +6,8 @@ import { cardPhys, defaultAudio, defaultCtrl, defaultFx, defaultPhys, effVisible
 import { round, type Studio3D } from '../Studio3D';
 import { LiveAudio } from './audio';
 import { FluidSystem, type FluidCollider } from './fluid';
+import { ParticleSystem, type ShapePart } from './particles';
+import { defaultFluid, type PartStyle } from '../model';
 import type { LiveHooks, View3D } from '../View3D';
 
 /**
@@ -143,7 +145,8 @@ export class Live {
     if (runScript && sc.script?.trim()) this.runScript(sc.script);
     // Líquidos: un sistema para todos los emisores (sólo si la escena tiene alguno).
     const emitters = sc.objects.filter(o => o.fluid && effVisible(sc, o));
-    if (emitters.length) {
+    const pEmit = sc.objects.filter(o => o.particles && effVisible(sc, o));
+    if (emitters.length || pEmit.some(o => o.particles!.bleed > 0)) {
       this.fluids = new FluidSystem(this.fx.quality, this.fx.ground);
       this.view.rootNode.add(this.fluids.root);
       for (const o of emitters) {
@@ -152,6 +155,22 @@ export class Live {
         if (f.burst > 0) this.fluids.burst(o.id, f.burst);
         if (!f.showSource) this.hooks.hidden.add(o.id);
       }
+    }
+    // Partículas: un sistema para todos los emisores (chispas, fogonazo, órganos…).
+    if (pEmit.length) {
+      const P = (this.parts3 = new ParticleSystem(this.fx.quality, this.fx.ground, pEmit.length * ParticleSystem.capFor(this.fx.quality)));
+      this.view.rootNode.add(P.root);
+      for (const o of pEmit) {
+        const c = o.particles!;
+        const custom: { parts?: ShapePart[]; tex?: T.Texture | null } = {};
+        if (c.shape === 'object' && c.shapeObj && c.shapeObj !== o.id) custom.parts = this.view.shapeParts(c.shapeObj);
+        if (c.shape === 'texture' && c.shapeTex) { custom.tex = this.view.poseTexture(c.shapeTex); if (!custom.tex) this.texWait.push([o.id, c.shapeTex]); }
+        P.addEmitter(o.id, c, this.liveWorld(o), c.rate > 0, custom);
+        if (c.burst > 0) P.burst(o.id, c.burst);
+        if (!c.showSource) this.hooks.hidden.add(o.id);
+      }
+      // Los órganos y la carne sangran con el líquido sangre (con un estilo parecido).
+      P.onBleed = (x, y, z, n, style) => this.bleed(x, y, z, n, style);
     }
     // Poses: se cargan ya sus texturas (el cambio en vivo es instantáneo).
     for (const o of sc.objects) for (const p of o.card?.poses ?? []) this.view.poseTexture(p.tex);
@@ -178,6 +197,7 @@ export class Live {
     this.held.clear();
     this.audio.stop();
     this.fluids?.dispose(); this.fluids = null;
+    this.parts3?.dispose(); this.parts3 = null; this.bleedIds.clear(); this.texWait = [];
     this.view.resetLive();
     this.onState();
   }
@@ -288,6 +308,7 @@ export class Live {
     this.output(dt);
     this.partsStep(dt);
     this.fluidStep(dt);
+    this.particleStep(dt);
     if (this.rec) this.record();
   }
 
@@ -490,8 +511,13 @@ export class Live {
   /** Mueve los emisores con sus objetos, reúne con qué chocan las gotas y avanza el líquido. */
   private fluidStep(dt: number) {
     const F = this.fluids;
+    if (F || this.parts3) this.gatherCols();
     if (!F) return;
     for (const o of this.s.scene.objects) if (o.fluid) { const i = F.indexOf(o.id); if (i >= 0) F.setWorld(i, this.liveWorld(o)); }
+    F.step(dt, this.time, -this.world.gravity.y, this.cols);
+  }
+  /** Con qué chocan las gotas y las partículas (cajas y esferas de la física), una vez por fotograma. */
+  private gatherCols() {
     let n = 0;
     for (const b of this.bodies.values()) {
       if (b.ph.zone || this.hooks.hidden.has(b.id)) continue;
@@ -502,11 +528,43 @@ export class Live {
       c.pos.set(bp.x, bp.y, bp.z); c.quat.set(bq.x, bq.y, bq.z, bq.w);
       if (sh instanceof C.Box) { c.kind = 'box'; c.half.set(sh.halfExtents.x, sh.halfExtents.y, sh.halfExtents.z); } else { c.kind = 'sphere'; c.radius = sh.radius; }
       c.still = b.body.type === C.Body.STATIC || b.body.sleepState === C.Body.SLEEPING;
-      c.skip = b.obj.fluid ? b.id : undefined;
+      c.skip = b.obj.fluid || b.obj.particles ? b.id : undefined;
       n++;
     }
     this.cols.length = n;
-    F.step(dt, this.time, -this.world.gravity.y, this.cols);
+  }
+
+  // ---------------------------------------------------------------- partículas
+
+  private parts3: ParticleSystem | null = null;
+  private bleedIds = new Map<string, string>();
+  private texWait: [string, string][] = [];
+  get particleCount() { return this.parts3?.count ?? 0; }
+  get particleLights() { return this.parts3?.lightCount ?? 0; }
+  /** Luz dinámica de un emisor (para las pruebas). */
+  particleLight(id: string) { return this.parts3?.lightOf(id) ?? null; }
+  private particleStep(dt: number) {
+    const P = this.parts3;
+    if (!P) return;
+    for (const o of this.s.scene.objects) if (o.particles) { const i = P.indexOf(o.id); if (i >= 0) P.setWorld(i, this.liveWorld(o)); }
+    // Imágenes que aún se cargaban al empezar.
+    if (this.texWait.length) this.texWait = this.texWait.filter(([id, tid]) => { const t = this.view.poseTexture(tid); if (t) P.setTexture(id, t); return !t; });
+    P.step(dt, -this.world.gravity.y, this.cols, this.view.liveCamera);
+  }
+  /** Gotas de sangre donde sangra una partícula (un emisor oculto por estilo). */
+  private bleed(x: number, y: number, z: number, n: number, style: PartStyle) {
+    if (!this.fluids) { this.fluids = new FluidSystem(this.fx.quality, this.fx.ground); this.view.rootNode.add(this.fluids.root); }
+    const F = this.fluids;
+    const ls = style === 'flat' ? 'cartoon' : style;
+    let id = this.bleedIds.get(ls);
+    if (!id) {
+      id = `~bleed-${ls}`;
+      const cfg = { ...defaultFluid('blood'), style: ls, rate: 0, speed: 1.6, spread: 75, dir: 'up' as const };
+      F.addEmitter(id, cfg, new T.Matrix4(), false, this.time);
+      this.bleedIds.set(ls, id);
+    }
+    F.setWorld(F.indexOf(id), this._m.makeTranslation(x, y, z));
+    F.burst(id, n);
   }
 
   // ---------------------------------------------------------------- PNGTuber
@@ -906,6 +964,7 @@ export class Live {
       case 'script': if (a.code) this.runScript(a.code, self); break;
       case 'pose': { const o = this.s.obj(id); const c = o?.card; if (o && c) { const p = a.param ? c.poses?.find(x => x.name === a.param || x.id === a.param) : null; if (!a.param || p) this.setPose(o, p ? p.tex : null); } break; }
       case 'fluid': { if (!this.fluids) break; if (a.param === 'on' || a.param === 'off') this.fluids.setOn(id, a.param === 'on'); else this.fluids.burst(id, Math.max(1, Math.min(600, a.value ?? 40))); break; }
+      case 'particles': { if (!this.parts3) break; if (a.param === 'on' || a.param === 'off') this.parts3.setOn(id, a.param === 'on'); else this.parts3.burst(id, Math.max(1, Math.min(600, a.value ?? 20))); break; }
       case 'audio': if (a.param) { if ((a.value ?? 1) > 0) this.audio.play(a.param); else this.audio.stopTrack(a.param); } else if ((a.value ?? 1) <= 0) this.audio.stopTrack(); break;
     }
   }
@@ -970,6 +1029,10 @@ export class Live {
         /** Líquido: chorro de `n` gotas, o abrir y cerrar el caudal continuo. */
         splash(n = 40) { live.act({ type: 'fluid', target: id, value: n }); },
         pour(on = true) { live.act({ type: 'fluid', target: id, param: on ? 'on' : 'off' }); },
+        /** Partículas: ráfaga de `n` (en el fogonazo, `n` disparos), o abrir y cerrar el caudal continuo. */
+        emit(n = 20) { live.act({ type: 'particles', target: id, value: n }); },
+        fire(n = 1) { live.act({ type: 'particles', target: id, value: n }); },
+        stream(on = true) { live.act({ type: 'particles', target: id, param: on ? 'on' : 'off' }); },
         /** Cambia la pose de un dibujo (nombre o número; 0 = original) con su transición. */
         pose(p: string | number) { const o = objOf(live.s.scene, id); const c = o?.card; if (!o || !c) return; const ps = c.poses ?? []; const t = typeof p === 'number' ? (p <= 0 ? null : ps[p - 1]?.tex) : p === '' ? null : ps.find(x => x.name === p)?.tex; if (t !== undefined) live.setPose(o, t ?? null); },
         spawn(x = 0, y = 2, z = 0) { return handle(live.spawn(id, [x, y, z])); },

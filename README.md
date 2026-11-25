@@ -368,11 +368,13 @@ Proyectos 3D dentro de YOSADRAW («Nuevo proyecto → 3D»): modelado poligonal,
 | Estado y acciones del editor | `src/yosadraw/studio3d/Studio3D.ts` |
 | Visor y render (Three.js), gizmos, modo edición, bloques, pintura | `src/yosadraw/studio3d/View3D.ts` |
 | Texturas procedimentales y de imagen | `src/yosadraw/studio3d/textures.ts` |
-| Importar y exportar | `src/yosadraw/studio3d/io.ts` |
+| Importar (Blender: GLB/glTF con Draco, FBX, OBJ+MTL, DAE, PLY, 3MF, STL; instancias y nubes de puntos) y exportar | `src/yosadraw/studio3d/io.ts` |
 | Interfaz (paneles, jerarquía, línea de tiempo, asistente) | `src/yosadraw/studio3d/ui/*` |
 | Modo En vivo: física (cannon-es), personajes, actores con tecla, ratón, disparadores, programa, grabación | `src/yosadraw/studio3d/live/Live.ts` |
 | Cel shading y lineart de caricatura | `src/yosadraw/studio3d/toon.ts` |
 | Líquidos en vivo (sangre, agua, lava…; estilos) | `src/yosadraw/studio3d/live/fluid.ts` |
+| Partículas en vivo (chispas, fogonazo con luz dinámica, explosión, fuego, humo, órganos, huesos…; forma cambiable por modelo o imagen) | `src/yosadraw/studio3d/live/particles.ts` |
+| Formas de serie de las partículas (órganos, huesos, monedas…) | `src/yosadraw/studio3d/live/partShapes.ts` |
 | Módulo PNGTuber 2D (panel, fondo, vista plana) | `src/yosadraw/studio3d/ui/TuberPanel.ts` |
 | PNGTuber: audio en vivo (pistas, micrófono, hablar) | `src/yosadraw/studio3d/live/audio.ts` |
 | Grabación en vivo (MP4 con audio, GIF) | `src/yosadraw/studio3d/live/recorder.ts` |

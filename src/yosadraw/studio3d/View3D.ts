@@ -1306,6 +1306,32 @@ export class View3D {
     else { bg.repeat.set(aspect / ia, 1); bg.offset.set((1 - aspect / ia) / 2, 0); }
   }
   /** Textura de una pose (se carga una vez y se reutiliza). */
+  /**
+   * Piezas de un objeto (y sus hijos) para usarlo como forma de partícula: cada
+   * malla con copia de su material y su posición, todo centrado y en radio 1.
+   */
+  shapeParts(id: string): { geo: T.BufferGeometry; mat: T.Material | T.Material[]; M: T.Matrix4 }[] {
+    const n = this.nodes.get(id);
+    if (!n) return [];
+    n.node.updateMatrixWorld(true);
+    const inv = n.node.matrixWorld.clone().invert();
+    const out: { geo: T.BufferGeometry; mat: T.Material | T.Material[]; M: T.Matrix4 }[] = [];
+    const box = new T.Box3(), tmp = new T.Box3();
+    n.node.traverse(x => {
+      if (!(x instanceof T.Mesh) || x instanceof T.InstancedMesh || x.userData.helper || !x.geometry?.attributes.position) return;
+      if (!Array.isArray(x.material) && (x.material as T.Material).side === T.BackSide) return; // contornos (lineart)
+      const M = inv.clone().multiply(x.matrixWorld);
+      if (!x.geometry.boundingBox) x.geometry.computeBoundingBox();
+      box.union(tmp.copy(x.geometry.boundingBox!).applyMatrix4(M));
+      const mat = Array.isArray(x.material) ? x.material.map(m => m.clone()) : (x.material as T.Material).clone();
+      out.push({ geo: x.geometry, mat, M });
+    });
+    if (!out.length || box.isEmpty()) return [];
+    const c = box.getCenter(new T.Vector3()), r = Math.max(1e-4, box.getSize(new T.Vector3()).length() / 2);
+    const N = new T.Matrix4().makeScale(1 / r, 1 / r, 1 / r).multiply(new T.Matrix4().makeTranslation(-c.x, -c.y, -c.z));
+    for (const p of out) p.M.premultiply(N);
+    return out;
+  }
   poseTexture(texId: string): T.Texture | null {
     const tx = this.s.s.textures.find(x => x.id === texId);
     return tx ? this.tex.image(tx.id, tx.src) : null;
