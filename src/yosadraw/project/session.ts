@@ -12,7 +12,7 @@ import { browserImageCodec, motionMeta, MAX_DOC_PIXELS, MAX_DOC_SIDE, MIN_DOC_SI
 import { ConflictError, newId, type ProjectEntry, type ProjectLibrary } from './library';
 
 /** Versión de la app que escribe los proyectos. */
-export const APP_VERSION = '1.19.1';
+export const APP_VERSION = '1.19.2';
 
 export interface NewProjectSpec {
   name: string;

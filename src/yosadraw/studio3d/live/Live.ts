@@ -159,6 +159,7 @@ export class Live {
     this.view.liveInput = { down: e => this.down(e), move: e => this.move(e), up: () => this.up(), wheel: e => this.wheel(e) };
     this.view.sync();
     this.time = 0;
+    this.keyed = null;
     this.running = true;
     window.addEventListener('keydown', this.keyFn, true);
     window.addEventListener('keyup', this.keyUpFn, true);
@@ -262,15 +263,17 @@ export class Live {
     this.stats.draw += (t2 - t1 - this.stats.draw) * 0.1;
     this.raf = requestAnimationFrame(t => this.loop(t));
   }
+  private keyed: boolean | null = null;
   private tick(dt: number, realDt: number) {
     const s = this.s;
     this.time += dt;
     this.hooks.time = this.time;
     // Las animaciones con keyframes siguen sonando (en bucle).
     const dur = s.scene.dur;
-    if (dur > 0 && s.scene.objects.some(o => Object.values(o.tf).some(p => p.k?.length))) { s.s.time = this.time % dur; this.view.sync(false); }
+    // (Si la escena tiene keyframes se calcula una vez por ejecución, no en cada fotograma.)
+    if (dur > 0 && (this.keyed ??= s.scene.objects.some(o => Object.values(o.tf).some(p => p.k?.length)))) { s.s.time = this.time % dur; this.view.sync(false); }
     this.timeRules();
-    for (const t of [...this.timers]) if (this.time >= t.at) { this.safe(t.fn); if (t.every > 0) t.at += t.every; else this.timers.splice(this.timers.indexOf(t), 1); }
+    if (this.timers.length) for (const t of [...this.timers]) if (this.time >= t.at) { this.safe(t.fn); if (t.every > 0) t.at += t.every; else this.timers.splice(this.timers.indexOf(t), 1); }
     this.control(dt);
     this.acc += dt;
     let n = 0;

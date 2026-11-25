@@ -120,13 +120,17 @@ export function setMeterSource(fn: typeof meterSource) { meterSource = fn; }
 function meter(threshold: number) {
   const bar = h('div', { class: 's3-meterbar' }), mark = h('div', { class: 's3-metermark', style: { left: `${Math.min(100, threshold * 100)}%` } });
   const el = h('div', { class: 's3-meter', title: 'Nivel del audio (la marca es el umbral para hablar)' }, bar, mark);
+  let w = -1, on = false, idle = false, first = true;
   const tick = () => {
-    if (!el.isConnected) return;
+    if (!el.isConnected && !first) return;
+    first = false;
     const v = meterSource?.() ?? null;
-    bar.style.width = `${Math.round(Math.min(1, v?.level ?? 0) * 100)}%`;
-    el.classList.toggle('on', !!v?.talking);
-    el.classList.toggle('idle', !v);
-    requestAnimationFrame(tick);
+    // Sólo toca el DOM si cambió; sin audio sonando se revisa 4 veces por segundo en vez de 60.
+    const nw = Math.round(Math.min(1, v?.level ?? 0) * 100);
+    if (nw !== w) { w = nw; bar.style.width = `${nw}%`; }
+    if (on !== !!v?.talking) { on = !on; el.classList.toggle('on', on); }
+    if (idle !== !v) { idle = !v; el.classList.toggle('idle', idle); }
+    if (v && document.visibilityState === 'visible') requestAnimationFrame(tick); else setTimeout(tick, 250);
   };
   requestAnimationFrame(tick);
   return el;

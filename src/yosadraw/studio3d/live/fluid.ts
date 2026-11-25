@@ -23,6 +23,7 @@ const QUAL = { low: 700, medium: 1600, high: 3200 } as const;
 const MAX_STAINS = 700;
 const STAIN_FADE: Record<LiquidType, number> = { blood: 0, water: 5, lava: 0, slime: 12, paint: 0, ink: 0 };
 
+const AXES: Record<string, readonly [number, number, number]> = { up: [0, 1, 0], down: [0, -1, 0], front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0] };
 const drop = new T.IcosahedronGeometry(1, 1);
 const disc = new T.CircleGeometry(1, 18).rotateX(-Math.PI / 2);
 
@@ -79,8 +80,15 @@ export class FluidSystem {
   private snx = new Float32Array(MAX_STAINS); private sny = new Float32Array(MAX_STAINS); private snz = new Float32Array(MAX_STAINS);
   private sr = new Float32Array(MAX_STAINS); private sMax = new Float32Array(MAX_STAINS); private sAge = new Float32Array(MAX_STAINS); private sem = new Int16Array(MAX_STAINS);
   private emits: Emit[] = [];
-  private grid = new Map<number, number[]>();
-  private _m = new T.Matrix4(); private _q = new T.Quaternion(); private _v = new T.Vector3(); private _s = new T.Vector3(); private _p = new T.Vector3();
+  private gStart = new Int32Array(0); private gCnt = new Int32Array(0); private gIdx = new Int32Array(0); private gKey = new Int32Array(0); private gSeen = new Int32Array(27); private eV = new Float32Array(4); private eC = new Float32Array(4);
+  /** Tamaño (potencia de 2) de la tabla de cubetas para `n` partículas; crece sólo cuando hace falta. */
+  private bucketCount(n: number) {
+    let B = 1024; while (B < n * 2) B <<= 1;
+    if (this.gStart.length < B) { this.gStart = new Int32Array(B); this.gCnt = new Int32Array(B); }
+    if (this.gIdx.length < n) { const m = Math.max(n, this.max); this.gIdx = new Int32Array(m); this.gKey = new Int32Array(m); }
+    return B;
+  }
+  private _m = new T.Matrix4(); private _q = new T.Quaternion(); private _v = new T.Vector3(); private _s = new T.Vector3(); private _p = new T.Vector3(); private _t1 = new T.Vector3(); private _t2 = new T.Vector3();
   private static readonly Y = new T.Vector3(0, 1, 0);
   /** Gotas vivas (para el contador y las pruebas). */
   get count() { return this.n; }
@@ -123,14 +131,14 @@ export class FluidSystem {
     const W = e.W;
     const o = this._p.setFromMatrixPosition(W);
     // Dirección del eje elegido del objeto, abierta en cono.
-    const ax = { up: [0, 1, 0], down: [0, -1, 0], front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0] }[c.dir] as [number, number, number];
+    const ax = AXES[c.dir] ?? AXES.up;
     const d = this._v.set(ax[0], ax[1], ax[2]).transformDirection(W);
     const a = (c.spread * Math.PI) / 180;
     const th = Math.random() * Math.PI * 2, ph = Math.acos(1 - Math.random() * (1 - Math.cos(a)));
     // Base perpendicular a d.
-    const t1 = Math.abs(d.y) < 0.9 ? new T.Vector3(0, 1, 0).cross(d).normalize() : new T.Vector3(1, 0, 0).cross(d).normalize();
-    const t2 = d.clone().cross(t1);
-    const dir = d.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t1, Math.sin(ph) * Math.cos(th)).addScaledVector(t2, Math.sin(ph) * Math.sin(th));
+    const t1 = (Math.abs(d.y) < 0.9 ? this._t1.set(0, 1, 0) : this._t1.set(1, 0, 0)).cross(d).normalize();
+    const t2 = this._t2.copy(d).cross(t1);
+    const dir = this._s.copy(d).multiplyScalar(Math.cos(ph)).addScaledVector(t1, Math.sin(ph) * Math.cos(th)).addScaledVector(t2, Math.sin(ph) * Math.sin(th));
     const sp = c.speed * speedK * (0.75 + Math.random() * 0.5);
     const k = this.n++;
     const rr = c.size * (0.6 + Math.random() * 0.8);
@@ -182,23 +190,36 @@ export class FluidSystem {
     for (let k = 0; k < n; k++) { vy[k] -= g * h; const dr = 1 - 0.15 * h; vx[k] *= dr; vy[k] *= dr; vz[k] *= dr; }
     // 2) Vecinos (rejilla hash): separar si se pisan, cohesión y viscosidad.
     const cell = 0.12;
-    const grid = this.grid; grid.clear();
-    const key = (x: number, y: number, z: number) => ((Math.floor(x / cell) * 73856093) ^ (Math.floor(y / cell) * 19349663) ^ (Math.floor(z / cell) * 83492791)) | 0;
-    for (let k = 0; k < n; k++) { const kk = key(px[k], py[k], pz[k]); let a = grid.get(kk); if (!a) { a = []; grid.set(kk, a); } a.push(k); }
+    // Rejilla en arreglos fijos (ordenación por cubetas): sin crear memoria en cada subpaso.
+    const B = this.bucketCount(n), mask = B - 1, start = this.gStart, cnt = this.gCnt, idx = this.gIdx, pk = this.gKey;
+    const hash = (cx: number, cy: number, cz: number) => (((cx * 73856093) ^ (cy * 19349663) ^ (cz * 83492791)) >>> 0) & mask;
+    cnt.fill(0, 0, B);
+    for (let k = 0; k < n; k++) { const b = hash(Math.floor(px[k] / cell), Math.floor(py[k] / cell), Math.floor(pz[k] / cell)); pk[k] = b; cnt[b]++; }
+    let acc = 0; for (let b = 0; b < B; b++) { start[b] = acc; acc += cnt[b]; cnt[b] = 0; }
+    for (let k = 0; k < n; k++) { const b = pk[k]; idx[start[b] + cnt[b]++] = k; }
+    const seen = this.gSeen, em = this.em, E = this.emits.length;
+    // Viscosidad y cohesión de cada emisor, a mano (sin buscar su configuración por cada par).
+    const eV = this.eV.length >= E ? this.eV : (this.eV = new Float32Array(E + 4)), eC = this.eC.length >= E ? this.eC : (this.eC = new Float32Array(E + 4));
+    for (let i = 0; i < E; i++) { const c = this.emits[i].cfg; eV[i] = c.visc; eC[i] = c.cohesion; }
     for (let k = 0; k < n; k++) {
-      const ck = this.emits[this.em[k]]?.cfg; if (!ck) continue;
+      const ek = em[k]; if (ek >= E) continue;
+      const vk = eV[ek], ckc = eC[ek];
       const cx = Math.floor(px[k] / cell), cy = Math.floor(py[k] / cell), cz = Math.floor(pz[k] / cell);
+      let ns = 0;
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-        const a = grid.get((((cx + dx) * 73856093) ^ ((cy + dy) * 19349663) ^ ((cz + dz) * 83492791)) | 0);
-        if (!a) continue;
-        for (const j of a) {
+        const b = hash(cx + dx, cy + dy, cz + dz);
+        const c = cnt[b]; if (!c) continue;
+        let dup = false; for (let q = 0; q < ns; q++) if (seen[q] === b) { dup = true; break; }
+        if (dup) continue; seen[ns++] = b;
+        for (let t = start[b], te = t + c; t < te; t++) {
+          const j = idx[t];
           if (j <= k) continue;
           const ex = px[j] - px[k], ey = py[j] - py[k], ez = pz[j] - pz[k];
           const d2 = ex * ex + ey * ey + ez * ez, rs = r[k] + r[j], H = rs * 1.9;
           if (d2 > H * H || d2 < 1e-12) continue;
           const d = Math.sqrt(d2), nx = ex / d, ny = ey / d, nz = ez / d;
-          const cj = this.emits[this.em[j]]?.cfg ?? ck;
-          const visc = (ck.visc + cj.visc) * 0.5, coh = (ck.cohesion + cj.cohesion) * 0.5;
+          const ej = em[j] < E ? em[j] : ek;
+          const visc = (vk + eV[ej]) * 0.5, coh = (ckc + eC[ej]) * 0.5;
           if (d < rs) {
             // Se pisan: separar las posiciones (líquido casi incompresible).
             const push = (rs - d) * 0.5;

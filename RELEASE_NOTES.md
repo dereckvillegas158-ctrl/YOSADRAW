@@ -1,4 +1,17 @@
-## YOSADRAW 1.19.1
+## YOSADRAW 1.19.2
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.19.2-x64.exe` (instalador), `YOSADRAW-1.19.2-x64-portable.exe` o `YOSADRAW-1.19.2-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.19.2.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Optimización
+- **3D en reposo:** el aviso del asistente ya no parpadea sin fin (pulsa unas veces y se queda marcado). Antes obligaba a redibujar el panel 60 veces por segundo aunque no hicieras nada.
+- **PNGTuber en reposo:** el medidor de audio sólo se actualiza a 60 fps mientras suena audio o el micrófono; sin audio se revisa 4 veces por segundo y no toca la pantalla si nada cambia.
+- **Líquidos:** la simulación ya no crea memoria en cada paso (rejilla de vecinos en arreglos fijos), así hay menos tirones con muchas gotas, y es algo más rápida.
+- **Modo en vivo:** menos trabajo repetido en cada fotograma.
+- **Instalador y APK más ligeros:** las fuentes se incluyen sólo en woff2 (unos 160 kB menos).
+
+### Versión anterior: YOSADRAW 1.19.1
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.19.1-x64.exe` (instalador), `YOSADRAW-1.19.1-x64-portable.exe` o `YOSADRAW-1.19.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
