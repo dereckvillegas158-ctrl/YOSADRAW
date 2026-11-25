@@ -1,0 +1,105 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/jugador.gd" id="1"]
+
+[sub_resource type="CapsuleShape3D" id="forma"]
+radius = 0.35
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="mat_arma"]
+albedo_color = Color(0.13, 0.13, 0.14, 1)
+metallic = 0.4
+roughness = 0.55
+
+[sub_resource type="StandardMaterial3D" id="mat_culata"]
+albedo_color = Color(0.25, 0.22, 0.17, 1)
+roughness = 0.8
+
+[sub_resource type="BoxMesh" id="malla_cuerpo"]
+material = SubResource("mat_arma")
+size = Vector3(0.07, 0.11, 0.5)
+
+[sub_resource type="BoxMesh" id="malla_canon"]
+material = SubResource("mat_arma")
+size = Vector3(0.03, 0.03, 0.26)
+
+[sub_resource type="BoxMesh" id="malla_cargador"]
+material = SubResource("mat_arma")
+size = Vector3(0.045, 0.17, 0.08)
+
+[sub_resource type="BoxMesh" id="malla_culata"]
+material = SubResource("mat_culata")
+size = Vector3(0.06, 0.1, 0.22)
+
+[sub_resource type="BoxMesh" id="malla_mira"]
+material = SubResource("mat_arma")
+size = Vector3(0.028, 0.03, 0.07)
+
+[sub_resource type="StandardMaterial3D" id="mat_punto"]
+shading_mode = 0
+albedo_color = Color(1, 0.12, 0.08, 1)
+
+[sub_resource type="SphereMesh" id="malla_punto"]
+material = SubResource("mat_punto")
+radius = 0.0025
+height = 0.005
+radial_segments = 8
+rings = 4
+
+[node name="Jugador" type="CharacterBody3D" groups=["jugador"]]
+collision_layer = 2
+collision_mask = 5
+script = ExtResource("1")
+
+[node name="Colision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("forma")
+
+[node name="Cabeza" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.65, 0)
+
+[node name="Camara" type="Camera3D" parent="Cabeza"]
+current = true
+fov = 75.0
+near = 0.03
+
+[node name="Arma" type="Node3D" parent="Cabeza/Camara"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.22, -0.2, -0.45)
+
+[node name="Cuerpo" type="MeshInstance3D" parent="Cabeza/Camara/Arma"]
+cast_shadow = 0
+mesh = SubResource("malla_cuerpo")
+
+[node name="Canon" type="MeshInstance3D" parent="Cabeza/Camara/Arma"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.015, -0.37)
+cast_shadow = 0
+mesh = SubResource("malla_canon")
+
+[node name="Cargador" type="MeshInstance3D" parent="Cabeza/Camara/Arma"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.13, -0.06)
+cast_shadow = 0
+mesh = SubResource("malla_cargador")
+
+[node name="Culata" type="MeshInstance3D" parent="Cabeza/Camara/Arma"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.02, 0.34)
+cast_shadow = 0
+mesh = SubResource("malla_culata")
+
+[node name="Mira" type="MeshInstance3D" parent="Cabeza/Camara/Arma"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.073, 0.02)
+cast_shadow = 0
+mesh = SubResource("malla_mira")
+
+[node name="PuntoRojo" type="MeshInstance3D" parent="Cabeza/Camara/Arma"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.095, 0)
+cast_shadow = 0
+mesh = SubResource("malla_punto")
+
+[node name="Boca" type="Marker3D" parent="Cabeza/Camara/Arma"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.015, -0.52)
+
+[node name="Fogonazo" type="OmniLight3D" parent="Cabeza/Camara/Arma/Boca"]
+visible = false
+light_color = Color(1, 0.78, 0.4, 1)
+light_energy = 3.0
+omni_range = 5.0
