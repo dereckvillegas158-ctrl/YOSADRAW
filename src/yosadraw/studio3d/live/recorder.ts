@@ -28,7 +28,7 @@ export const recBitrate = (w: number, h: number, fps: number) => Math.round(Math
 
 /** Audio de la escena para grabar: el contexto de audio y la pista con la mezcla. */
 export interface RecAudio { ctx: AudioContext; track: MediaStreamTrack }
-export type RecDone = (data: Uint8Array, ext: 'mp4' | 'webm', note: string) => void;
+export type RecDone = (data: Uint8Array, ext: 'mp4' | 'webm', note: string, summary?: string) => void;
 
 /**
  * Empieza a grabar vídeo: con WebCodecs (H.264 y AAC u Opus en un MP4 normal, con
@@ -52,6 +52,20 @@ async function audioCodec(sampleRate: number): Promise<'aac' | 'opus' | null> {
     try { if ((await AudioEncoder.isConfigSupported({ codec, sampleRate, numberOfChannels: 2, bitrate: 160_000 })).supported) return c; } catch { /* siguiente */ }
   }
   return null;
+}
+
+/**
+ * Casilla de tiempo (número de fotograma del vídeo) para un dibujo hecho en el
+ * fotograma `s` (con decimales). Antes se redondeaba hacia abajo y, como la hora de
+ * cada dibujo varía unos milisegundos, dos seguidos caían a menudo en la misma
+ * casilla y se perdía uno (a 60 fps en una pantalla de 60 Hz, ~1 de cada 4). Ahora
+ * se acepta todo dibujo separado al menos 0,4 fotogramas del anterior, en la casilla
+ * más cercana libre (como mucho un fotograma por delante de su hora real). null = se descarta.
+ */
+export function nextSlot(last: number, lastS: number, s: number): number | null {
+  // Demasiado pegado al dibujo anterior, o la casilla siguiente queda muy por delante de su hora.
+  if (s - lastS < 0.4 || last + 1 - s > 1) return null;
+  return Math.max(Math.round(s), last + 1);
 }
 
 /** Copia el fotograma del visor (encajado, sin deformar) a un lienzo de tamaño fijo. */
@@ -80,8 +94,11 @@ export class LiveRecorder implements LiveRec {
   private failure: Error | null = null;
   private t0 = performance.now();
   private slot = -1;
+  private lastS = -1e9;
   private lastKey = -1e9;
   private stopped = false;
+  /** Codificador de la tarjeta gráfica (si no, el procesador). */
+  readonly hw: boolean;
   private audioNodes: AudioNode[] = [];
   private aStart = -1;
   private aSamples = 0;
@@ -89,6 +106,7 @@ export class LiveRecorder implements LiveRec {
   dropped = 0;
   readonly mime = 'video/mp4';
   constructor(readonly w: number, readonly h: number, readonly fps: number, codec: string, private done: RecDone, first?: HTMLCanvasElement, audio?: (RecAudio & { codec: 'aac' | 'opus' }) | null, hw = false) {
+    this.hw = hw;
     this.canvas.width = w; this.canvas.height = h;
     this.g = this.canvas.getContext('2d', { alpha: false })!;
     this.g.fillStyle = '#000'; this.g.fillRect(0, 0, w, h);
@@ -101,7 +119,7 @@ export class LiveRecorder implements LiveRec {
     });
     const fail = (e: unknown) => { this.failure ??= e instanceof Error ? e : new Error(String(e)); };
     this.venc = new VideoEncoder({ output: (c, m) => this.muxer.addVideoChunk(c, m), error: fail });
-    this.venc.configure({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), latencyMode: 'realtime', hardwareAcceleration: hw ? 'prefer-hardware' : 'no-preference', avc: { format: 'avc' } });
+    this.venc.configure({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), latencyMode: hw ? 'quality' : 'realtime', hardwareAcceleration: hw ? 'prefer-hardware' : 'no-preference', avc: { format: 'avc' } });
     if (audio) {
       this.aenc = new AudioEncoder({ output: (c, m) => this.muxer.addAudioChunk(c, m), error: fail });
       this.aenc.configure({ codec: audio.codec === 'aac' ? 'mp4a.40.2' : 'opus', sampleRate: sr, numberOfChannels: 2, bitrate: 192_000 });
@@ -117,17 +135,21 @@ export class LiveRecorder implements LiveRec {
     void first;
   }
   static supported() { return (typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined') || (typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype); }
-  get seconds() { return (performance.now() - this.t0) / 1000; }
+  private endT = 0;
+  get seconds() { return ((this.endT || performance.now()) - this.t0) / 1000; }
+  /** Resumen para el aviso al guardar. */
+  get summary() { const sec = Math.max(0.001, this.seconds); return `${(this.frames / sec).toFixed(0)} fps de media · codificador: ${this.hw ? 'tarjeta gráfica' : 'procesador'}${this.dropped ? ` · ${this.dropped} fotogramas descartados (el codificador no daba abasto)` : ''}`; }
   frame(src: HTMLCanvasElement) {
     if (this.stopped || this.failure) return;
-    const slot = Math.floor(((performance.now() - this.t0) / 1000) * this.fps);
-    if (slot <= this.slot) return;
+    const sNow = ((performance.now() - this.t0) / 1000) * this.fps;
+    const slot = nextSlot(this.slot, this.lastS, sNow);
+    if (slot === null) return;
     // Si el codificador va muy atrasado, se salta el fotograma (el anterior dura más).
     if (this.venc.encodeQueueSize > 12) { this.dropped++; return; }
     // Mismo tamaño que el vídeo: el fotograma sale directo del visor (sin copiarlo antes).
     const direct = src.width === this.w && src.height === this.h;
     if (!direct && !fit(this.g, src, this.w, this.h)) return;
-    this.slot = slot;
+    this.slot = slot; this.lastS = sNow;
     const us = 1e6 / this.fps;
     const vf = new VideoFrame(direct ? src : this.canvas, { timestamp: Math.round(slot * us), duration: Math.round(us) });
     const key = slot - this.lastKey >= this.fps * 2;
@@ -152,6 +174,7 @@ export class LiveRecorder implements LiveRec {
   stop() {
     if (this.stopped) return;
     this.stopped = true;
+    this.endT = performance.now();
     for (const n of this.audioNodes) { try { n.disconnect(); } catch { /* ya desconectado */ } }
     const sp = this.audioNodes[1] as ScriptProcessorNode | undefined; if (sp) sp.onaudioprocess = null;
     void (async () => {
@@ -160,7 +183,7 @@ export class LiveRecorder implements LiveRec {
         if (this.aenc) { await this.aenc.flush(); this.aenc.close(); }
         if (this.failure) throw this.failure;
         this.muxer.finalize();
-        this.done(new Uint8Array(this.target.buffer), 'mp4', '');
+        this.done(new Uint8Array(this.target.buffer), 'mp4', '', this.summary);
       } catch (e) {
         this.done(new Uint8Array(0), 'mp4', e instanceof Error ? e.message : String(e));
       }

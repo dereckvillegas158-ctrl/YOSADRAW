@@ -347,6 +347,12 @@ export class FxPipeline {
     this.setSize(this.w, this.h);
   }
   get currentQuality() { return this.quality; }
+  /** Suavizado de bordes (MSAA) de la escena con efectos (al grabar en vivo). */
+  setMsaa(n: number) {
+    const c = this.composer as unknown as { renderTarget1: T.WebGLRenderTarget; renderTarget2: T.WebGLRenderTarget };
+    if (this.fixedRatio || c.renderTarget1.samples === n) return;
+    for (const rt of [c.renderTarget1, c.renderTarget2]) { rt.samples = n; rt.dispose(); }
+  }
   setSize(w: number, h: number) {
     this.w = w; this.h = h;
     const q = QUALITY[this.quality];
