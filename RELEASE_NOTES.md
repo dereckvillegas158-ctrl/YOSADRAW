@@ -1,4 +1,16 @@
-## YOSADRAW 1.20.4
+## YOSADRAW 1.20.5
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.20.5-x64.exe` (instalador), `YOSADRAW-1.20.5-x64-portable.exe` o `YOSADRAW-1.20.5-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.20.5.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Grabar con efectos y estilos ya no va a tirones
+- **Sin suavizado MSAA al grabar:** con efectos casi duplicaba el coste de cada fotograma.
+- **Volumen (oclusión ambiental) a media resolución:** volvía a dibujar toda la escena a resolución completa; ahora cuesta menos de la mitad y se ve igual (también en pantalla).
+- **Estilo óleo más rápido:** 36 lecturas por píxel en vez de 64, con el mismo aspecto pictórico.
+- En total, grabar con todos los efectos y estilos a la vez cuesta un 40–55 % menos por fotograma.
+
+### Versión anterior: YOSADRAW 1.20.4
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.20.4-x64.exe` (instalador), `YOSADRAW-1.20.4-x64-portable.exe` o `YOSADRAW-1.20.4-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

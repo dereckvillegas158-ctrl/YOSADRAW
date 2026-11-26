@@ -89,13 +89,14 @@ const STYLE = {
     vec3 kuwahara(vec2 uv, float r){
       vec2 px = r / res; vec3 m[4]; vec3 s2[4];
       for (int k = 0; k < 4; k++) { m[k] = vec3(0.0); s2[k] = vec3(0.0); }
-      for (int j = 0; j <= 3; j++) for (int i = 0; i <= 3; i++) {
-        vec2 o = vec2(float(i), float(j)) * px / 3.0;
+      // 3×3 muestras por cuadrante (36 lecturas en vez de 64): casi igual de pictórico y mucho más rápido.
+      for (int j = 0; j <= 2; j++) for (int i = 0; i <= 2; i++) {
+        vec2 o = vec2(float(i), float(j)) * px / 2.0;
         vec3 a = tex(uv + vec2(-o.x, -o.y)).rgb, b = tex(uv + vec2(o.x, -o.y)).rgb, c = tex(uv + vec2(-o.x, o.y)).rgb, d = tex(uv + o).rgb;
         m[0] += a; s2[0] += a * a; m[1] += b; s2[1] += b * b; m[2] += c; s2[2] += c * c; m[3] += d; s2[3] += d * d;
       }
       vec3 best = vec3(0.0); float bv = 1e9;
-      for (int k = 0; k < 4; k++) { vec3 mu = m[k] / 16.0; vec3 v = abs(s2[k] / 16.0 - mu * mu); float vs = v.r + v.g + v.b; if (vs < bv) { bv = vs; best = mu; } }
+      for (int k = 0; k < 4; k++) { vec3 mu = m[k] / 9.0; vec3 v = abs(s2[k] / 9.0 - mu * mu); float vs = v.r + v.g + v.b; if (vs < bv) { bv = vs; best = mu; } }
       return best;
     }
     void main(){
@@ -365,7 +366,9 @@ export class FxPipeline {
     this.final.uniforms.res.value.set(w * pr, h * pr);
     this.style.uniforms.res.value.set(w * pr, h * pr);
     this.mask.setSize(Math.round(w * pr), Math.round(h * pr));
-    this.ao.setSize(Math.round(w * pr), Math.round(h * pr));
+    // Oclusión a media resolución: vuelve a dibujar la escena para sus normales y profundidad,
+    // y su resultado ya es difuso; a la mitad cuesta ~4 veces menos y se ve igual.
+    this.ao.setSize(Math.max(1, Math.round(w * pr * 0.5)), Math.max(1, Math.round(h * pr * 0.5)));
   }
   /** Dibuja con efectos. `sunDir` = dirección hacia la luz principal (null = sin rayos). */
   render(scene: T.Scene, camera: T.Camera, f: Fx3, time: number, sunDir: T.Vector3 | null, objStyles: StyleLike[] = []) {
