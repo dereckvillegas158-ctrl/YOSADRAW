@@ -16,7 +16,7 @@ import type { Fx3 } from '../model';
  * resolución interna y el número de muestras.
  */
 
-const QUALITY = { low: { ratio: 0.75, occ: 0.25, samples: 24, bloomRes: 0.35 }, medium: { ratio: 1, occ: 0.35, samples: 48, bloomRes: 0.5 }, high: { ratio: 2, occ: 0.5, samples: 80, bloomRes: 0.7 } };
+const QUALITY = { low: { ratio: 0.75, occ: 0.25, samples: 16, bloomRes: 0.3 }, medium: { ratio: 1, occ: 0.3, samples: 28, bloomRes: 0.42 }, high: { ratio: 2, occ: 0.45, samples: 48, bloomRes: 0.6 } };
 export type Quality = keyof typeof QUALITY;
 
 const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
@@ -26,8 +26,12 @@ const RAYS = (samples: number) => new T.ShaderMaterial({
   uniforms: { tOcc: { value: null }, center: { value: new T.Vector2(0.5, 0.5) }, density: { value: 0.9 }, decay: { value: 0.955 }, weight: { value: 0.5 }, exposure: { value: 0.35 } },
   vertexShader: VERT,
   fragmentShader: `uniform sampler2D tOcc; uniform vec2 center; uniform float density, decay, weight, exposure; varying vec2 vUv;
-    void main(){ vec2 uv = vUv; vec2 d = (uv - center) * density / ${samples}.0; vec3 c = vec3(0.0); float il = 1.0;
-      for (int i = 0; i < ${samples}; i++) { uv -= d; c += texture2D(tOcc, uv).rgb * il * weight; il *= decay; }
+    void main(){ vec2 d = (vUv - center) * density / ${samples}.0;
+      // Inicio desplazado al azar por píxel: con menos muestras no aparecen bandas.
+      float j = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+      vec2 uv = vUv - d * j; vec3 c = vec3(0.0); float il = 1.0;
+      float dk = pow(decay, 48.0 / ${samples}.0), w = weight * 48.0 / ${samples}.0;
+      for (int i = 0; i < ${samples}; i++) { uv -= d; c += texture2D(tOcc, uv).rgb * il * w; il *= dk; }
       gl_FragColor = vec4(c * exposure, 1.0); }`,
   depthTest: false, depthWrite: false,
 });
@@ -52,12 +56,14 @@ const FINAL = {
       vec2 d = uv - 0.5;
       float ca = chroma * 0.014 + glitch * 0.012 * step(0.7, rnd(vec2(floor(time * 9.0), 1.0)));
       vec4 base = texture2D(tDiffuse, uv);
-      vec3 col = vec3(texture2D(tDiffuse, uv + d * ca).r, base.g, texture2D(tDiffuse, uv - d * ca).b);
-      col += texture2D(tRays, vUv).rgb * rayColor * rays;
+      // Sólo se leen las texturas extra si su efecto está en uso (la condición es igual en todos los píxeles: no cuesta).
+      vec3 col = ca > 0.0 ? vec3(texture2D(tDiffuse, uv + d * ca).r, base.g, texture2D(tDiffuse, uv - d * ca).b) : base.rgb;
+      vec3 rc = rays > 0.0 ? texture2D(tRays, vUv).rgb : vec3(0.0);
+      col += rc * rayColor * rays;
       col = mix(col, col * tint * 1.25, tintAmt);
       col *= mix(1.0, smoothstep(0.95, 0.25, length(d)), vignette);
-      col += (rnd(vUv * res + fract(time)) - 0.5) * grain * 0.18;
-      gl_FragColor = vec4(col, max(base.a, min(1.0, dot(texture2D(tRays, vUv).rgb, vec3(0.33)) * rays)));
+      if (grain > 0.0) col += (rnd(vUv * res + fract(time)) - 0.5) * grain * 0.18;
+      gl_FragColor = vec4(col, max(base.a, min(1.0, dot(rc, vec3(0.33)) * rays)));
     }`,
 };
 
@@ -85,28 +91,38 @@ const STYLE = {
     float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += vn(p) * a; p *= 2.03; a *= 0.5; } return s; }
     float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
     vec4 tex(vec2 uv){ return texture2D(tDiffuse, clamp(uv, 0.0, 1.0)); }
-    int slotAt(vec2 uv){ if (useMask < 0.5) return 0; return int(floor(texture2D(tMask, clamp(uv, 0.0, 1.0)).r * 255.0 / 16.0 + 0.5)); }
+    #ifdef S_MASK
+    int slotAt(vec2 uv){ return int(floor(texture2D(tMask, clamp(uv, 0.0, 1.0)).r * 255.0 / 16.0 + 0.5)); }
+    #else
+    int slotAt(vec2 uv){ return 0; }
+    #endif
+    #ifdef S_PAINT
     vec3 kuwahara(vec2 uv, float r){
       vec2 px = r / res; vec3 m[4]; vec3 s2[4];
       for (int k = 0; k < 4; k++) { m[k] = vec3(0.0); s2[k] = vec3(0.0); }
-      // 3×3 muestras por cuadrante (36 lecturas en vez de 64): casi igual de pictórico y mucho más rápido.
-      for (int j = 0; j <= 2; j++) for (int i = 0; i <= 2; i++) {
-        vec2 o = vec2(float(i), float(j)) * px / 2.0;
+      // 2×2 lecturas por cuadrante entre píxeles: el filtrado de la tarjeta promedia 4 píxeles
+      // en cada una, así 16 lecturas cubren lo que antes eran 64.
+      for (int j = 0; j <= 1; j++) for (int i = 0; i <= 1; i++) {
+        vec2 o = (vec2(float(i), float(j)) * 0.6 + 0.35) * px;
         vec3 a = tex(uv + vec2(-o.x, -o.y)).rgb, b = tex(uv + vec2(o.x, -o.y)).rgb, c = tex(uv + vec2(-o.x, o.y)).rgb, d = tex(uv + o).rgb;
         m[0] += a; s2[0] += a * a; m[1] += b; s2[1] += b * b; m[2] += c; s2[2] += c * c; m[3] += d; s2[3] += d * d;
       }
       vec3 best = vec3(0.0); float bv = 1e9;
-      for (int k = 0; k < 4; k++) { vec3 mu = m[k] / 9.0; vec3 v = abs(s2[k] / 9.0 - mu * mu); float vs = v.r + v.g + v.b; if (vs < bv) { bv = vs; best = mu; } }
+      for (int k = 0; k < 4; k++) { vec3 mu = m[k] / 4.0; vec3 v = abs(s2[k] / 4.0 - mu * mu); float vs = v.r + v.g + v.b; if (vs < bv) { bv = vs; best = mu; } }
       return best;
     }
+    #endif
     void main(){
       vec2 uv = vUv;
       int sl = slotAt(vUv);
       // Píxeles grandes.
       float pix = sB[sl].z;
+      #ifdef S_PIX
       if (pix > 0.0) { vec2 cell = vec2(1.0 + pix * 15.0) / res; uv = (floor(uv / cell) + 0.5) * cell; }
+      #endif
       // Squiggle: desplazamiento con ruido que cambia a saltos. Cerca del borde de un
       // objeto con squiggle propio también se desplaza, para que su contorno tiemble.
+      #ifdef S_SQUIG
       vec4 A = sA[sl];
       if (A.x <= 0.0 && useMask > 0.5) {
         vec2 r8 = 8.0 / res;
@@ -119,10 +135,18 @@ const STYLE = {
         uv += (vec2(vn(q), vn(q + 19.7)) - 0.5) * A.x * 7.0 / res * (res.y / 720.0 + 0.5);
         sl = slotAt(uv);
       }
+      #endif
       vec4 B = sB[sl];
       vec4 base = tex(uv);
+      #ifdef S_PAINT
       vec3 col = B.w > 0.0 ? kuwahara(uv, 1.0 + B.w * 7.0 * res.y / 1080.0) : base.rgb;
+      #else
+      vec3 col = base.rgb;
+      #endif
+      #ifdef S_POST
       if (B.x > 0.0) { float lv = mix(24.0, 3.0, B.x); col = floor(col * lv + 0.5) / lv; }
+      #endif
+      #ifdef S_HALF
       // Semitono: puntos en rejilla girada 45° (más grandes donde es más oscuro).
       if (B.y > 0.0) {
         float cs = max(3.0, res.y / 150.0);
@@ -132,6 +156,8 @@ const STYLE = {
         float dotm = 1.0 - smoothstep(r - 0.06, r + 0.06, d);
         col = mix(col, mix(min(col * 1.15 + 0.05, 1.0), col * 0.3, dotm), B.y);
       }
+      #endif
+      #ifdef S_INK
       // Tinta: bordes (Sobel de luminancia y de alfa) y la silueta de los objetos con estilo.
       float ink = sA[sl].w; vec3 inkC = sInk[sl];
       vec2 px = (1.0 + max(ink, 0.5) * 1.5 * res.y / 1080.0) / res;
@@ -154,12 +180,16 @@ const STYLE = {
         col = mix(col, inkC, e * min(1.0, ink * 1.4));
         base.a = max(base.a, e * ink);
       }
+      #endif
+      #ifdef S_PAPER
       // Papel (toda la escena): fibras y manchas suaves, tono cálido.
       if (paper > 0.0) {
         vec2 pp = vUv * res / (res.y / 720.0);
         float n = fbm(pp / 90.0) * 0.6 + vn(pp / 2.5) * 0.4;
         col *= mix(vec3(1.0), vec3(0.99, 0.95, 0.86) * (0.9 + 0.18 * n), paper);
       }
+      #endif
+      #ifdef S_SCAN
       // Líneas de TV.
       float scan = sC[sl].x;
       if (scan > 0.0) {
@@ -168,6 +198,7 @@ const STYLE = {
         col *= 1.0 - scan * 0.12 * step(0.5, fract(vUv.y * 3.0 - time * 0.35)) * 0.5;
         col = mix(col, col * vec3(1.06, 0.98, 1.04), scan * 0.5);
       }
+      #endif
       gl_FragColor = vec4(clamp(col, 0.0, 1.0), base.a);
     }`,
 };
@@ -314,6 +345,7 @@ export class FxPipeline {
   private w = 1; private h = 1;
   /** Resolución mínima (píxeles por punto) mientras se graba un vídeo; 0 = la normal. */
   minRatio = 0;
+  private styleKey = '?';
   /** FPS medidos (para bajar la calidad sola). */
   fps = 60;
   private frames = 0; private t0 = performance.now(); private slow = 0;
@@ -398,6 +430,21 @@ export class FxPipeline {
       };
       put(0, f, null);
       for (let i = 0; i < n; i++) put(i + 1, objStyles[i], f);
+      // Variante del sombreador sólo con los estilos en uso (lo demás ni se compila):
+      // mucho más ligera que ejecutar todos los estilos y mirar 16 ranuras en cada píxel.
+      const on = (k: keyof StyleLike) => (Number(f[k]) || 0) > 0 || objStyles.slice(0, n).some(o => (Number(o[k]) || 0) > 0);
+      const defs: Record<string, string> = {};
+      if (n > 0) defs.S_MASK = '';
+      if (on('squiggle')) defs.S_SQUIG = '';
+      if (on('ink') || n > 0) defs.S_INK = '';
+      if (on('posterize')) defs.S_POST = '';
+      if (on('halftone')) defs.S_HALF = '';
+      if (on('pixel')) defs.S_PIX = '';
+      if (on('paint')) defs.S_PAINT = '';
+      if (on('scan')) defs.S_SCAN = '';
+      if ((f.paper ?? 0) > 0) defs.S_PAPER = '';
+      const key = Object.keys(defs).join(',');
+      if (key !== this.styleKey) { this.styleKey = key; this.style.material.defines = defs; this.style.material.needsUpdate = true; }
       st.paper.value = f.paper ?? 0; st.time.value = time;
       st.useMask.value = n > 0 ? 1 : 0;
       if (n > 0) { this.mask.render(this.composer.renderer, scene, camera); st.tMask.value = this.mask.rt.texture; }
@@ -435,7 +482,7 @@ export class FxPipeline {
  */
 /** Foco de cada haz (fuera de userData, que se copia con JSON al clonar/exportar). */
 export const coneLight = new WeakMap<T.Object3D, T.SpotLight>();
-export const CONE_STEPS = { low: 10, medium: 18, high: 28 } as const;
+export const CONE_STEPS = { low: 8, medium: 12, high: 20 } as const;
 export function volumeCone(angleDeg: number, length: number): T.Mesh {
   const tanA = Math.tan((Math.max(1, Math.min(80, angleDeg)) * Math.PI) / 180);
   const r = tanA * length;
@@ -480,19 +527,21 @@ export function volumeCone(angleDeg: number, length: number): T.Mesh {
         // Ruido por píxel (y por fotograma) para repartir los pasos sin bandas.
         float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) + time * 0.618);
         float n = steps, dt = tEnd / n, acc = 0.0;
+        // Polvo en el aire: una vez por rayo (antes, dos senos en cada paso).
+        vec3 pm = o + d * tEnd * 0.5;
+        float dust = 0.85 + 0.15 * sin(pm.x * 4.0 + time * 1.3) * sin(pm.y * 3.0 - time * 0.9 + pm.z * 2.0);
         for (int i = 0; i < 32; i++) {
           if (float(i) >= n) break;
           vec3 p = o + d * (dt * (float(i) + jit));
           float z = -p.z; if (z <= 0.0) continue;
           float edge = smoothstep(1.0, 0.55, length(p.xy) / (tanA * z));
           float fall = 1.0 / (1.0 + 6.0 * (z / len) * (z / len)) * smoothstep(len, len * 0.75, z);
-          float dust = 0.85 + 0.15 * sin(p.x * 4.0 + time * 1.3) * sin(p.y * 3.0 - time * 0.9 + p.z * 2.0);
-          acc += lit(p) * edge * fall * dust;
+          acc += lit(p) * edge * fall;
         }
         // Más brillo mirando hacia el foco (dispersión hacia delante).
         float c = dot(d, normalize(o + d * tEnd * 0.5));
         float phase = clamp(0.8775 / pow(1.1225 - 0.7 * c, 1.5), 0.5, 3.0);
-        float a = 1.0 - exp(-acc * dt * strength * 0.9 * phase / max(0.3, tanA * len * 0.5));
+        float a = 1.0 - exp(-acc * dust * dt * strength * 0.9 * phase / max(0.3, tanA * len * 0.5));
         gl_FragColor = vec4(color * a, a);
       }`,
     transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.FrontSide,
