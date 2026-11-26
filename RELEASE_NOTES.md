@@ -1,4 +1,17 @@
-## YOSADRAW 1.20.5
+## YOSADRAW 1.20.6
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.20.6-x64.exe` (instalador), `YOSADRAW-1.20.6-x64-portable.exe` o `YOSADRAW-1.20.6-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.20.6.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Efectos y luces volumétricas más ligeros (también al grabar)
+- **Estilos (squiggle, tinta, óleo, semitono, píxel, papel, TV):** antes, con uno solo activo, cada píxel ejecutaba todos los estilos y revisaba 16 ranuras de objetos. Ahora sólo se usa una variante con los estilos activos: squiggle, semitono y píxel cuestan ~3–4 veces menos, y tinta la mitad.
+- **Óleo:** 16 lecturas por píxel (la tarjeta gráfica promedia 4 en cada una) en vez de 36: la mitad de coste, con trazo igual de pictórico.
+- **Haces de luz de los focos:** menos pasos por rayo (con ruido para que no haya bandas) y el polvo del aire se calcula una vez por rayo. Siguen cortándose con las paredes.
+- **Rayos de sol:** menos muestras con inicio aleatorio por píxel (sin bandas) y oclusión a menor resolución: ~4 veces menos coste.
+- **Resplandor (bloom)** a algo menos de resolución y composición final que sólo lee lo que usa (aberración, rayos, grano).
+
+### Versión anterior: YOSADRAW 1.20.5
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.20.5-x64.exe` (instalador), `YOSADRAW-1.20.5-x64-portable.exe` o `YOSADRAW-1.20.5-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
