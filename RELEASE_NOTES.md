@@ -1,4 +1,18 @@
-## YOSADRAW 1.20.1
+## YOSADRAW 1.20.2
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.20.2-x64.exe` (instalador), `YOSADRAW-1.20.2-x64-portable.exe` o `YOSADRAW-1.20.2-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.20.2.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Grabaciones en vivo más fluidas
+- **La ventana ya no se frena en segundo plano (PC):** si YOSADRAW quedaba detrás de otra ventana (por ejemplo OBS) o minimizado, Windows y Electron bajaban el dibujo a casi nada y el vídeo salía con muy pocos fotogramas. Ahora sigue a su ritmo.
+- **Elige 30 o 60 fps** para el vídeo (junto a la calidad). Antes se usaban los fps de la escena (30 por defecto).
+- **Codificador de la tarjeta gráfica** cuando el equipo lo tiene, y sin copia extra de cada imagen cuando el visor ya tiene el tamaño del vídeo: grabar frena menos el dibujo.
+- **Los fps reales de la grabación** se ven mientras grabas («● 0:12 · 58 fps»). Si salen bajos, baja la calidad (720p) o los efectos: el vídeo graba lo que el equipo llega a dibujar.
+- El primer fotograma ya no sale negro.
+- (El GIF sigue a 15 fps a propósito, para que pese poco.)
+
+### Versión anterior: YOSADRAW 1.20.1
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.20.1-x64.exe` (instalador), `YOSADRAW-1.20.1-x64-portable.exe` o `YOSADRAW-1.20.1-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
