@@ -1,4 +1,16 @@
-## YOSADRAW 1.20.2
+## YOSADRAW 1.20.3
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.20.3-x64.exe` (instalador), `YOSADRAW-1.20.3-x64-portable.exe` o `YOSADRAW-1.20.3-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.20.3.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Grabaciones en vivo: más fotogramas, más calidad y audio del PNGTuber
+- **Ya no se pierden fotogramas:** cada imagen se colocaba en su hueco de tiempo redondeando hacia abajo y, como la hora de cada dibujo varía unos milisegundos, a 60 fps se tiraba cerca de 1 de cada 4 (con tirones). Ahora se guardan todos.
+- **Más nitidez con efectos:** al grabar, la escena con efectos (bloom, oclusión, estilos…) se dibuja con bordes suavizados (MSAA) y el codificador de la tarjeta gráfica trabaja en modo calidad.
+- **Audio del PNGTuber:** con un PNGTuber en la escena, el vídeo siempre lleva audio: tu voz (aunque actives el micrófono a mitad de la grabación, antes se quedaba sin sonido) y las pistas. Sin PNGTuber, el vídeo se graba sin audio.
+- Al guardar, el aviso dice los fps de media y si se usó la tarjeta gráfica o el procesador; mientras grabas se ven los fps que se están guardando.
+
+### Versión anterior: YOSADRAW 1.20.2
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.20.2-x64.exe` (instalador), `YOSADRAW-1.20.2-x64-portable.exe` o `YOSADRAW-1.20.2-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

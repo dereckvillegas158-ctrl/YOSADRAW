@@ -84,8 +84,11 @@ export class LiveAudio {
   get recordTrack(): MediaStreamTrack | null { return this.dest?.stream.getAudioTracks()[0] ?? null; }
   /** Prepara el audio para grabarlo (si la escena tiene pistas o micrófono). */
   /** Lo necesario para grabar el audio: el contexto y la pista con la mezcla (null = sin audio). */
-  recordAudio(): { ctx: AudioContext; track: MediaStreamTrack } | null {
-    const track = this.recordable();
+  recordAudio(force = false): { ctx: AudioContext; track: MediaStreamTrack } | null {
+    // Con `force` (escena con PNGTuber) se prepara aunque aún no suene nada: el micrófono
+    // que se active a mitad de la grabación también queda grabado.
+    if (force) { this.ensure(); void this.ctx!.resume(); }
+    const track = force ? this.recordTrack : this.recordable();
     return track && this.ctx ? { ctx: this.ctx, track } : null;
   }
   recordable(): MediaStreamTrack | null {

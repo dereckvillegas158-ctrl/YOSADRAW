@@ -205,6 +205,8 @@ export class UI3D {
     if (t === 'tuber') this.tuber.render();
   }
   get isTuber() { return this.s.active && this.s.s.kind === 'tuber'; }
+  /** Hay un PNGTuber (proyecto PNGTuber o algún personaje que habla): sólo entonces se graba el audio. */
+  get hasTuber() { return this.isTuber || (this.s.active && this.s.scene.objects.some(o => !!o.card?.tuber)); }
   /** PNGTuber: vista plana de frente con los personajes encuadrados. */
   private frame2D() {
     this.view.setView('front');
@@ -450,7 +452,7 @@ export class UI3D {
     if (!live.running) { void this.afterStop(); return; }
     this.playBtn.innerHTML = live.running ? '■ <span>Parar</span>' : '▶ <span>En vivo</span>';
     const fps = this.hud.querySelector('.s3-fps');
-    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos${live.fluidCount ? ` · ${live.fluidCount} gotas` : ''} · ${live.time.toFixed(1)} s`; const hm = this.hud.querySelector<HTMLElement>('.s3-hudmeter i'); if (hm) { hm.style.width = `${Math.round(Math.min(1, live.audio.level) * 100)}%`; hm.parentElement!.classList.toggle('on', live.audio.talking); hm.parentElement!.hidden = !live.audio.active; } const rt = this.hud.querySelector('.s3-rectime'); if (rt) { const v = this.video; rt.textContent = v ? `● ${Math.floor(v.seconds / 60)}:${String(Math.floor(v.seconds % 60)).padStart(2, '0')}${v.seconds > 1 ? ` · ${Math.round(v.frames / v.seconds)} fps` : ''}` : ''; } setTimeout(tick, 500); }; tick(); }
+    if (fps && !fps.hasAttribute('data-tick')) { fps.setAttribute('data-tick', ''); const tick = () => { if (!this.live?.running || !fps.isConnected) return; fps.textContent = `${this.video && this.video.seconds > 1 ? `● ${Math.round(this.video.frames / this.video.seconds)} fps grabando · ` : ''}${this.view.fps ? `${Math.round(this.view.fps)} FPS · ` : ''}${live.bodyCount} cuerpos${live.fluidCount ? ` · ${live.fluidCount} gotas` : ''} · ${live.time.toFixed(1)} s`; const hm = this.hud.querySelector<HTMLElement>('.s3-hudmeter i'); if (hm) { hm.style.width = `${Math.round(Math.min(1, live.audio.level) * 100)}%`; hm.parentElement!.classList.toggle('on', live.audio.talking); hm.parentElement!.hidden = !live.audio.active; } const rt = this.hud.querySelector('.s3-rectime'); if (rt) { const v = this.video; rt.textContent = v ? `● ${Math.floor(v.seconds / 60)}:${String(Math.floor(v.seconds % 60)).padStart(2, '0')}${v.seconds > 1 ? ` · ${Math.round(v.frames / v.seconds)} fps` : ''}` : ''; } setTimeout(tick, 500); }; tick(); }
     // Actores: quién se controla (clic en uno para elegirlo; en el activo, para soltarlo).
     const bar = this.hud.querySelector<HTMLElement>('.s3-actors');
     if (bar) {
@@ -514,17 +516,17 @@ export class UI3D {
     const token = {};
     this.video = { frame() {}, stop() {}, seconds: 0, frames: 0 };
     (this.video as { token?: object }).token = token;
-    void startLiveVideo(dims.w, dims.h, fps, (data, ext, note) => void (async () => {
+    void startLiveVideo(dims.w, dims.h, fps, (data, ext, note, summary) => void (async () => {
       if (note || !data.length) { toast(`No se pudo guardar el vídeo: ${note || 'sin fotogramas'}`, 'error'); return; }
       const name = `${this.deps.name()}-en-vivo.${ext}`;
       await saveFile(name, data);
-      toast(`Vídeo guardado: ${name} (${dims.w} × ${dims.h})`, 'ok');
-    })(), cv, live.audio.recordAudio()).then(r => {
+      toast(`Vídeo guardado: ${name} (${dims.w} × ${dims.h}${summary ? ` · ${summary}` : ''})`, 'ok');
+    })(), cv, this.hasTuber ? live.audio.recordAudio(true) : null).then(r => {
       // Se paró (o se cerró el modo en vivo) mientras se preparaba.
       const L = this.live;
       if ((this.video as { token?: object } | null)?.token !== token || !L?.running) { r.cancel?.(); return; }
       this.video = r;
-      this.view.setRecordHeight(dims.h);
+      this.view.setRecordHeight(dims.h, true);
       L.onFrame = () => r.frame(cv);
       toast(`Grabando vídeo a ${dims.w} × ${dims.h}, ${fps} fps (F9 para parar)`);
     }).catch(e => { this.video = null; this.renderHud(); toast(`No se pudo grabar: ${e instanceof Error ? e.message : String(e)}`, 'error'); });
