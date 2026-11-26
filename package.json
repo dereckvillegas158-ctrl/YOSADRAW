@@ -1,6 +1,6 @@
 {
   "name": "yosadraw",
-  "version": "1.20.3",
+  "version": "1.20.4",
   "private": true,
   "type": "module",
   "description": "YOSADRAW: aplicación de dibujo con motor de pinceles y estabilizador de trazos",

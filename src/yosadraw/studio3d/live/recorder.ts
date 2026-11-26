@@ -8,7 +8,7 @@
  * exacto. La calidad (resolución y bits por segundo) se elige al empezar.
  */
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
-import { mp4Codec } from '../../anim/webexport';
+import { AVC, mp4Codec } from '../../anim/webexport';
 
 export type RecSize = 'screen' | '720' | '1080' | '1440' | 'gif';
 export const REC_SIZES: [RecSize, string][] = [['1080', 'MP4 1080p (Full HD)'], ['1440', 'MP4 1440p (2K)'], ['720', 'MP4 720p'], ['screen', 'MP4 tamaño de la pantalla'], ['gif', 'GIF animado (640 px, hasta 40 s)']];
@@ -28,30 +28,65 @@ export const recBitrate = (w: number, h: number, fps: number) => Math.round(Math
 
 /** Audio de la escena para grabar: el contexto de audio y la pista con la mezcla. */
 export interface RecAudio { ctx: AudioContext; track: MediaStreamTrack }
-export type RecDone = (data: Uint8Array, ext: 'mp4' | 'webm', note: string, summary?: string) => void;
+/** `wav`: el audio aparte (escritorio), para que FFmpeg lo añada al MP4 en AAC. */
+export type RecDone = (data: Uint8Array, ext: 'mp4' | 'webm', note: string, summary?: string, wav?: Uint8Array) => void;
+/** Cómo se graba el audio: PCM para mezclarlo después (escritorio) o codificado en el MP4. */
+type AudioMode = { kind: 'pcm' } | { kind: 'aac' | 'opus'; rate: number };
 
 /**
  * Empieza a grabar vídeo: con WebCodecs (H.264 y AAC u Opus en un MP4 normal, con
  * tiempos exactos) si el sistema puede; si no, con MediaRecorder en WebM.
  */
-export async function startLiveVideo(w: number, h: number, fps: number, done: RecDone, first?: HTMLCanvasElement, audio?: RecAudio | null): Promise<LiveRec> {
-  const codec = typeof VideoFrame !== 'undefined' ? await mp4Codec(w, h, fps) : null;
+export async function startLiveVideo(w: number, h: number, fps: number, done: RecDone, first?: HTMLCanvasElement, audio?: RecAudio | null, opts: { pcmAudio?: boolean } = {}): Promise<LiveRec> {
+  // Codificador de la tarjeta gráfica: se prueban varios perfiles/niveles de H.264 (muchos
+  // no admiten el nivel más alto y antes se caía al procesador sin necesidad).
+  let codec: string | null = null, hw = false;
+  if (typeof VideoFrame !== 'undefined' && typeof VideoEncoder !== 'undefined') {
+    for (const c of ['avc1.64002a', 'avc1.640028', 'avc1.640033', 'avc1.4d002a', 'avc1.4d0028', 'avc1.42e02a', 'avc1.42e01f', ...AVC]) {
+      try { if ((await VideoEncoder.isConfigSupported({ codec: c, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), hardwareAcceleration: 'prefer-hardware' })).supported) { codec = c; hw = true; break; } } catch { /* siguiente */ }
+    }
+    if (!codec) codec = await mp4Codec(w, h, fps);
+  }
+  // Sólo el procesador: por encima de 720p no llega a 60 fps y descartaría fotogramas; a 30 sí.
+  const cpuCap = !hw && fps > 30 && w * h > 1280 * 720;
+  if (cpuCap) fps = 30;
   if (codec) {
-    const ac = audio ? await audioCodec(audio.ctx.sampleRate) : null;
-    // Codificador de la tarjeta gráfica si lo hay (más fotogramas por segundo sin frenar el dibujo).
-    let hw = false;
-    try { hw = !!(await VideoEncoder.isConfigSupported({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), hardwareAcceleration: 'prefer-hardware' })).supported; } catch { hw = false; }
-    return new LiveRecorder(w, h, fps, codec, done, first, audio && ac ? { ...audio, codec: ac } : null, hw);
+    // Audio: en el escritorio, PCM (FFmpeg lo pasa a AAC al final: siempre funciona);
+    // si no, AAC u Opus con WebCodecs.
+    const mode: AudioMode | null = !audio ? null : opts.pcmAudio ? { kind: 'pcm' } : await audioCodec(audio.ctx.sampleRate);
+    const r = new LiveRecorder(w, h, fps, codec, done, first, audio && mode ? { ...audio, mode } : null, hw, !!audio && !mode);
+    if (cpuCap) r.note = ' · sin codificador en la tarjeta gráfica: grabado a 30 fps para no perder fotogramas';
+    return r;
   }
   return new MediaRec(w, h, fps, done, first, audio?.track ?? null);
 }
-/** Códec de audio para el MP4: AAC si se puede, si no Opus (también válido en MP4). */
-async function audioCodec(sampleRate: number): Promise<'aac' | 'opus' | null> {
+/**
+ * Códec de audio para el MP4: AAC a la frecuencia del sistema si se puede; si no,
+ * Opus a 48 kHz (Opus no admite 44,1 kHz, la de muchos equipos: se convierte).
+ */
+async function audioCodec(sampleRate: number): Promise<AudioMode | null> {
   if (typeof AudioEncoder === 'undefined') return null;
-  for (const [c, codec] of [['aac', 'mp4a.40.2'], ['opus', 'opus']] as const) {
-    try { if ((await AudioEncoder.isConfigSupported({ codec, sampleRate, numberOfChannels: 2, bitrate: 160_000 })).supported) return c; } catch { /* siguiente */ }
-  }
+  const ok = async (codec: string, rate: number) => { try { return !!(await AudioEncoder.isConfigSupported({ codec, sampleRate: rate, numberOfChannels: 2, bitrate: 160_000 })).supported; } catch { return false; } };
+  if (await ok('mp4a.40.2', sampleRate)) return { kind: 'aac', rate: sampleRate };
+  if (await ok('opus', 48000)) return { kind: 'opus', rate: 48000 };
+  if (await ok('mp4a.40.2', 48000)) return { kind: 'aac', rate: 48000 };
   return null;
+}
+/** Cabecera AAC-LC (AudioSpecificConfig) por si el codificador no la da. */
+function aacConfig(rate: number, channels: number) {
+  const rates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+  const i = Math.max(0, rates.indexOf(rate));
+  return new Uint8Array([(2 << 3) | (i >> 1), ((i & 1) << 7) | (channels << 3)]);
+}
+/** WAV PCM 16 bits estéreo. */
+function wavFile(pcm: Int16Array, rate: number) {
+  const b = new ArrayBuffer(44 + pcm.byteLength), v = new DataView(b), u = new Uint8Array(b);
+  const str = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + pcm.byteLength, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, pcm.byteLength, true);
+  u.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), 44);
+  return u;
 }
 
 /**
@@ -102,33 +137,53 @@ export class LiveRecorder implements LiveRec {
   private audioNodes: AudioNode[] = [];
   private aStart = -1;
   private aSamples = 0;
+  private pcmMode = false;
+  private pcm: Int16Array[] = [];
+  private pcmRate = 48000;
+  private encRate = 48000;
+  private rsPos = 0;
+  private rsPrev: [number, number] = [0, 0];
+  private firstVideoUs = -1;
+  private audioBlocks = 0;
   frames = 0;
   dropped = 0;
   readonly mime = 'video/mp4';
-  constructor(readonly w: number, readonly h: number, readonly fps: number, codec: string, private done: RecDone, first?: HTMLCanvasElement, audio?: (RecAudio & { codec: 'aac' | 'opus' }) | null, hw = false) {
+  constructor(readonly w: number, readonly h: number, readonly fps: number, codec: string, private done: RecDone, first?: HTMLCanvasElement, audio?: (RecAudio & { mode: AudioMode }) | null, hw = false, private noAudio = false) {
     this.hw = hw;
     this.canvas.width = w; this.canvas.height = h;
     this.g = this.canvas.getContext('2d', { alpha: false })!;
     this.g.fillStyle = '#000'; this.g.fillRect(0, 0, w, h);
     this.g.imageSmoothingQuality = 'high';
-    const sr = audio?.ctx.sampleRate ?? 48000;
+    const mode = audio?.mode ?? null, enc = mode && mode.kind !== 'pcm' ? mode : null;
+    this.pcmMode = mode?.kind === 'pcm';
     this.muxer = new Muxer({
       target: this.target, fastStart: 'in-memory', firstTimestampBehavior: 'cross-track-offset',
       video: { codec: 'avc', width: w, height: h, frameRate: fps },
-      ...(audio ? { audio: { codec: audio.codec, numberOfChannels: 2, sampleRate: sr } } : {}),
+      ...(enc ? { audio: { codec: enc.kind, numberOfChannels: 2, sampleRate: enc.rate } } : {}),
     });
     const fail = (e: unknown) => { this.failure ??= e instanceof Error ? e : new Error(String(e)); };
-    this.venc = new VideoEncoder({ output: (c, m) => this.muxer.addVideoChunk(c, m), error: fail });
-    this.venc.configure({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), latencyMode: hw ? 'quality' : 'realtime', hardwareAcceleration: hw ? 'prefer-hardware' : 'no-preference', avc: { format: 'avc' } });
-    if (audio) {
-      this.aenc = new AudioEncoder({ output: (c, m) => this.muxer.addAudioChunk(c, m), error: fail });
-      this.aenc.configure({ codec: audio.codec === 'aac' ? 'mp4a.40.2' : 'opus', sampleRate: sr, numberOfChannels: 2, bitrate: 192_000 });
+    this.venc = new VideoEncoder({ output: (c, m) => { if (this.firstVideoUs < 0) this.firstVideoUs = c.timestamp; this.muxer.addVideoChunk(c, m); }, error: fail });
+    this.venc.configure({ codec, width: w, height: h, framerate: fps, bitrate: recBitrate(w, h, fps), latencyMode: 'realtime', hardwareAcceleration: hw ? 'prefer-hardware' : 'no-preference', avc: { format: 'avc' } });
+    if (audio && mode) {
+      if (enc) {
+        this.encRate = enc.rate;
+        let described = false;
+        this.aenc = new AudioEncoder({
+          output: (c, m) => {
+            // Algunos codificadores AAC no dan su cabecera: sin ella el audio del MP4 no suena.
+            if (!described) { described = true; if (enc.kind === 'aac' && !m?.decoderConfig?.description) m = { decoderConfig: { codec: 'mp4a.40.2', sampleRate: enc.rate, numberOfChannels: 2, description: aacConfig(enc.rate, 2) } }; }
+            this.muxer.addAudioChunk(c, m);
+          }, error: fail,
+        });
+        this.aenc.configure({ codec: enc.kind === 'aac' ? 'mp4a.40.2' : 'opus', sampleRate: enc.rate, numberOfChannels: 2, bitrate: 192_000 });
+      }
       // Muestras de la mezcla (pistas y micrófono) tal como suenan.
       const ctx = audio.ctx, src = ctx.createMediaStreamSource(new MediaStream([audio.track]));
       const sp = ctx.createScriptProcessor(4096, 2, 2), mute = ctx.createGain(); mute.gain.value = 0;
       sp.onaudioprocess = e => this.audioIn(e.inputBuffer);
       src.connect(sp); sp.connect(mute); mute.connect(ctx.destination);
       this.audioNodes = [src, sp, mute];
+      void ctx.resume();
     }
     // (Sin «primer fotograma» aparte: el codificador se prepara de forma asíncrona y para
     // entonces la imagen del visor ya se borró; el vídeo empieza con el siguiente dibujo.)
@@ -138,14 +193,15 @@ export class LiveRecorder implements LiveRec {
   private endT = 0;
   get seconds() { return ((this.endT || performance.now()) - this.t0) / 1000; }
   /** Resumen para el aviso al guardar. */
-  get summary() { const sec = Math.max(0.001, this.seconds); return `${(this.frames / sec).toFixed(0)} fps de media · codificador: ${this.hw ? 'tarjeta gráfica' : 'procesador'}${this.dropped ? ` · ${this.dropped} fotogramas descartados (el codificador no daba abasto)` : ''}`; }
+  get summary() { const sec = Math.max(0.001, this.seconds); return `${(this.frames / sec).toFixed(0)} fps de media · codificador: ${this.hw ? 'tarjeta gráfica' : 'procesador'}${this.dropped ? ` · ${this.dropped} fotogramas descartados (el codificador no daba abasto: graba a 720p o a 30 fps)` : ''}${this.note}`; }
+  note = '';
   frame(src: HTMLCanvasElement) {
     if (this.stopped || this.failure) return;
     const sNow = ((performance.now() - this.t0) / 1000) * this.fps;
     const slot = nextSlot(this.slot, this.lastS, sNow);
     if (slot === null) return;
     // Si el codificador va muy atrasado, se salta el fotograma (el anterior dura más).
-    if (this.venc.encodeQueueSize > 12) { this.dropped++; return; }
+    if (this.venc.encodeQueueSize > 30) { this.dropped++; return; }
     // Mismo tamaño que el vídeo: el fotograma sale directo del visor (sin copiarlo antes).
     const direct = src.width === this.w && src.height === this.h;
     if (!direct && !fit(this.g, src, this.w, this.h)) return;
@@ -159,16 +215,57 @@ export class LiveRecorder implements LiveRec {
     this.frames++;
   }
   private audioIn(b: AudioBuffer) {
-    if (this.stopped || !this.aenc || this.failure) return;
+    if (this.stopped || this.failure) return;
     const n = b.length, sr = b.sampleRate;
     // El primer bloque: su sitio en el tiempo del vídeo (descontando lo que dura el bloque).
     if (this.aStart < 0) this.aStart = Math.max(0, (performance.now() - this.t0) / 1000 - n / sr);
+    this.audioBlocks++;
     const L = b.getChannelData(0), R = b.numberOfChannels > 1 ? b.getChannelData(1) : L;
-    const data = new Float32Array(n * 2); data.set(L, 0); data.set(R, n);
-    const ad = new AudioData({ format: 'f32-planar', sampleRate: sr, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round((this.aStart + this.aSamples / sr) * 1e6), data });
-    this.aSamples += n;
+    if (this.pcmMode) {
+      // Escritorio: se guarda tal cual (16 bits intercalado) y FFmpeg lo añade al final.
+      this.pcmRate = sr;
+      const out = new Int16Array(n * 2);
+      for (let i = 0; i < n; i++) { out[i * 2] = Math.max(-1, Math.min(1, L[i])) * 32767; out[i * 2 + 1] = Math.max(-1, Math.min(1, R[i])) * 32767; }
+      this.pcm.push(out);
+      return;
+    }
+    if (!this.aenc) return;
+    let l: Float32Array = L, r: Float32Array = R, m = n;
+    if (sr !== this.encRate) {
+      // Cambio de frecuencia (44,1 → 48 kHz para Opus): interpolación lineal continua entre bloques.
+      const step = sr / this.encRate;
+      m = Math.floor((n - this.rsPos) / step);
+      l = new Float32Array(m); r = new Float32Array(m);
+      for (let i = 0; i < m; i++) {
+        const x = this.rsPos + i * step, i0 = Math.floor(x), f = x - i0;
+        const a0 = i0 < 0 ? this.rsPrev[0] : L[i0], b0 = i0 < 0 ? this.rsPrev[1] : R[i0];
+        const a1 = L[Math.min(n - 1, i0 + 1)], b1 = R[Math.min(n - 1, i0 + 1)];
+        l[i] = a0 + (a1 - a0) * f; r[i] = b0 + (b1 - b0) * f;
+      }
+      this.rsPos = this.rsPos + m * step - n;
+      this.rsPrev = [L[n - 1], R[n - 1]];
+    }
+    if (!m) return;
+    const data = new Float32Array(m * 2); data.set(l, 0); data.set(r, m);
+    const ad = new AudioData({ format: 'f32-planar', sampleRate: this.encRate, numberOfFrames: m, numberOfChannels: 2, timestamp: Math.round((this.aStart + this.aSamples / this.encRate) * 1e6), data });
+    this.aSamples += m;
     this.aenc.encode(ad);
     ad.close();
+  }
+  /** El audio guardado (escritorio) como WAV, alineado con el primer fotograma del vídeo. */
+  private wav(): Uint8Array | undefined {
+    if (!this.pcmMode || !this.pcm.length) return undefined;
+    const total = this.pcm.reduce((a, c) => a + c.length, 0);
+    const lead = Math.round(((this.aStart - Math.max(0, this.firstVideoUs) / 1e6) * this.pcmRate)) * 2;
+    const all = new Int16Array(Math.max(0, total + lead));
+    let o = lead;
+    for (const c of this.pcm) {
+      if (o >= 0) all.set(c, o);
+      else if (o + c.length > 0) all.set(c.subarray(-o), 0);
+      o += c.length;
+    }
+    this.pcm = [];
+    return wavFile(all, this.pcmRate);
   }
   cancel() { this.done = () => undefined; this.stop(); }
   stop() {
@@ -183,7 +280,8 @@ export class LiveRecorder implements LiveRec {
         if (this.aenc) { await this.aenc.flush(); this.aenc.close(); }
         if (this.failure) throw this.failure;
         this.muxer.finalize();
-        this.done(new Uint8Array(this.target.buffer), 'mp4', '', this.summary);
+        const audioNote = this.noAudio ? ' · sin audio: este sistema no puede codificarlo' : this.audioNodes.length && !this.audioBlocks ? ' · sin audio: no llegó sonido' : '';
+        this.done(new Uint8Array(this.target.buffer), 'mp4', '', this.summary + audioNote, this.wav());
       } catch (e) {
         this.done(new Uint8Array(0), 'mp4', e instanceof Error ? e.message : String(e));
       }
