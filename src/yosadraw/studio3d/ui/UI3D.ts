@@ -533,8 +533,8 @@ export class UI3D {
       const L = this.live;
       if ((this.video as { token?: object } | null)?.token !== token || !L?.running) { r.cancel?.(); return; }
       this.video = r;
-      // Bordes suavizados sólo si el equipo va sobrado (si no, restaría fotogramas).
-      this.view.setRecordHeight(dims.h, this.view.fps >= 55);
+      // (Sin MSAA al grabar: con efectos casi duplicaba el coste de cada fotograma.)
+      this.view.setRecordHeight(dims.h, false);
       L.onFrame = () => r.frame(cv);
       toast(`Grabando vídeo a ${dims.w} × ${dims.h}, ${(r as { fps?: number }).fps ?? fps} fps (F9 para parar)`);
     }).catch(e => { this.video = null; this.renderHud(); toast(`No se pudo grabar: ${e instanceof Error ? e.message : String(e)}`, 'error'); });
