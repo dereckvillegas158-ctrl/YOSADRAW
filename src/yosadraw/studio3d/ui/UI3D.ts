@@ -3,6 +3,7 @@ import { isPhone, openSheet, watchDevice } from '../../ui/Mobile';
 import { modal } from '../../ui/modal';
 import { menu } from '../../ui/motion/util';
 import { genDef } from '../generators';
+import { desktopBridge } from '../../brush/storage';
 import { exportModel, importModel, MODEL_ACCEPT, renderVideo, saveFile, canvasPng, sceneAnimated, type ModelFormat } from '../io';
 import { defaultTuber, genObject, newObject, type PrimType } from '../model';
 import type { Studio3D, Tool3 } from '../Studio3D';
@@ -516,19 +517,26 @@ export class UI3D {
     const token = {};
     this.video = { frame() {}, stop() {}, seconds: 0, frames: 0 };
     (this.video as { token?: object }).token = token;
-    void startLiveVideo(dims.w, dims.h, fps, (data, ext, note, summary) => void (async () => {
+    // Escritorio: el audio se graba aparte (PCM) y FFmpeg lo añade al MP4 en AAC (siempre suena).
+    const mux = (desktopBridge() as unknown as { video?: { muxAudio?: (v: Uint8Array, a: Uint8Array) => Promise<Uint8Array> } } | null)?.video?.muxAudio;
+    void startLiveVideo(dims.w, dims.h, fps, (data, ext, note, summary, wav) => void (async () => {
       if (note || !data.length) { toast(`No se pudo guardar el vídeo: ${note || 'sin fotogramas'}`, 'error'); return; }
       const name = `${this.deps.name()}-en-vivo.${ext}`;
+      if (wav && mux) {
+        toast('Añadiendo el audio al vídeo…');
+        try { data = await mux(data, wav); } catch (e) { toast(`El vídeo se guarda sin audio: ${e instanceof Error ? e.message : String(e)}`, 'error'); }
+      }
       await saveFile(name, data);
       toast(`Vídeo guardado: ${name} (${dims.w} × ${dims.h}${summary ? ` · ${summary}` : ''})`, 'ok');
-    })(), cv, this.hasTuber ? live.audio.recordAudio(true) : null).then(r => {
+    })(), cv, this.hasTuber ? live.audio.recordAudio(true) : null, { pcmAudio: !!mux }).then(r => {
       // Se paró (o se cerró el modo en vivo) mientras se preparaba.
       const L = this.live;
       if ((this.video as { token?: object } | null)?.token !== token || !L?.running) { r.cancel?.(); return; }
       this.video = r;
-      this.view.setRecordHeight(dims.h, true);
+      // Bordes suavizados sólo si el equipo va sobrado (si no, restaría fotogramas).
+      this.view.setRecordHeight(dims.h, this.view.fps >= 55);
       L.onFrame = () => r.frame(cv);
-      toast(`Grabando vídeo a ${dims.w} × ${dims.h}, ${fps} fps (F9 para parar)`);
+      toast(`Grabando vídeo a ${dims.w} × ${dims.h}, ${(r as { fps?: number }).fps ?? fps} fps (F9 para parar)`);
     }).catch(e => { this.video = null; this.renderHud(); toast(`No se pudo grabar: ${e instanceof Error ? e.message : String(e)}`, 'error'); });
   }
   private stopVideo() {

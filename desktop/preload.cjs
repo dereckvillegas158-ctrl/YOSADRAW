@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('yosadraw', {
     frame: (id, data) => ipcRenderer.invoke('video:frame', Number(id), data),
     finish: id => ipcRenderer.invoke('video:finish', Number(id)),
     abort: id => ipcRenderer.invoke('video:abort', Number(id)),
+    muxAudio: (video, wav) => ipcRenderer.invoke('video:mux-audio', video, wav),
   },
   // YOSADRAW MOTION: metadatos y conversión de medios con FFmpeg.
   media: {

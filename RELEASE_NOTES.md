@@ -1,4 +1,16 @@
-## YOSADRAW 1.20.3
+## YOSADRAW 1.20.4
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.20.4-x64.exe` (instalador), `YOSADRAW-1.20.4-x64-portable.exe` o `YOSADRAW-1.20.4-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.20.4.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Grabaciones en vivo: el audio ya queda en el vídeo y más fotogramas
+- **Audio del PNGTuber en el archivo final (PC):** el audio se codificaba con el navegador, y en muchos equipos con Windows (sonido a 44,1 kHz y sin codificador AAC) no se podía: el vídeo se guardaba mudo sin avisar. Ahora se graba aparte y FFmpeg (incluido en YOSADRAW) lo añade al MP4 en AAC al guardar: siempre suena. En el navegador y Android, el audio a 44,1 kHz se convierte para poder codificarlo, y si aun así no se puede, el aviso lo dice.
+- **Codificador de la tarjeta gráfica:** se pedía un nivel de H.264 que muchas tarjetas no admiten y se acababa usando el procesador, que no llega a 1080p a 60 fps y descartaba fotogramas. Ahora se prueban varios niveles. Si sólo hay procesador, se graba a 30 fps para no perder fotogramas.
+- Bordes suavizados (MSAA) sólo si el equipo va sobrado de fps.
+- El aviso al guardar dice los fps de media, el codificador usado y si se descartaron fotogramas (con qué hacer).
+
+### Versión anterior: YOSADRAW 1.20.3
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.20.3-x64.exe` (instalador), `YOSADRAW-1.20.3-x64-portable.exe` o `YOSADRAW-1.20.3-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

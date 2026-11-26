@@ -38,7 +38,7 @@ export async function encodeGif(o: WebEncodeOptions & { loop: boolean; alpha: bo
   return gif.bytes();
 }
 
-const AVC = ['avc1.640033', 'avc1.640028', 'avc1.4d0028', 'avc1.42e01f', 'avc1.42001f'];
+export const AVC = ['avc1.640033', 'avc1.640028', 'avc1.4d0028', 'avc1.42e01f', 'avc1.42001f'];
 
 /** Perfil H.264 que el sistema puede codificar a ese tamaño (null = ninguno). */
 export async function mp4Codec(width: number, height: number, fps: number): Promise<string | null> {

@@ -240,6 +240,30 @@ function register({ isApproved, rememberFolder, sanitizeName, storePath }) {
     journalRemove(s.temp);
   });
 
+  // Grabación en vivo: añade el audio (WAV) al vídeo (MP4 H.264) sin recodificar la imagen.
+  // El audio va en AAC (lo abre cualquier reproductor). Devuelve el MP4 final.
+  ipcMain.handle('video:mux-audio', async (_e, video, wav) => {
+    const bin = ffmpegPath();
+    if (!bin) throw new Error('FFmpeg no está disponible');
+    if (!(video instanceof Uint8Array) || !(wav instanceof Uint8Array) || video.length > 4 * 1024 * 1024 * 1024 || wav.length < 44) throw new Error('Grabación no válida');
+    const base = path.join(os.tmpdir(), `yosadraw-rec-${process.pid}-${nextId++}`);
+    const vIn = `${base}-v.mp4`, aIn = `${base}-a.wav`, out = `${base}-out.mp4`;
+    for (const f of [vIn, aIn, out]) journalAdd(f);
+    try {
+      await fsp.writeFile(vIn, video); await fsp.writeFile(aIn, wav);
+      await new Promise((resolve, reject) => {
+        const p = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-y', '-i', vIn, '-i', aIn, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+        let err = '';
+        p.stderr.on('data', d => { err = (err + d).slice(-2000); });
+        p.on('error', reject);
+        p.on('close', code => (code === 0 ? resolve() : reject(new Error(`FFmpeg no pudo añadir el audio: ${err.trim().split('\n').pop() || code}`))));
+      });
+      return new Uint8Array(await fsp.readFile(out));
+    } finally {
+      for (const f of [vIn, aIn, out]) { await fsp.rm(f, { force: true }).catch(() => undefined); journalRemove(f); }
+    }
+  });
+
   // Audio que Chromium no decodifica: FFmpeg lo convierte a WAV (estéreo, 48 kHz).
   ipcMain.handle('audio:decode', async (_e, data, name) => {
     const bin = ffmpegPath();
