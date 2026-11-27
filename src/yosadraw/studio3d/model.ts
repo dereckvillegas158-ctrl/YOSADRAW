@@ -178,7 +178,9 @@ export const PART_ROLES: [PartRole, string][] = [['slide', 'Corredera'], ['bolt'
 /** Una pieza que se mueve: desplazamiento y giro (en el espacio del arma) en su posición máxima (v = 1). */
 export interface WPart3 { role: PartRole; id: string; move: [number, number, number]; rot: [number, number, number]; rest: [number, number, number, number, number, number] }
 export interface Weapon3 {
-  kind: WeaponKind; action: WeaponAction; caliber: Caliber;
+  kind: WeaponKind;
+  /** Modelo real del que se creó (glock17, ak47…), si es uno de serie. */
+  model?: string; action: WeaponAction; caliber: Caliber;
   parts: WPart3[];
   /** Boca del cañón y ventana de expulsión (en el espacio del arma) y hacia dónde salen los casquillos. */
   muzzle: [number, number, number]; eject: [number, number, number]; ejectDir: [number, number, number];
