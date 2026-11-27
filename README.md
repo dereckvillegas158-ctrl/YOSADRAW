@@ -374,7 +374,10 @@ Proyectos 3D dentro de YOSADRAW («Nuevo proyecto → 3D»): modelado poligonal,
 | Cel shading y lineart de caricatura | `src/yosadraw/studio3d/toon.ts` |
 | Líquidos en vivo (sangre, agua, lava…; estilos) | `src/yosadraw/studio3d/live/fluid.ts` |
 | Partículas en vivo (chispas, fogonazo con luz dinámica, explosión, fuego, humo, órganos, huesos…; forma cambiable por modelo o imagen) | `src/yosadraw/studio3d/live/particles.ts` |
-| Formas de serie de las partículas (órganos, huesos, monedas…) | `src/yosadraw/studio3d/live/partShapes.ts` |
+| Formas de serie de las partículas (órganos, huesos, monedas, casquillos por calibre…) | `src/yosadraw/studio3d/live/partShapes.ts` |
+| Armas por piezas (pistola, fusil, subfusil, escopeta, revólver, cerrojo) y reconocimiento de piezas de modelos importados | `src/yosadraw/studio3d/weaponGen.ts` |
+| Armas en vivo: disparo, corredera, expulsión de casquillos, retroceso, recarga, cargador con el ratón, inspección, balas | `src/yosadraw/studio3d/live/weapons.ts` |
+| Panel del arma (piezas, ajustes, keyframes, inspección) | `src/yosadraw/studio3d/ui/WeaponPanel.ts` |
 | Módulo PNGTuber 2D (panel, fondo, vista plana) | `src/yosadraw/studio3d/ui/TuberPanel.ts` |
 | PNGTuber: audio en vivo (pistas, micrófono, hablar) | `src/yosadraw/studio3d/live/audio.ts` |
 | Grabación en vivo (MP4 con audio, GIF) | `src/yosadraw/studio3d/live/recorder.ts` |

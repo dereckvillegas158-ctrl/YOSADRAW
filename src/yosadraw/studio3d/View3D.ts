@@ -23,6 +23,8 @@ export interface LiveHooks {
   cardTex?: Map<string, string | null>; cardAlpha?: Map<string, number>;
   /** Brillo extra de un dibujo (PNGTuber: se ilumina al hablar). */
   cardGlow?: Map<string, number>;
+  /** Transformación local de un objeto (armas: corredera, cargador, retroceso…), relativa a su padre. */
+  local?: Map<string, T.Matrix4>;
 }
 
 const D2R = Math.PI / 180;
@@ -411,6 +413,7 @@ export class View3D {
       const P = n.node.parent?.matrixWorld;
       if (P) n.node.matrix.copy(this._inv.copy(P).invert().multiply(W)); else n.node.matrix.copy(W);
     }
+    if (L.local) for (const [id, M] of L.local) { const n = this.nodes.get(id); if (n && !L.world.has(id)) n.node.matrix.copy(M); }
     for (const [id, n] of this.nodes) {
       if (L.hidden.has(id)) n.node.visible = false;
       if (n.light) {

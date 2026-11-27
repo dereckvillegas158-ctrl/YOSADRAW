@@ -7,9 +7,10 @@ import { setEase, smoothProp, type EaseSpec } from '../motion/keytools';
 import type { ProjectLibrary } from '../project/library';
 import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
+import { WMATS, generateWeapon, guessRole, roleMotion, type WMat } from './weaponGen';
 import * as M from './mesh';
 import {
-  History3, LIQUIDS, PRIMS, cameraObject, cardPhys, defaultFluid, type Fluid3, type LiquidType, PART_TYPES, defaultParticles, type Particles3, type PartType, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, LIQUIDS, PRIMS, WEAPON_KINDS, defaultWeapon, type PartRole, type Weapon3, type WeaponKind, type WPart3, cameraObject, cardPhys, defaultFluid, type Fluid3, type LiquidType, PART_TYPES, defaultParticles, type Particles3, type PartType, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
@@ -751,6 +752,159 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
       }
     };
     if (live) this.live(fn); else this.edit('Partículas', fn);
+  }
+  // ---------------------------------------------------------------- armas
+
+  /** Arma original por piezas (cada pieza móvil, un objeto con su recorrido). */
+  addWeapon(kind: Exclude<WeaponKind, 'custom'>, at: [number, number, number] = [0, 1.2, 0]) {
+    const g = generateWeapon(kind);
+    const root = newObject('group', g.name, at);
+    const w: Weapon3 = { ...defaultWeapon(kind), muzzle: g.muzzle, eject: g.eject, ejectDir: g.ejectDir, parts: [] };
+    const objs: Obj3[] = [], byName = new Map<string, Obj3>();
+    const newMats: Mat3[] = [];
+    this.edit(`Añadir ${WEAPON_KINDS[kind].label.toLowerCase()}`, (st, sc) => {
+      // Materiales del arma (se reutilizan si el proyecto ya los tiene).
+      const mat = (k: WMat) => {
+        const d = WMATS[k];
+        let m = st.materials.find(x => x.name === d.name) ?? newMats.find(x => x.name === d.name);
+        if (!m) { m = newMaterial(d.name, { color: d.color, rough: d.rough, metal: d.metal }); newMats.push(m); st.materials.push(m); }
+        return m.id;
+      };
+      root.name = this.uniqueName(sc, root.name);
+      for (const p of g.parts) {
+        const o = newObject('mesh', p.name, p.pos);
+        if (p.rot) { o.tf.rx.v = p.rot[0]; o.tf.ry.v = p.rot[1]; o.tf.rz.v = p.rot[2]; }
+        o.mesh = p.mesh; o.mats = p.mats.map(mat); o.smooth = false;
+        o.parent = p.parent ? byName.get(p.parent)?.id ?? root.id : root.id;
+        byName.set(p.name, o); objs.push(o);
+        if (p.role) w.parts.push({ role: p.role, id: o.id, move: p.move ?? [0, 0, 0], rot: p.rotMove ?? [0, 0, 0], rest: [p.pos[0], p.pos[1], p.pos[2], p.rot?.[0] ?? 0, p.rot?.[1] ?? 0, p.rot?.[2] ?? 0] });
+      }
+      root.weapon = w;
+      sc.objects.push(root, ...objs);
+    });
+    this.sel = [root.id];
+    this.emit('select', undefined);
+    return root;
+  }
+  /** Cambia los ajustes de las armas elegidas (null = deja de ser arma). */
+  setWeapon(ids: string[], patch: Partial<Weapon3> | null, live = false) {
+    const fn = (_s: Studio3, sc: Scene3) => {
+      for (const id of ids) { const o = objOf(sc, id); if (!o) continue; if (patch === null) delete o.weapon; else o.weapon = { ...(o.weapon ?? defaultWeapon('custom')), ...patch }; }
+    };
+    if (live) this.live(fn); else this.edit('Arma', fn);
+  }
+  /** Caja de las mallas de un objeto y sus hijos, en el espacio de ese objeto. */
+  private localBox(sc: Scene3, rootId: string) {
+    const root = objOf(sc, rootId)!, inv = this.worldMatrix(root).invert(), b = new Box3(), v = new Vector3();
+    for (const o of [root, ...subtree(sc, rootId)]) {
+      if (!o.mesh) continue;
+      const W = this.worldMatrix(o).premultiply(inv);
+      for (let i = 0; i < o.mesh.v.length; i += 3) b.expandByPoint(v.set(o.mesh.v[i], o.mesh.v[i + 1], o.mesh.v[i + 2]).applyMatrix4(W));
+    }
+    return b;
+  }
+  /** Base del arma según hacia dónde apunta el cañón: derecha·arriba·adelante → vector del arma. */
+  private wBasis(fwd: [number, number, number]) {
+    const f = new Vector3(...fwd).normalize(), up = new Vector3(0, 1, 0), x = new Vector3().crossVectors(up, f).normalize();
+    return (v: [number, number, number]): [number, number, number] => { const r = x.clone().multiplyScalar(v[0]).addScaledVector(up, v[1]).addScaledVector(f, v[2]); return [round(r.x), round(r.y), round(r.z)]; };
+  }
+  /**
+   * Convierte cualquier modelo (un grupo importado, por ejemplo de Blender) en arma:
+   * adivina las piezas por su nombre (corredera, cargador, gatillo…), calcula sus
+   * recorridos, la boca del cañón y la ventana de expulsión según su tamaño.
+   */
+  convertToWeapon(id: string, fwd?: [number, number, number]) {
+    const sc = this.scene, root = objOf(sc, id);
+    if (!root) return 0;
+    const b = this.localBox(sc, id);
+    if (b.isEmpty()) return 0;
+    const size = b.getSize(new Vector3()), c = b.getCenter(new Vector3());
+    // El cañón, a lo largo del lado horizontal más largo (se puede cambiar después).
+    const F: [number, number, number] = fwd ?? (size.x > size.z ? [1, 0, 0] : [0, 0, 1]);
+    const map = this.wBasis(F), len = Math.max(size.x, size.z);
+    const f = new Vector3(...F), front = c.clone().addScaledVector(f, (Math.abs(F[0]) ? size.x : size.z) / 2);
+    const top = b.max.y, w: Weapon3 = { ...(root.weapon ?? defaultWeapon('custom')), fwd: F, parts: [] };
+    w.muzzle = [round(front.x), round(c.y + size.y * 0.25), round(front.z)];
+    const ej = new Vector3(...map([-(Math.abs(F[0]) ? size.z : size.x) / 2, 0, -len * 0.08])).add(c);
+    w.eject = [round(ej.x), round(top - size.y * 0.15), round(ej.z)];
+    w.ejectDir = map([-1, 0.6, -0.2]);
+    for (const o of subtree(sc, id)) {
+      const role = o.mesh || subtree(sc, o.id).length ? guessRole(o.name) : null;
+      if (!role || w.parts.some(p => p.role === role)) continue;
+      w.parts.push(this.partFor(o, role, len, map));
+    }
+    this.edit('Convertir en arma', (_s, sc2) => { const r = objOf(sc2, id); if (r) r.weapon = w; });
+    return w.parts.length;
+  }
+  private partFor(o: Obj3, role: PartRole, len: number, map: (v: [number, number, number]) => [number, number, number]): WPart3 {
+    const m = roleMotion(role, len), t = this.localTime(), v = (k: keyof Obj3['tf']) => round(valueAt(o.tf[k], t));
+    return { role, id: o.id, move: map(m.move), rot: m.rot, rest: [v('px'), v('py'), v('pz'), v('rx'), v('ry'), v('rz')] };
+  }
+  /** Asigna (o quita, con null) la pieza de un papel en un arma. */
+  setWeaponPart(gunId: string, role: PartRole, objId: string | null) {
+    const sc = this.scene, g = objOf(sc, gunId);
+    if (!g?.weapon) return;
+    const len = (() => { const s = this.localBox(sc, gunId).getSize(new Vector3()); return Math.max(s.x, s.z); })();
+    const map = this.wBasis(g.weapon.fwd);
+    const o = objId ? objOf(sc, objId) : null;
+    const part = o ? this.partFor(o, role, len, map) : null;
+    this.edit('Pieza del arma', (_s, sc2) => {
+      const w = objOf(sc2, gunId)?.weapon; if (!w) return;
+      w.parts = w.parts.filter(p => p.role !== role && (!part || p.id !== part.id));
+      if (part) w.parts.push(part);
+    });
+  }
+  /**
+   * Pone una pieza del arma en su posición `v` (0 = reposo, 1 = recorrido completo)
+   * en el tiempo actual, con keyframe si `key` (o con la clave automática): para
+   * animar inspecciones, recargas y cualquier movimiento interno.
+   */
+  weaponPose(gunId: string, role: PartRole, v: number, key = false, label = 'Pieza del arma') {
+    const g = this.obj(gunId), p = g?.weapon?.parts.find(x => x.role === role);
+    if (!p) return;
+    const t = this.localTime(), k = key || this.prefs.autoKey;
+    this.edit(label, (_s, sc) => {
+      const o = objOf(sc, p.id); if (!o) return;
+      const vals = [p.rest[0] + p.move[0] * v, p.rest[1] + p.move[1] * v, p.rest[2] + p.move[2] * v, p.rest[3] + p.rot[0] * v, p.rest[4] + p.rot[1] * v, p.rest[5] + p.rot[2] * v];
+      (['px', 'py', 'pz', 'rx', 'ry', 'rz'] as const).forEach((kk, i) => setValue(o.tf[kk], t, round(vals[i]), k));
+    });
+  }
+  /** Posición actual (0..1) de una pieza según su transformación. */
+  weaponPoseOf(gunId: string, role: PartRole): number {
+    const g = this.obj(gunId), p = g?.weapon?.parts.find(x => x.role === role), o = p ? this.obj(p.id) : null;
+    if (!p || !o) return 0;
+    const t = this.localTime(), cur = [valueAt(o.tf.px, t), valueAt(o.tf.py, t), valueAt(o.tf.pz, t), valueAt(o.tf.rx, t), valueAt(o.tf.ry, t), valueAt(o.tf.rz, t)];
+    const d = [...p.move, ...p.rot], i = d.reduce((bi, x, j) => (Math.abs(x) > Math.abs(d[bi]) ? j : bi), 0);
+    return Math.abs(d[i]) < 1e-9 ? 0 : Math.max(0, Math.min(1.5, (cur[i] - p.rest[i]) / d[i]));
+  }
+  /**
+   * Animación de inspección con keyframes desde el tiempo actual: gira el arma para
+   * mirarla, comprueba la recámara (corredera/cerrojo a medias), saca un poco el
+   * cargador y lo vuelve a meter, y la deja como estaba. Se edita como cualquier animación.
+   */
+  weaponInspect(gunId: string, dur = 3) {
+    const g = this.obj(gunId), w = g?.weapon;
+    if (!g || !w) return;
+    const t0 = this.localTime(), has = (r: PartRole) => w.parts.some(p => p.role === r);
+    const T = (k: number) => Math.round((t0 + dur * k) * this.fps) / this.fps;
+    const back = has('slide') ? 'slide' : has('bolt') ? 'bolt' : has('pump') ? 'pump' : null;
+    const r0 = { ry: valueAt(g.tf.ry, t0), rz: valueAt(g.tf.rz, t0), rx: valueAt(g.tf.rx, t0) };
+    this.edit('Animación de inspección', (_s, sc) => {
+      const gg = objOf(sc, gunId)!;
+      if (sc.dur < T(1)) sc.dur = Math.ceil(T(1));
+      const key = (k: number, ry: number, rz: number, rx: number) => { setValue(gg.tf.ry, T(k), round(r0.ry + ry), true); setValue(gg.tf.rz, T(k), round(r0.rz + rz), true); setValue(gg.tf.rx, T(k), round(r0.rx + rx), true); };
+      key(0, 0, 0, 0); key(0.2, 40, -25, -8); key(0.45, 40, -25, -8); key(0.6, -30, 60, 10); key(0.82, -30, 60, 10); key(1, 0, 0, 0);
+      const pose = (role: PartRole, pts: [number, number][]) => {
+        const p = w.parts.find(x => x.role === role); const o = p ? objOf(sc, p.id) : null; if (!p || !o) return;
+        for (const [k, v] of pts) (['px', 'py', 'pz', 'rx', 'ry', 'rz'] as const).forEach((kk, i) => setValue(o.tf[kk], T(k), round(p.rest[i] + [...p.move, ...p.rot][i] * v), true));
+      };
+      if (back) pose(back, [[0.22, 0], [0.3, 0.55], [0.4, 0.55], [0.46, 0]]);
+      if (back === 'bolt' && has('handle')) pose('handle', [[0.16, 0], [0.22, 1], [0.46, 1], [0.52, 0]]);
+      if (has('mag')) pose('mag', [[0.6, 0], [0.68, 0.45], [0.78, 0.45], [0.84, 0]]);
+      if (has('cylinder')) pose('cylinder', [[0.6, 0], [0.8, 3]]);
+      if (has('cover')) pose('cover', [[0.22, 0], [0.3, 1]]);
+    });
+    this.seek(T(1));
   }
   /** Guarda una imagen como textura del proyecto y la usa (boca, ojos, variantes de pose). */
   addTexture(src: string, name: string, project: { id: string; rev: number } | null, use: (texId: string, sc: Scene3) => void, label = 'Imagen') {

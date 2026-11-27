@@ -1,6 +1,6 @@
 import * as T from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { PartType } from '../model';
+import type { Caliber, PartType } from '../model';
 
 /**
  * Formas de serie de las partículas, hechas por código (sin archivos): cada una
@@ -136,12 +136,45 @@ function flash() {
   g.computeBoundingSphere(); g.computeBoundingBox();
   return g;
 }
+/**
+ * Casquillo vacío de cada calibre, a lo largo de Y: latón con cuello (fusil), recto
+ * (pistola, revólver) o cartucho de plástico rojo con base de latón (escopeta). Con
+ * la culata, el reborde y el pistón marcados.
+ */
+function casing(cal: Caliber) {
+  const brass = '#c9a24a', dark = '#8a6a26', primer = '#b8b0a0';
+  // [radio del cuerpo, largo del cuerpo, radio del cuello, largo del cuello]
+  const D: Record<Caliber, [number, number, number, number]> = {
+    '9mm': [0.0049, 0.019, 0.0048, 0], '45acp': [0.006, 0.0227, 0.006, 0], '357': [0.0048, 0.033, 0.0048, 0],
+    '556': [0.0048, 0.036, 0.0031, 0.0075], '762': [0.0056, 0.032, 0.0039, 0.0075], '308': [0.006, 0.041, 0.0043, 0.008],
+    '50bmg': [0.0102, 0.077, 0.0071, 0.022], '12g': [0.0105, 0.07, 0.0105, 0],
+  };
+  const [r, L, rn, ln] = D[cal];
+  const parts: T.BufferGeometry[] = [];
+  if (cal === '12g') {
+    parts.push(finish(new T.CylinderGeometry(r, r, L * 0.78, 16).translate(0, L * 0.39 + L * 0.22, 0), '#b0202a'));
+    parts.push(finish(new T.CylinderGeometry(r * 1.02, r * 1.02, L * 0.22, 16).translate(0, L * 0.11, 0), brass));
+    parts.push(finish(new T.CylinderGeometry(r * 1.1, r * 1.1, L * 0.03, 16).translate(0, L * 0.015, 0), dark));
+  } else {
+    const body = ln > 0 ? L - ln : L;
+    parts.push(finish(new T.CylinderGeometry(r, r, body * 0.9, 14).translate(0, body * 0.45 + body * 0.1, 0), brass));
+    parts.push(finish(new T.CylinderGeometry(r * 0.88, r * 0.88, body * 0.06, 14).translate(0, body * 0.07, 0), dark)); // ranura del extractor
+    parts.push(finish(new T.CylinderGeometry(r * 1.02, r * 1.02, body * 0.04, 14).translate(0, body * 0.02, 0), brass)); // culote
+    if (ln > 0) {
+      parts.push(finish(new T.CylinderGeometry(rn, r, ln * 0.35, 14).translate(0, body + ln * 0.175, 0), brass)); // hombro
+      parts.push(finish(new T.CylinderGeometry(rn, rn, ln * 0.65, 14).translate(0, body + ln * 0.35 + ln * 0.325, 0), brass)); // cuello
+    }
+  }
+  parts.push(finish(new T.CylinderGeometry(r * 0.32, r * 0.32, 0.0006, 10).translate(0, -0.0002, 0), primer)); // pistón
+  return unit(parts);
+}
 const quad = () => { const g = finish(new T.PlaneGeometry(2, 2), '#ffffff'); g.computeBoundingSphere(); return g; };
 
 const cache = new Map<string, T.BufferGeometry[]>();
 /** Variantes de forma de cada tipo (los órganos y escombros traen varias que salen al azar). */
-export function partShapes(type: PartType | 'flash' | 'quad'): T.BufferGeometry[] {
-  let v = cache.get(type);
+export function partShapes(type: PartType | 'flash' | 'quad', caliber: Caliber = '9mm'): T.BufferGeometry[] {
+  const key = type === 'casings' ? `casings:${caliber}` : type;
+  let v = cache.get(key);
   if (v) return v;
   switch (type) {
     case 'organs': v = [heart(), brain(), intestine(), lung(), liver(), kidney(), eye(), stomach()]; break;
@@ -156,10 +189,11 @@ export function partShapes(type: PartType | 'flash' | 'quad'): T.BufferGeometry[
     case 'leaves': v = [0, 1, 2, 3].map(leaf); break;
     case 'bubbles': v = [bubble()]; break;
     case 'flash': v = [flash()]; break;
+    case 'casings': v = [casing(caliber)]; break;
     case 'custom': v = [unit([finish(new T.IcosahedronGeometry(1, 1), '#ffffff')])]; break;
     default: v = [quad()]; // humo, fuego, magia, explosión, imagen: carteles que miran a la cámara
   }
-  cache.set(type, v);
+  cache.set(key, v);
   return v;
 }
 /** Nombres de las variantes (para las pruebas y la ayuda). */

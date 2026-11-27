@@ -7,7 +7,8 @@ import { round, type Studio3D } from '../Studio3D';
 import { LiveAudio } from './audio';
 import { FluidSystem, type FluidCollider } from './fluid';
 import { ParticleSystem, type ShapePart } from './particles';
-import { defaultFluid, type PartStyle } from '../model';
+import { WeaponSystem } from './weapons';
+import { defaultFluid, subtree, type PartStyle } from '../model';
 import type { LiveHooks, View3D } from '../View3D';
 
 /**
@@ -98,7 +99,7 @@ export class Live {
   onLog: (l: LiveLog) => void = () => {};
   onState: () => void = () => {};
   private keyFn = (e: KeyboardEvent) => this.key(e);
-  private keyUpFn = (e: KeyboardEvent) => { this.held.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key); };
+  private keyUpFn = (e: KeyboardEvent) => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key; this.held.delete(k); this.weapons?.key(k, false); };
   /** Actor que se controla ahora (con su tecla); los demás actores esperan. */
   private actor: BodyInfo | null = null;
   /** Teclas de movimiento pulsadas (WASD / flechas) para el actor. */
@@ -157,8 +158,9 @@ export class Live {
       }
     }
     // Partículas: un sistema para todos los emisores (chispas, fogonazo, órganos…).
-    if (pEmit.length) {
-      const P = (this.parts3 = new ParticleSystem(this.fx.quality, this.fx.ground, pEmit.length * ParticleSystem.capFor(this.fx.quality)));
+    const guns = sc.objects.filter(o => o.weapon && effVisible(sc, o));
+    if (pEmit.length || guns.length) {
+      const P = (this.parts3 = new ParticleSystem(this.fx.quality, this.fx.ground, (pEmit.length + WeaponSystem.emittersFor(guns)) * ParticleSystem.capFor(this.fx.quality)));
       this.view.rootNode.add(P.root);
       for (const o of pEmit) {
         const c = o.particles!;
@@ -171,6 +173,8 @@ export class Live {
       }
       // Los órganos y la carne sangran con el líquido sangre (con un estilo parecido).
       P.onBleed = (x, y, z, n, style) => this.bleed(x, y, z, n, style);
+      // Armas: disparan, expulsan casquillos, retroceden, recargan y se inspeccionan.
+      if (guns.length) this.weapons = this.makeWeapons(guns, P);
     }
     // Poses: se cargan ya sus texturas (el cambio en vivo es instantáneo).
     for (const o of sc.objects) for (const p of o.card?.poses ?? []) this.view.poseTexture(p.tex);
@@ -197,7 +201,7 @@ export class Live {
     this.held.clear();
     this.audio.stop();
     this.fluids?.dispose(); this.fluids = null;
-    this.parts3?.dispose(); this.parts3 = null; this.bleedIds.clear(); this.texWait = [];
+    this.parts3?.dispose(); this.parts3 = null; this.weapons = null; this.hooks.local?.clear(); this.wDrag = false; this.bleedIds.clear(); this.texWait = [];
     this.view.resetLive();
     this.onState();
   }
@@ -308,6 +312,7 @@ export class Live {
     this.output(dt);
     this.partsStep(dt);
     this.fluidStep(dt);
+    this.weapons?.step(dt);
     this.particleStep(dt);
     if (this.rec) this.record();
   }
@@ -537,6 +542,39 @@ export class Live {
   // ---------------------------------------------------------------- partículas
 
   private parts3: ParticleSystem | null = null;
+  /** Armas en vivo (null si la escena no tiene). */
+  weapons: WeaponSystem | null = null;
+  private wDrag = false;
+  private makeWeapons(guns: Obj3[], P: ParticleSystem) {
+    const s = this.s, v = this.view;
+    this.hooks.local ??= new Map();
+    const ray = new T.Raycaster();
+    return new WeaponSystem({
+      local: o => s.localMatrix(o, s.s.time),
+      world: id => { const o = s.obj(id); return o ? this.liveWorld(o).clone() : new T.Matrix4(); },
+      obj: id => s.obj(id),
+      parts: P,
+      shape: id => v.shapeParts(id),
+      raycast: (from, dir, skip) => {
+        ray.set(from, dir); ray.far = 300;
+        for (const h of ray.intersectObjects(v.rootNode.children, true)) {
+          const m = h.object as T.Mesh;
+          if (!m.isMesh || (m as unknown as T.InstancedMesh).isInstancedMesh || !m.visible || m.userData.helper) continue;
+          let oid = m.userData.oid as string | undefined, p: T.Object3D | null = m;
+          while (!oid && p) { p = p.parent; oid = p?.userData.oid; }
+          if (!oid || skip.has(oid) || this.hooks.hidden.has(oid)) continue;
+          const n = h.face ? h.face.normal.clone().transformDirection(m.matrixWorld) : dir.clone().negate();
+          return { point: h.point.clone(), normal: n, oid };
+        }
+        return null;
+      },
+      impulse: (oid, point, imp) => { const b = this.bodies.get(oid); if (b && b.body.type === C.Body.DYNAMIC) { b.body.wakeUp(); b.body.applyImpulse(new C.Vec3(imp.x, imp.y, imp.z), new C.Vec3(point.x, point.y, point.z)); } },
+      shake: k => { if (k > this.shakeAmt || this.time > this.shakeEnd) { this.shakeAmt = k; this.shakeEnd = this.time + 0.09; } },
+      hidden: this.hooks.hidden, out: this.hooks.local,
+      project: p => { const r = v.el.getBoundingClientRect(), q = p.clone().project(v.liveCamera); return { x: r.left + (q.x + 1) / 2 * r.width, y: r.top + (1 - q.y) / 2 * r.height }; },
+      log: m => this.log(m),
+    }, guns, id => subtree(s.scene, id));
+  }
   private bleedIds = new Map<string, string>();
   private texWait: [string, string][] = [];
   get particleCount() { return this.parts3?.count ?? 0; }
@@ -813,6 +851,12 @@ export class Live {
     if (!this.running) return false;
     if (e.button !== 0) return false;
     const v = this.view;
+    // Armas: arrastrar el cargador por su eje (sacarlo o meterlo), o disparar con clic.
+    if (this.weapons) {
+      const h = v.rayAt(e).intersectObjects(v.rootNode.children, true).find(x => x.object.visible && x.object.userData.oid && !(x.object as T.InstancedMesh).isInstancedMesh);
+      if (h && this.weapons.pointerDown(h.object.userData.oid as string, e.clientX, e.clientY, h.point)) { this.wDrag = true; (e.target as HTMLElement).setPointerCapture(e.pointerId); v.controls.enabled = false; return true; }
+      if (this.weapons.click()) return true;
+    }
     // Con un actor elegido, el clic sólo lo mueve a él (no agarra ni elige nada).
     if (this.actor && this.fx.actorClick !== false) {
       const p = this.pointAt(e, this.actor.id);
@@ -857,6 +901,7 @@ export class Live {
   }
   private move(e: PointerEvent) {
     const v = this.view;
+    if (this.wDrag) { this.weapons?.pointerMove(e.clientX, e.clientY); return; }
     if (this.grab) {
       const p = new T.Vector3();
       if (v.rayAt(e).ray.intersectPlane(this.grab.plane, p)) this.grab.mouse.position.set(p.x, p.y, p.z);
@@ -867,6 +912,7 @@ export class Live {
   }
   private up() {
     const v = this.view;
+    if (this.wDrag) { this.wDrag = false; this.weapons?.pointerUp(); v.controls.enabled = true; return; }
     if (this.grab) {
       this.world.removeConstraint(this.grab.joint);
       this.world.removeBody(this.grab.mouse);
@@ -903,6 +949,8 @@ export class Live {
     const t = e.target as HTMLElement;
     if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color'].includes(t.type))) return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    // Armas: disparar (mantener = automático), recargar e inspeccionar.
+    if (this.weapons?.uses(k)) { e.preventDefault(); if (!e.repeat) this.weapons.key(k, true); return; }
     const ruleKey = (x: string) => this.rules.some(r => r.on.type === 'key' && (r.on.key ?? '').toLowerCase() === x) || this.handlers.has(`key:${x}`);
     const actorOf = [...this.bodies.values()].find(b => this.actorKeys(b).includes(k));
     const posed = this.poseKey(k, e.repeat);
@@ -964,6 +1012,7 @@ export class Live {
       case 'script': if (a.code) this.runScript(a.code, self); break;
       case 'pose': { const o = this.s.obj(id); const c = o?.card; if (o && c) { const p = a.param ? c.poses?.find(x => x.name === a.param || x.id === a.param) : null; if (!a.param || p) this.setPose(o, p ? p.tex : null); } break; }
       case 'fluid': { if (!this.fluids) break; if (a.param === 'on' || a.param === 'off') this.fluids.setOn(id, a.param === 'on'); else this.fluids.burst(id, Math.max(1, Math.min(600, a.value ?? 40))); break; }
+      case 'weapon': { const w = this.weapons; if (!w) break; const gid = this.s.obj(id)?.weapon ? id : undefined; if (a.param === 'reload') w.reload(gid); else if (a.param === 'inspect') w.inspect(gid); else for (let i = 0; i < Math.max(1, Math.min(30, a.value ?? 1)); i++) this.after(i * 0.12, () => w.fire(gid)); break; }
       case 'particles': { if (!this.parts3) break; if (a.param === 'on' || a.param === 'off') this.parts3.setOn(id, a.param === 'on'); else this.parts3.burst(id, Math.max(1, Math.min(600, a.value ?? 20))); break; }
       case 'audio': if (a.param) { if ((a.value ?? 1) > 0) this.audio.play(a.param); else this.audio.stopTrack(a.param); } else if ((a.value ?? 1) <= 0) this.audio.stopTrack(); break;
     }
@@ -1033,6 +1082,11 @@ export class Live {
         emit(n = 20) { live.act({ type: 'particles', target: id, value: n }); },
         fire(n = 1) { live.act({ type: 'particles', target: id, value: n }); },
         stream(on = true) { live.act({ type: 'particles', target: id, param: on ? 'on' : 'off' }); },
+        /** Arma: disparar (`n` disparos), recargar, inspeccionar, munición que queda. */
+        shoot(n = 1) { live.act({ type: 'weapon', target: id, param: 'fire', value: n }); },
+        reload() { live.act({ type: 'weapon', target: id, param: 'reload' }); },
+        inspect() { live.act({ type: 'weapon', target: id, param: 'inspect' }); },
+        get ammo() { return id ? live.weapons?.info(id)?.ammo ?? 0 : 0; },
         /** Cambia la pose de un dibujo (nombre o número; 0 = original) con su transición. */
         pose(p: string | number) { const o = objOf(live.s.scene, id); const c = o?.card; if (!o || !c) return; const ps = c.poses ?? []; const t = typeof p === 'number' ? (p <= 0 ? null : ps[p - 1]?.tex) : p === '' ? null : ps.find(x => x.name === p)?.tex; if (t !== undefined) live.setPose(o, t ?? null); },
         spawn(x = 0, y = 2, z = 0) { return handle(live.spawn(id, [x, y, z])); },
