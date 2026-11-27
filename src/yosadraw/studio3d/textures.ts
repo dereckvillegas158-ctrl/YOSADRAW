@@ -1,4 +1,4 @@
-import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Texture } from 'three';
+import { CanvasTexture, NoColorSpace, RepeatWrapping, SRGBColorSpace, type Texture } from 'three';
 
 /**
  * Texturas del editor 3D: procedimentales (madera, piedra, ladrillo, mármol, tejas,
@@ -78,7 +78,23 @@ export class TexCache {
     return t;
   }
   /** Textura de una imagen del proyecto (null mientras carga). */
-  image(id: string, src: string): CanvasTexture | null {
+  image(id: string, src: string, o: { linear?: boolean; flip?: boolean } = {}): CanvasTexture | null {
+    // Mapas de datos (relieve, rugosidad, metal, oclusión) sin corrección de color; las
+    // texturas de glTF sin invertir. Cada variante es una textura propia sobre el mismo lienzo.
+    if (o.linear || o.flip === false) {
+      const k = `${id}#${o.linear ? 'l' : 'c'}${o.flip === false ? 'n' : 'f'}`;
+      let v = this.imgs.get(k);
+      const base = this.image(id, src);
+      if (!base) return null;
+      if (!v?.tex) {
+        const tex = new CanvasTexture(base.image as HTMLCanvasElement);
+        tex.wrapS = tex.wrapT = RepeatWrapping; tex.anisotropy = 8; tex.flipY = o.flip !== false;
+        tex.colorSpace = o.linear ? NoColorSpace : SRGBColorSpace;
+        v = { canvas: base.image as HTMLCanvasElement, tex, loading: null };
+        this.imgs.set(k, v);
+      }
+      return v.tex;
+    }
     let e = this.imgs.get(id);
     if (!e) {
       e = { canvas: null, tex: null, loading: null };

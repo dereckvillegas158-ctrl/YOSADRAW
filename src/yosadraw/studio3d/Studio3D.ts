@@ -544,6 +544,23 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
   addFavMat(i: number) { const f = this.prefs.favMats[i]; if (!f) return null; const m = { ...clone(f), id: sid('mt'), fav: true }; this.edit(`Material ${m.name}`, s => { s.materials.push(m); }); return m; }
 
   /** Añade una textura (imagen como data URL) y la pone en el material. */
+  /** Pone (o quita, con `src` null) un mapa PBR de un material: relieve, rugosidad, metal, oclusión o emisión. */
+  setMatMap(matId: string, role: 'normal' | 'rough' | 'metal' | 'ao' | 'emissive', src: string | null, name = 'Mapa') {
+    const id = sid('tx');
+    this.edit(src ? 'Mapa del material' : 'Quitar mapa', s => {
+      const m = s.materials.find(x => x.id === matId); if (!m) return;
+      if (!src) { if (m.maps) { delete m.maps[role]; if (!Object.keys(m.maps).some(k => ['normal', 'rough', 'metal', 'ao', 'emissive'].includes(k))) delete m.maps; } return; }
+      s.textures.push({ id, name, src });
+      const mp = (m.maps ??= {});
+      mp[role] = id;
+      // Con mapa, el valor del material multiplica al del mapa: se deja en 1.
+      if (role === 'rough') m.rough.v = 1;
+      if (role === 'metal') m.metal.v = 1;
+      if (role === 'normal') mp.normalScale ??= 1;
+      if (role === 'ao') mp.aoI ??= 1;
+      if (role === 'emissive') { m.emissive.v = '#ffffff'; if (!(m.emissiveI.v > 0)) m.emissiveI.v = 1; }
+    });
+  }
   setTexture(matId: string, src: string, name: string, project: { id: string; rev: number } | null = null) {
     const id = sid('tx');
     this.edit('Textura', s => {

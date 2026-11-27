@@ -1,13 +1,14 @@
 import { keyAt, valueAt, type Prop } from '../../motion/keys';
 import { FrameRenderer } from '../../anim/render';
 import { browserImageCodec, readProject } from '../../project/format';
+import { assignTextures } from '../io';
 import { h, pickFiles, toast } from '../../ui/dom';
 import { promptText, confirmDialog } from '../../ui/modal';
 import { menu } from '../../ui/motion/util';
 import { GENERATORS, genDef, type GenType } from '../generators';
 import { vcount } from '../mesh';
 import {
-  LIQUIDS, PART_TYPES, type PartType, MATERIAL_PRESETS, PRIM_PARAMS, PRIMS, effLocked, objOf, rebuild, type LiquidType, type Mat3, type Obj3, type PrimType, type LightType,
+  LIQUIDS, PART_TYPES, type PartType, MATERIAL_PRESETS, PRIM_PARAMS, PRIMS, effLocked, objOf, rebuild, subtree, type LiquidType, type Mat3, type Obj3, type PrimType, type LightType,
 } from '../model';
 import type { Studio3D } from '../Studio3D';
 import { canvasToUrl, fileToDataUrl } from '../textures';
@@ -422,6 +423,7 @@ export class Inspector3 extends Rows {
     if (o.kind === 'mesh' || o.kind === 'light') physicsSection(this, s, o, this.pickArt);
     if (o.card) this.sec('Dibujo en 3D', this.check('Mira siempre a la cámara (cartel)', o.card.billboard, v => s.edit('Cartel', (_st, sc) => { const x = objOf(sc, o.id); if (x?.card) x.card.billboard = v; })), h('p', { class: 'ctl-help' }, 'Recibe las luces, las sombras y los efectos de la escena, y proyecta la sombra de su silueta. Activa «Física» para que caiga, choque o se pueda agarrar.'));
     if (o.cam) this.camPanel(o);
+    if (o.kind === 'group' || o.kind === 'mesh') this.modelTextures(o);
     if (o.kind === 'group' || o.kind === 'mesh') weaponSection(this, s, o);
     if (objs.length > 1) this.alignPanel();
     this.sec('Objeto', this.btns(['Duplicar', () => s.duplicate()], ['Agrupar', () => s.group()], o.kind === 'group' ? ['Desagrupar', () => s.ungroup()] : null, ['Eliminar', () => s.remove()]));
@@ -505,6 +507,7 @@ export class Inspector3 extends Rows {
       texSel,
       this.plainNum('Repetir textura', m.texScale, v => s.setMat(id, x => { x.texScale = Math.max(0.01, v); }, 'Repetición'), { min: 0.01, step: 0.25 }),
       this.btns(['Imagen…', () => void this.texFromFile(id)], ['Dibujo de YOSADRAW…', () => void this.texFromDrawing(id)], tex?.project ? ['Actualizar desde el dibujo', () => void this.refreshDrawing(id)] : null, m.tex ? ['Quitar imagen', () => s.setMat(id, x => { x.tex = null; }, 'Quitar textura')] : null),
+      this.mapsBox(m),
       this.btns(['Pintar sobre el modelo', () => { s.setTool('paint'); toast('Pinta sobre el objeto en el visor (cambia color y tamaño arriba)'); }, 'Pinta directamente en la textura y míralo en vivo']),
       this.btns(['Aplicar a lo elegido', () => s.assignMat(id)], ['Nuevo', () => { this.matSel = s.newMat().id; this.render(); }], ['Duplicar', () => { this.matSel = s.newMat(m).id; this.render(); }], [m.fav ? '★ Favorito' : '☆ Favorito', () => s.toggleFav(id)], ['Borrar', () => s.removeMat(id)]));
   }
@@ -517,6 +520,36 @@ export class Inspector3 extends Rows {
     this.sec('Materiales del proyecto', h('div', { class: 's3-swatches' }, ...inProj.map(m => sw(m.color.v, m.name, () => apply(m), `${m.name}: aplicar a lo elegido`))));
     if (s.prefs.favMats.length) this.sec('Favoritos', h('div', { class: 's3-swatches' }, ...s.prefs.favMats.map((f, i) => sw(f.color.v, f.name, () => { const ex = inProj.find(x => x.name === f.name); const m = ex ?? s.addFavMat(i); if (m) apply(m); }, `${f.name} (favorito)`))));
     this.sec('Biblioteca', ...groups.map(g => h('div', null, h('span', { class: 'mo-unit' }, g), h('div', { class: 's3-swatches' }, ...MATERIAL_PRESETS.filter(p => p.group === g).map(p => sw(p.o?.color ?? '#ccc', p.name, () => { const ex = inProj.find(x => x.name === p.name); apply(ex ?? s.addPresetMat(p.name)); }, `${p.name}: aplicar a lo elegido`))))));
+  }
+  /**
+   * Texturas de un modelo (importado o no): cuántos materiales no tienen imagen y un
+   * botón para elegir varias imágenes; cada una va sola a su material y a su mapa
+   * según el nombre, sin tocar lo que el modelo ya trae.
+   */
+  private modelTextures(o: Obj3) {
+    const s = this.s;
+    const ids = [...new Set([o, ...subtree(s.scene, o.id)].flatMap(x => x.mats ?? []))];
+    const mats = ids.map(id => s.mat(id)).filter((m): m is Mat3 => !!m);
+    if (!mats.length || (o.kind === 'mesh' && !o.mesh?.uv && !subtree(s.scene, o.id).length)) return;
+    const missing = mats.filter(m => !m.tex && !m.proc).length;
+    if (o.kind === 'mesh' && missing === 0 && !subtree(s.scene, o.id).length) return;
+    this.sec('Texturas del modelo',
+      h('p', { class: 'ctl-help' }, missing ? `${missing} de ${mats.length} ${mats.length === 1 ? 'material no tiene' : 'materiales no tienen'} textura. Elige sus imágenes (color, normal, rugosidad, metal, AO, ORM…): cada una va a su material y a su mapa por el nombre. Lo que el modelo ya trae no se toca.` : `Los ${mats.length} materiales tienen textura. Puedes añadir los mapas que falten (relieve, rugosidad…); lo que ya traen no se toca.`),
+      this.btns(['Añadir texturas (imágenes)…', () => void addModelTextures(s, ids)], ['¿Dónde se ven?', () => toast('En la pestaña «Material»: elige un material del modelo para ver y cambiar cada mapa (color, relieve, rugosidad…).')]));
+  }
+  /** Mapas PBR del material: cada uno con su imagen o «Imagen…» para ponerla a mano. */
+  private mapsBox(m: Mat3) {
+    const s = this.s, id = m.id;
+    const ROWS: ['normal' | 'rough' | 'metal' | 'ao' | 'emissive', string][] = [['normal', 'Relieve (normales)'], ['rough', 'Rugosidad'], ['metal', 'Metal'], ['ao', 'Oclusión (sombras finas)'], ['emissive', 'Emisión']];
+    const name = (tid?: string) => (tid ? s.s.textures.find(t => t.id === tid)?.name ?? 'imagen' : '—');
+    const rows = ROWS.map(([k, label]) => {
+      const tid = m.maps?.[k];
+      return h('div', { class: 's3-poserow' }, h('span', { class: 's3-posename', title: name(tid) }, `${label}: ${tid ? '✓' : '—'}`),
+        h('button', { type: 'button', class: 'btn xs', title: `Elegir la imagen del mapa de ${label.toLowerCase()}`, on: { click: () => void (async () => { const [f] = await pickFiles('image/png,image/jpeg,image/webp', false); if (f) s.setMatMap(id, k, await fileToDataUrl(f), f.name.replace(/\.[^.]+$/, '')); })() } }, 'Imagen…'),
+        tid ? h('button', { type: 'button', class: 'icon sm', title: 'Quitar', 'aria-label': `Quitar ${label}`, on: { click: () => s.setMatMap(id, k, null) } }, '✕') : null);
+    });
+    const ns = m.maps?.normal ? this.range('Fuerza del relieve', m.maps.normalScale ?? 1, 0, 3, 0.05, (v, live) => { if (!live) s.setMat(id, x => { if (x.maps) x.maps.normalScale = v; }, 'Relieve'); }) : null;
+    return h('details', { class: 's3-maps', open: !!m.maps }, h('summary', null, 'Mapas PBR (relieve, rugosidad, metal…)'), h('p', { class: 'ctl-help' }, 'Las texturas de los modelos tipo videojuego. Se ponen solas al importar; si faltan, elige cada imagen.'), ...rows, ns);
   }
   private async texFromFile(id: string) {
     const [f] = await pickFiles('image/png,image/jpeg,image/webp,image/gif', false);
@@ -601,3 +634,12 @@ export class Inspector3 extends Rows {
   }
 }
 export { effLocked };
+
+/** Elige imágenes y las reparte entre los materiales (sin pisar las que ya hay). */
+export async function addModelTextures(s: Studio3D, matIds: string[]) {
+  const files = await pickFiles('image/png,image/jpeg,image/webp,image/bmp', true);
+  if (!files.length) return;
+  const r = await assignTextures(s, matIds, files);
+  if (r.placed) toast(`${r.placed} ${r.placed === 1 ? 'textura puesta' : 'texturas puestas'}${r.kept ? ` · ${r.kept} ya tenían la suya (se respetan)` : ''}`, 'ok');
+  else toast(r.kept ? 'Esos materiales ya tienen esas texturas (se respetan).' : 'No se pudo saber a qué material va cada imagen: ponlas una a una en «Material».', r.kept ? 'info' : 'error');
+}

@@ -511,6 +511,11 @@ export class View3D {
   }
 
   /** Material de Three para un material del proyecto en el tiempo actual (según el modo de vista). */
+  /** Textura de una imagen del proyecto (con su orientación; `linear` para mapas de datos). */
+  private texOf(tid: string, linear = false, matFlip?: boolean): T.Texture | null {
+    const tx = this.s.s.textures.find(x => x.id === tid);
+    return tx ? this.tex.image(tx.id, tx.src, { linear, flip: tx.flip ?? matFlip }) : null;
+  }
   private material(id: string, op: number, cel: Cel3 | null = null): T.Material {
     const s = this.s, mode = this.mode, t = s.time;
     const m = s.mat(id);
@@ -538,7 +543,7 @@ export class View3D {
       const o = op * (m ? valueAt(m.opacity, t) : 1);
       mb.opacity = o; mb.transparent = o < 0.999; mb.depthWrite = o > 0.6;
       let map: T.Texture | null = null;
-      if (m?.tex) { const tx = s.s.textures.find(x => x.id === m.tex); if (tx) map = this.tex.image(tx.id, tx.src); }
+      if (m?.tex) map = this.texOf(m.tex, false, m.texFlip);
       else if (m?.proc) map = this.tex.procedural(m.proc);
       if (map) map.repeat.set(m!.texScale, m!.texScale);
       if (mb.map !== map) { mb.map = map; mb.needsUpdate = true; }
@@ -559,10 +564,22 @@ export class View3D {
     mm.opacity = o; mm.transparent = o < 0.999; mm.depthWrite = o > 0.6;
     if (m) { mm.emissive.set(valueAt(m.emissive, t)); mm.emissiveIntensity = valueAt(m.emissiveI, t); }
     let map: T.Texture | null = null;
-    if (m?.tex) { const tx = s.s.textures.find(x => x.id === m.tex); if (tx) map = this.tex.image(tx.id, tx.src); }
+    if (m?.tex) map = this.texOf(m.tex, false, m.texFlip);
     else if (m?.proc) map = this.tex.procedural(m.proc);
     if (map) map.repeat.set(m!.texScale, m!.texScale);
     if (mm.map !== map) { mm.map = map; mm.needsUpdate = true; }
+    // Mapas PBR (modelos importados): relieve, rugosidad, metal, oclusión y emisión.
+    if (!toon) {
+      const mp = m?.maps, rep = m?.texScale ?? 1;
+      const put = <K extends 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'aoMap' | 'emissiveMap'>(k: K, tid: string | undefined, linear: boolean) => {
+        const t = tid ? this.texOf(tid, linear, m?.texFlip) : null;
+        if (t) t.repeat.set(rep, rep);
+        if (mm[k] !== t) { (mm as unknown as Record<string, T.Texture | null>)[k] = t; mm.needsUpdate = true; }
+      };
+      put('normalMap', mp?.normal, true); put('roughnessMap', mp?.rough, true); put('metalnessMap', mp?.metal, true); put('aoMap', mp?.ao, true); put('emissiveMap', mp?.emissive, false);
+      if (mp?.normal) mm.normalScale.set(mp.normalScale ?? 1, mp.normalScale ?? 1);
+      mm.aoMapIntensity = mp?.aoI ?? 1;
+    }
     // Dibujos: lo transparente se recorta (no se ve ni hace sombra) y se ven por las dos caras.
     const cut = !!m?.cut;
     if (mm.alphaTest !== (cut ? 0.5 : 0)) { mm.alphaTest = cut ? 0.5 : 0; mm.needsUpdate = true; }

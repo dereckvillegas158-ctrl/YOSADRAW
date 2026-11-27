@@ -10,7 +10,7 @@ import { valueAt } from '../motion/keys';
 import { encodeGif, encodeMp4, mp4Codec } from '../anim/webexport';
 import { IS_ARTIFACT } from '../ui/dom';
 import { fromTriangles, triangulate } from './mesh';
-import { effVisible, newMaterial, newObject, sid, type Mat3, type Obj3 } from './model';
+import { effVisible, newMaterial, newObject, sid, type Mat3, type MatMaps, type Obj3 } from './model';
 import { round, type Studio3D } from './Studio3D';
 import { canvasToUrl } from './textures';
 import type { View3D } from './View3D';
@@ -122,7 +122,7 @@ function objMtl(scene: T.Scene): string {
 
 // ---------------------------------------------------------------- importar modelos
 
-export const MODEL_ACCEPT = '.glb,.gltf,.fbx,.obj,.mtl,.dae,.ply,.3mf,.stl,.bin,.png,.jpg,.jpeg,.webp,.tga,.bmp,.blend';
+export const MODEL_ACCEPT = '.zip,.glb,.gltf,.fbx,.obj,.mtl,.dae,.ply,.3mf,.stl,.bin,.png,.jpg,.jpeg,.webp,.tga,.bmp,.blend';
 const MODEL_EXTS = ['glb', 'gltf', 'fbx', 'obj', 'dae', 'ply', '3mf', 'stl'];
 /** Máximo de triángulos de un modelo importado (todas sus piezas e instancias). */
 const MAX_TRIS = 400000;
@@ -135,11 +135,16 @@ async function loadModel(main: File, side: Map<string, string>): Promise<{ root:
   // Los archivos que el modelo nombra (texturas, .bin) se buscan entre los elegidos por su nombre.
   const mgr = new T.LoadingManager();
   const blobs = new Set(side.values());
+  // Por nombre, sin la carpeta; y si no está, por nombre sin extensión (el FBX pide
+  // «metal.tga» y la carpeta trae «metal.png»).
+  const stems = new Map<string, string>();
+  for (const [k, u] of side) { const st = k.replace(/\.[^.]+$/, ''); if (!stems.has(st)) stems.set(st, u); }
   mgr.setURLModifier(url => {
     if (url.startsWith('data:') || blobs.has(url)) return url;
     const base = decodeURIComponent(url.split(/[\\/]/).pop()!.split('?')[0]).toLowerCase();
-    return side.get(base) ?? DECODERS[base] ?? url;
+    return side.get(base) ?? DECODERS[base] ?? stems.get(base.replace(/\.[^.]+$/, '')) ?? url;
   });
+  mgr.addHandler(/\.tga$/i, new (await import('three/examples/jsm/loaders/TGALoader.js')).TGALoader(mgr));
   // Las texturas de FBX y OBJ se cargan después de leer el modelo: se esperan (como mucho 10 s).
   let pend = 0;
   mgr.onStart = (_u, l, t) => { pend = t - l; };
@@ -169,6 +174,75 @@ async function loadModel(main: File, side: Map<string, string>): Promise<{ root:
     default: throw new Error('Formato no admitido (GLB, glTF, FBX, OBJ, DAE, PLY, 3MF o STL).');
   }
 }
+/** Papel de una imagen por su nombre (convenciones de Substance, Blender, Sketchfab…). */
+export function texRole(file: string): 'color' | 'normal' | 'rough' | 'metal' | 'ao' | 'emissive' | 'orm' | 'mr' {
+  const n = file.toLowerCase().replace(/\.[^.]+$/, '');
+  const has = (...w: string[]) => w.some(x => new RegExp(`(^|[^a-z])${x}([^a-z]|$)`).test(n) || (x.length >= 4 && n.endsWith(x)));
+  if (has('orm', 'arm', 'occlusionroughnessmetallic', 'occlusionroughnessmetalness')) return 'orm';
+  if (has('metalroughness', 'metallicroughness', 'roughnessmetallic', 'roughnessmetalness', 'metalrough')) return 'mr';
+  if (has('normal', 'normals', 'nrm', 'norm', 'nor', 'normalgl', 'normal_opengl', 'n')) return 'normal';
+  if (has('roughness', 'rough', 'rgh', 'gloss', 'glossiness')) return 'rough';
+  if (has('metallic', 'metalness', 'metal', 'mtl')) return 'metal';
+  if (has('ao', 'ambientocclusion', 'occlusion', 'ambient_occlusion', 'mixed_ao')) return 'ao';
+  if (has('emissive', 'emission', 'emit', 'glow', 'illum')) return 'emissive';
+  return 'color';
+}
+const ROLE_WORDS = /(base[ _-]?colou?r|albedo|diffuse|diff|colou?r|col|normal(gl|dx)?|nrm|norm|nor|roughness|rough|rgh|metal(lic)?roughness|roughnessmetal(lic|ness)?|metallic|metalness|metal|mtl|ambient[ _-]?occlusion|occlusion|ao|emissive|emission|emit|orm|arm|texture|tex|map|\d{3,4}k?)/g;
+const norm = (x: string) => x.toLowerCase().replace(/\.[^.]+$/, '').replace(ROLE_WORDS, '').replace(/[^a-z0-9]/g, '');
+/**
+ * Pone texturas (imágenes elegidas a mano) en los materiales: cada imagen va a su
+ * mapa según su nombre (color, relieve, rugosidad, metal, oclusión, emisión o ORM) y
+ * al material con el nombre más parecido. Sólo rellena lo que falta: lo que el
+ * modelo ya trae se respeta.
+ */
+export async function assignTextures(s: Studio3D, matIds: string[], files: File[]): Promise<{ placed: number; kept: number }> {
+  const mats = matIds.map(id => s.mat(id)).filter((m): m is Mat3 => !!m);
+  if (!mats.length || !files.length) return { placed: 0, kept: 0 };
+  const loaded: { name: string; role: ReturnType<typeof texRole>; key: string; src: string }[] = [];
+  for (const f of files) {
+    const c = await new Promise<HTMLCanvasElement | null>(res => {
+      const url = URL.createObjectURL(f), im = new Image();
+      im.onload = () => { const k = Math.min(1, 2048 / Math.max(im.naturalWidth, im.naturalHeight)); const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(im.naturalWidth * k)); cv.height = Math.max(1, Math.round(im.naturalHeight * k)); cv.getContext('2d')!.drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url); res(cv); };
+      im.onerror = () => { URL.revokeObjectURL(url); res(null); };
+      im.src = url;
+    });
+    if (c) loaded.push({ name: f.name.replace(/\.[^.]+$/, ''), role: texRole(f.name), key: norm(f.name), src: canvasToUrl(c) });
+  }
+  // Material de cada imagen: el de nombre más parecido; si el modelo tiene uno solo (o
+  // las imágenes son de un único juego), a todos los que les falte.
+  const keys = new Set(loaded.map(l => l.key));
+  const target = (l: typeof loaded[number]) => {
+    const exact = mats.filter(m => norm(m.name) && (norm(m.name) === l.key || (l.key && (norm(m.name).includes(l.key) || l.key.includes(norm(m.name))))));
+    if (exact.length) return exact;
+    return keys.size === 1 || mats.length === 1 ? mats : [];
+  };
+  let placed = 0, kept = 0;
+  const newTex: { id: string; name: string; src: string }[] = [];
+  const plan: [string, ReturnType<typeof texRole>, string][] = [];
+  for (const l of loaded) {
+    const tid = sid('tx'); let used = false;
+    for (const m of target(l)) {
+      const has = l.role === 'color' ? !!m.tex : l.role === 'orm' ? !!(m.maps?.ao || m.maps?.rough || m.maps?.metal) : l.role === 'mr' ? !!(m.maps?.rough || m.maps?.metal) : !!m.maps?.[l.role];
+      if (has) { kept++; continue; }
+      plan.push([m.id, l.role, tid]); used = true; placed++;
+    }
+    if (used) newTex.push({ id: tid, name: l.name, src: l.src });
+  }
+  if (!plan.length) return { placed, kept };
+  s.edit('Texturas del modelo', st => {
+    st.textures.push(...newTex);
+    for (const [mid, role, tid] of plan) {
+      const m = st.materials.find(x => x.id === mid); if (!m) continue;
+      if (role === 'color') { m.tex = tid; m.proc = null; m.color.v = '#ffffff'; continue; }
+      const mp = (m.maps ??= {});
+      if (role === 'orm') { mp.ao = tid; mp.rough = tid; mp.metal = tid; mp.aoI ??= 1; m.rough.v = 1; m.metal.v = 1; }
+      else if (role === 'mr') { mp.rough = tid; mp.metal = tid; m.rough.v = 1; m.metal.v = 1; }
+      else { mp[role] = tid; if (role === 'rough') m.rough.v = 1; if (role === 'metal') m.metal.v = 1; if (role === 'normal') mp.normalScale ??= 1; if (role === 'ao') mp.aoI ??= 1; if (role === 'emissive') { m.emissive.v = '#ffffff'; m.emissiveI.v = Math.max(1, m.emissiveI.v as number); } }
+    }
+  });
+  return { placed, kept };
+}
+
 /** Decodificadores de Draco (los glTF comprimidos de Blender), servidos con la app. */
 const DECODERS: Record<string, string> = { 'draco_wasm_wrapper.js': dracoWrapper, 'draco_decoder.wasm': dracoWasm };
 
@@ -179,9 +253,23 @@ const DECODERS: Record<string, string> = { 'draco_wasm_wrapper.js': dracoWrapper
  * pieza por malla; las nubes de puntos (cachés de partículas) se vuelven pequeñas
  * gotas. Se pueden elegir a la vez el modelo y sus archivos (.bin, texturas, .mtl).
  */
-export async function importModel(s: Studio3D, files: File | File[]): Promise<{ pieces: number; instances: number; points: number; anims: number; name: string }> {
-  const list = Array.isArray(files) ? files : [files];
-  const main = list.find(f => MODEL_EXTS.includes(f.name.split('.').pop()!.toLowerCase())) ?? list.find(f => f.name.toLowerCase().endsWith('.blend'));
+export async function importModel(s: Studio3D, files: File | File[]): Promise<{ pieces: number; instances: number; points: number; anims: number; name: string; untextured: number; textures: number; groupId: string }> {
+  let list = Array.isArray(files) ? files : [files];
+  // .zip (como los de Sketchfab): se abre y se usan sus archivos (modelo, .bin y carpeta de texturas).
+  const zips = list.filter(f => f.name.toLowerCase().endsWith('.zip'));
+  if (zips.length) {
+    const { unzipSync } = await import('fflate');
+    const inner: File[] = [];
+    for (const z of zips) {
+      const ent = unzipSync(new Uint8Array(await z.arrayBuffer()), { filter: f => !f.name.startsWith('__MACOSX') && !f.name.endsWith('/') });
+      for (const [name, data] of Object.entries(ent)) inner.push(new File([data as Uint8Array<ArrayBuffer>], name.split('/').pop()!));
+    }
+    list = [...list.filter(f => !zips.includes(f)), ...inner];
+  }
+  // El modelo principal: primero los formatos más completos.
+  const ORDER = ['glb', 'gltf', 'fbx', 'obj', 'dae', '3mf', 'ply', 'stl'];
+  const extOf = (f: File) => f.name.split('.').pop()!.toLowerCase();
+  const main = [...list].filter(f => MODEL_EXTS.includes(extOf(f))).sort((a, b) => ORDER.indexOf(extOf(a)) - ORDER.indexOf(extOf(b)))[0] ?? list.find(f => f.name.toLowerCase().endsWith('.blend'));
   if (!main) throw new Error('Elige el archivo del modelo (GLB, glTF, FBX, OBJ, DAE, PLY, 3MF o STL), y si hace falta sus texturas y .bin.');
   const side = new Map<string, string>();
   for (const f of list) if (f !== main) side.set(f.name.toLowerCase(), URL.createObjectURL(f));
@@ -199,6 +287,29 @@ export async function importModel(s: Studio3D, files: File | File[]): Promise<{ 
   const k = size > 40 ? 4 / size : size < 0.05 && size > 0 ? 1 / size : 1;
   const mats: Mat3[] = [], texs: { id: string; name: string; src: string }[] = [];
   const matMap = new Map<T.Material, string>();
+  // Cada imagen se guarda una vez (glTF comparte la misma para rugosidad y metal).
+  const byImage = new Map<unknown, string>();
+  let untextured = 0, hasUv = true;
+  const gltfUv = ['glb', 'gltf'].includes(main.name.split('.').pop()!.toLowerCase());
+  const addTex = (t: T.Texture | null | undefined, name: string): string | undefined => {
+    const img = t?.image as (CanvasImageSource & { width: number; height: number; data?: unknown }) | undefined;
+    if (!t || !img || !img.width) return undefined;
+    const prev = byImage.get(img); if (prev) return prev;
+    const c = document.createElement('canvas'); const kk = Math.min(1, 2048 / Math.max(img.width, img.height));
+    c.width = Math.max(1, Math.round(img.width * kk)); c.height = Math.max(1, Math.round(img.height * kk));
+    const g = c.getContext('2d')!;
+    if (img.data && !(img instanceof HTMLImageElement)) {
+      // Texturas en datos (TGA): se pasan a imagen.
+      const d = img as unknown as { width: number; height: number; data: Uint8Array };
+      const tmp = document.createElement('canvas'); tmp.width = d.width; tmp.height = d.height;
+      const id = tmp.getContext('2d')!.createImageData(d.width, d.height); id.data.set(d.data.subarray(0, id.data.length)); tmp.getContext('2d')!.putImageData(id, 0, 0);
+      g.drawImage(tmp, 0, 0, c.width, c.height);
+    } else g.drawImage(img, 0, 0, c.width, c.height);
+    const tid = sid('tx');
+    texs.push({ id: tid, name, src: canvasToUrl(c), ...(t.flipY === false ? { flip: false } : {}) });
+    byImage.set(img, tid);
+    return tid;
+  };
   const toMat = (m: T.Material): string => {
     let id = matMap.get(m);
     if (id) return id;
@@ -207,15 +318,20 @@ export async function importModel(s: Studio3D, files: File | File[]): Promise<{ 
     const rough = sm.roughness ?? (sm.shininess !== undefined ? Math.max(0.05, 1 - Math.sqrt(sm.shininess / 100)) : 0.6);
     const em = sm.emissive && (sm.emissive.r + sm.emissive.g + sm.emissive.b) > 0.01 ? `#${sm.emissive.getHexString()}` : '#000000';
     const mt = newMaterial(m.name || `Material ${mats.length + 1}`, { color: sm.color ? `#${sm.color.getHexString()}` : '#cccccc', rough, metal: sm.metalness ?? 0, opacity: sm.transparent ? sm.opacity : 1, emissive: em, emissiveI: em === '#000000' ? 0 : sm.emissiveIntensity ?? 1 });
-    const img = (sm.map?.image ?? sm.emissiveMap?.image) as CanvasImageSource & { width: number; height: number } | undefined;
-    if (img && img.width) {
-      const c = document.createElement('canvas'); const kk = Math.min(1, 2048 / Math.max(img.width, img.height));
-      c.width = Math.max(1, Math.round(img.width * kk)); c.height = Math.max(1, Math.round(img.height * kk));
-      const g = c.getContext('2d')!;
-      g.drawImage(img, 0, 0, c.width, c.height);
-      const tid = sid('tx'); texs.push({ id: tid, name: mt.name, src: canvasToUrl(c) }); mt.tex = tid;
-      if (sm.alphaTest > 0 || (sm.transparent && sm.map)) mt.cut = true;
-    }
+    // Color y mapas PBR (relieve, rugosidad, metal, oclusión, emisión), tal como vienen.
+    const color = addTex(sm.map, mt.name);
+    if (color) { mt.tex = color; if (sm.alphaTest > 0 || (sm.transparent && sm.map)) mt.cut = true; }
+    const p = m as T.MeshStandardMaterial;
+    const maps: MatMaps = {};
+    const nm = addTex(p.normalMap, `${mt.name} · relieve`); if (nm) { maps.normal = nm; maps.normalScale = p.normalScale?.x ?? 1; }
+    const rm = addTex(p.roughnessMap, `${mt.name} · rugosidad`); if (rm) maps.rough = rm;
+    const mm = addTex(p.metalnessMap, `${mt.name} · metal`); if (mm) maps.metal = mm;
+    const am = addTex(p.aoMap, `${mt.name} · oclusión`); if (am) { maps.ao = am; maps.aoI = p.aoMapIntensity ?? 1; }
+    const emm = addTex(sm.emissiveMap, `${mt.name} · emisión`); if (emm) { maps.emissive = emm; if (mt.emissiveI.v === 0) { mt.emissive.v = '#ffffff'; mt.emissiveI.v = 1; } }
+    if (Object.keys(maps).length) mt.maps = maps;
+    // Modelos glTF: las imágenes que se le pongan luego, con su misma orientación.
+    if (gltfUv) mt.texFlip = false;
+    if (!color && hasUv) untextured++;
     mats.push(mt); matMap.set(m, mt.id);
     return mt.id;
   };
@@ -238,6 +354,7 @@ export async function importModel(s: Studio3D, files: File | File[]): Promise<{ 
   for (const mesh of meshes) {
     const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const base = mesh.geometry as T.BufferGeometry;
+    hasUv = !!base.attributes.uv;
     if (mesh instanceof T.InstancedMesh) {
       // Instancias (partículas de Blender, hierba, rocas repetidas): se juntan en una pieza.
       const per = triCount(base), n = Math.max(0, Math.min(mesh.count, Math.floor((MAX_TRIS - tris) / Math.max(1, per))));
@@ -279,7 +396,7 @@ export async function importModel(s: Studio3D, files: File | File[]): Promise<{ 
   for (const o of objs) for (let i = 0; i < o.mesh!.v.length; i += 3) { o.mesh!.v[i] = round(o.mesh!.v[i] - c.x); o.mesh!.v[i + 1] = round(o.mesh!.v[i + 1] - b.min.y); o.mesh!.v[i + 2] = round(o.mesh!.v[i + 2] - c.z); }
   s.edit(`Importar ${main.name}`, (st, sc) => { st.materials.push(...mats); st.textures.push(...texs); group.name = s.uniqueName(sc, group.name); sc.objects.push(group, ...objs); });
   s.select([group.id]);
-  return { pieces: objs.length, instances, points: nPoints, anims: loaded.anims, name: group.name };
+  return { pieces: objs.length, instances, points: nPoints, anims: loaded.anims, name: group.name, untextured, textures: texs.length, groupId: group.id };
 }
 
 // ---------------------------------------------------------------- render de animaciones

@@ -17,6 +17,13 @@
 
 Todas conservan sus piezas móviles y su mecánica en vivo (disparo con fogonazo y casquillos, corredera o cerrojo, retroceso, recarga, cargador con el ratón, inspección) y se animan con keyframes por pieza.
 
+### Modelos importados con todas sus texturas (calidad de videojuego)
+- **Ya no salen sin textura.** Ahora se importan también los **.zip** tal cual (como los de Sketchfab: modelo, .bin y carpeta de texturas), las texturas se encuentran por su nombre aunque estén en otra carpeta o con otra extensión (el FBX pide «.tga» y la carpeta trae «.png»), y se leen las **.tga**.
+- **Mapas PBR completos:** además del color se importan el **relieve (normales)**, la **rugosidad**, el **metal**, la **oclusión** y la **emisión**, como en Escape from Tarkov o Call of Duty. Antes se perdían y los modelos se veían planos.
+- **Orientación correcta** de las texturas de glTF/GLB (antes podían salir invertidas).
+- **Poner texturas a mano:** si un modelo no trae texturas, al importarlo aparece «Añadir texturas…»; también en **Objeto → Texturas del modelo**. Elige varias imágenes a la vez (BaseColor, Normal, Roughness, Metallic, AO, ORM, metalRoughness, Emissive…) y cada una va sola a su material y a su mapa según el nombre. **Lo que el modelo ya trae se respeta.**
+- En **Material → Mapas PBR** cada mapa tiene su «Imagen…» y «Quitar», y la fuerza del relieve.
+
 ### Versión anterior: YOSADRAW 1.21.0
 
 ### Descargas
