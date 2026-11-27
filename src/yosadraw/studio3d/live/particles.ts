@@ -62,6 +62,7 @@ const SPEC: Record<PartType, LayerSpec[]> = {
   leaves: [{ shape: 'leaves', blend: 'solid', main: true }],
   bubbles: [{ shape: 'bubbles', blend: 'alpha', main: true }],
   magic: [{ shape: 'quad', sprite: 'twinkle', bill: true, blend: 'add', flicker: true, main: true }],
+  casings: [{ shape: 'casings', blend: 'solid', main: true }],
   custom: [{ shape: 'custom', blend: 'solid', main: true }],
 };
 /** Tipos que se disparan de golpe (cada ráfaga es un disparo completo). */
@@ -70,13 +71,13 @@ export const isShot = (t: PartType) => SPEC[t].some(l => l.fixed);
 const QUAL = { low: 300, medium: 800, high: 1600 } as const;
 const MAX_LIGHTS = 6;
 const AXES: Record<string, readonly [number, number, number]> = { up: [0, 1, 0], down: [0, -1, 0], front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0] };
-const SOLIDISH = new Set<PartType>(['organs', 'bones', 'gibs', 'debris', 'coins']);
+const SOLIDISH = new Set<PartType>(['organs', 'bones', 'gibs', 'debris', 'coins', 'casings']);
 
 /** Una pieza dibujable de la forma: geometría (radio 1), material y su posición dentro de la forma. */
 export interface ShapePart { geo: T.BufferGeometry; mat: T.Material | T.Material[]; M: T.Matrix4 }
 interface Draw { mesh: T.InstancedMesh; outline: T.InstancedMesh | null; fade: T.InstancedBufferAttribute | null; M: T.Matrix4 | null; count: number }
 interface Layer { spec: LayerSpec; variants: Draw[][]; custom: boolean; c1: T.Color; c2: T.Color; pal: T.Color[] | null }
-interface Emitter { id: string; cfg: Particles3; W: T.Matrix4; on: boolean; acc: number; layers: Layer[]; cap: number; alive: number; light: T.PointLight | null; flash: number; lx: number; ly: number; lz: number; group: T.Group }
+interface Emitter { id: string; cfg: Particles3; W: T.Matrix4; on: boolean; align: boolean; acc: number; layers: Layer[]; cap: number; alive: number; light: T.PointLight | null; flash: number; lx: number; ly: number; lz: number; group: T.Group }
 
 /** Añade la transparencia por instancia (aFade) a un material. */
 function withFade(m: T.Material) {
@@ -108,7 +109,7 @@ function layerMat(spec: LayerSpec, style: PartStyle, type: PartType, glow: numbe
     case 'flat': return { mat: new T.MeshBasicMaterial({ vertexColors: true, map, side, alphaTest: map ? 0.4 : 0 }), outline: null };
     case 'neon': { const m = new T.MeshBasicMaterial({ vertexColors: true, map, side, alphaTest: map ? 0.4 : 0 }); m.toneMapped = false; return { mat: m, outline: null }; }
     default: return {
-      mat: new T.MeshPhysicalMaterial({ vertexColors: true, map, side, alphaTest: map ? 0.4 : 0, roughness: type === 'coins' ? 0.28 : wet ? 0.32 : 0.7, metalness: type === 'coins' ? 0.9 : 0, clearcoat: wet ? 0.7 : 0, clearcoatRoughness: 0.15, emissive: glow > 0 ? new T.Color('#ffffff') : new T.Color('#000000'), emissiveIntensity: glow * 0.25 }),
+      mat: new T.MeshPhysicalMaterial({ vertexColors: true, map, side, alphaTest: map ? 0.4 : 0, roughness: type === 'coins' || type === 'casings' ? 0.28 : wet ? 0.32 : 0.7, metalness: type === 'coins' || type === 'casings' ? 0.9 : 0, clearcoat: wet ? 0.7 : 0, clearcoatRoughness: 0.15, emissive: glow > 0 ? new T.Color('#ffffff') : new T.Color('#000000'), emissiveIntensity: glow * 0.25 }),
       outline: null,
     };
   }
@@ -151,7 +152,7 @@ export class ParticleSystem {
    * Añade un emisor. `shape` es la forma elegida por el usuario (un objeto o modelo
    * de la escena, ya en piezas) o una imagen; sin ella, la forma de serie.
    */
-  addEmitter(id: string, cfg: Particles3, W: T.Matrix4, on: boolean, custom: { parts?: ShapePart[]; tex?: T.Texture | null }) {
+  addEmitter(id: string, cfg: Particles3, W: T.Matrix4, on: boolean, custom: { parts?: ShapePart[]; tex?: T.Texture | null; align?: boolean }) {
     const cap = ParticleSystem.capFor(this.quality);
     const group = new T.Group();
     const mk = (geo: T.BufferGeometry, mat: T.Material | T.Material[], fade: boolean): { mesh: T.InstancedMesh; fade: T.InstancedBufferAttribute | null } => {
@@ -180,7 +181,7 @@ export class ParticleSystem {
       }
       const s2: LayerSpec = useTex ? { ...spec, shape: 'quad', bill: true, sprite: undefined } : spec;
       const map = useTex ? custom.tex ?? partSprite('soft') : s2.sprite ? partSprite(s2.sprite) : null;
-      const geos = partShapes(s2.shape);
+      const geos = partShapes(s2.shape, cfg.caliber ?? '9mm');
       const variants = geos.map(geo => {
         const { mat, outline } = layerMat(s2, cfg.style, cfg.type, cfg.glow, map);
         if (useTex && s2.blend !== 'add') { (mat as T.MeshBasicMaterial).alphaTest = 0.35; (mat as T.MeshBasicMaterial).transparent = s2.blend === 'alpha'; }
@@ -199,7 +200,7 @@ export class ParticleSystem {
     }
     this.root.add(group);
     const p = new T.Vector3().setFromMatrixPosition(W);
-    this.emits.push({ id, cfg, W: W.clone(), on, acc: 0, layers, cap, alive: 0, light, flash: 0, lx: p.x, ly: p.y, lz: p.z, group });
+    this.emits.push({ id, cfg, W: W.clone(), on, align: !!custom.align, acc: 0, layers, cap, alive: 0, light, flash: 0, lx: p.x, ly: p.y, lz: p.z, group });
   }
   /** La imagen de un emisor terminó de cargarse: se pone en lugar de la provisional. */
   setTexture(id: string, tex: T.Texture) {
@@ -207,6 +208,8 @@ export class ParticleSystem {
     for (const l of e.layers) if (l.custom && l.spec.main) for (const v of l.variants) for (const d of v) for (const m of ([] as T.Material[]).concat(d.mesh.material)) { (m as T.MeshBasicMaterial).map = tex; m.needsUpdate = true; }
   }
   setWorld(i: number, W: T.Matrix4) { this.emits[i]?.W.copy(W); }
+  /** Coloca un emisor por su id (armas: boca, ventana de expulsión, impactos). */
+  place(id: string, W: T.Matrix4) { const i = this.indexOf(id); if (i >= 0) this.emits[i].W.copy(W); }
   indexOf(id: string) { return this.emits.findIndex(e => e.id === id); }
   setOn(id: string, on: boolean) { const e = this.emits[this.indexOf(id)]; if (e) e.on = on; }
   /** Ráfaga: `count` partículas (en los tipos de disparo, `count` disparos, como mucho 8). */
@@ -253,7 +256,8 @@ export class ParticleSystem {
     this.px[k] = o.x; this.py[k] = o.y; this.pz[k] = o.z;
     this.vx[k] = dx * speed; this.vy[k] = dy * speed; this.vz[k] = dz * speed;
     // Orientación inicial y giro.
-    if (sp.orient === 'dir') { this._q.setFromUnitVectors(this._s.set(0, 0, 1), d).multiply(this._q2.setFromAxisAngle(this._s.set(0, 0, 1), Math.random() * Math.PI)); }
+    if (e.align) this._q.setFromRotationMatrix(this._m.extractRotation(W));
+    else if (sp.orient === 'dir') { this._q.setFromUnitVectors(this._s.set(0, 0, 1), d).multiply(this._q2.setFromAxisAngle(this._s.set(0, 0, 1), Math.random() * Math.PI)); }
     else this._q.setFromEuler(this._e.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28));
     this.qx[k] = this._q.x; this.qy[k] = this._q.y; this.qz[k] = this._q.z; this.qw[k] = this._q.w;
     const spin = c.spin * (0.5 + Math.random());

@@ -1,4 +1,28 @@
-## YOSADRAW 1.20.6
+## YOSADRAW 1.21.0
+
+### Descargas
+- **Windows 64 bits:** `YOSADRAW-Setup-1.21.0-x64.exe` (instalador), `YOSADRAW-1.21.0-x64-portable.exe` o `YOSADRAW-1.21.0-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».
+- **Android 7.0 o superior:** `YOSADRAW-1.21.0.apk`. Instálalo encima de la versión anterior (tus proyectos se conservan).
+
+### Nuevo en 3D Studio: armas que funcionan como las reales
+**Añadir → Armas**: pistola, fusil de asalto, subfusil, escopeta de bombeo, revólver y fusil de cerrojo, originales de YOSADRAW y **por piezas** (armazón, corredera, cañón, cerrojo, palanca de carga, tapa del expulsor, gatillo, martillo, tambor, guardamanos, cargador…): cada pieza móvil es un objeto con su recorrido real.
+
+**En vivo (F5)**:
+- **Disparo** (F; mantener en automático): el gatillo y el martillo se mueven, **fogonazo** con luz, **retroceso** (atrás y la boca hacia arriba, con muelle), la corredera o el cerrojo hacen su ciclo y el **casquillo sale despedido por la ventana de expulsión** en el punto más atrasado: rebota, rueda y se queda en el suelo.
+- **Con el último cartucho la corredera se queda atrás.** La escopeta **bombea** (expulsa el cartucho rojo), el fusil de cerrojo **abre, retrocede y cierra**, el revólver **gira el tambor** y guarda las vainas hasta recargar.
+- **Recarga** (R): el cargador **cae con física** (con su forma real) y entra uno nuevo; se suelta la corredera o se tira de la palanca de carga.
+- **Cargador con el ratón**: arrástralo hacia abajo para sacarlo (cae) y sube el nuevo para meterlo.
+- **Inspección** (I): el arma gira, se comprueba la recámara y se saca un poco el cargador.
+- **Balas**: donde pegan saltan chispas y empujan lo que tiene física. La escopeta dispara perdigones.
+- Disparadores «Arma» (disparar N veces, recargar, inspeccionar) y en el programa `obj("Pistola").shoot(3)`, `.reload()`, `.inspect()`, `.ammo`.
+
+**Convierte cualquier modelo en arma** (por ejemplo importado de Blender): «Objeto → Convertir en arma». Reconoce las piezas por su nombre (corredera/slide, cargador/magazine, gatillo/trigger, martillo/hammer, cerrojo/bolt, palanca/charging handle, tambor/cylinder, bombeo/pump, tapa/dust cover), calcula sus recorridos, la boca del cañón y la ventana de expulsión. Todo se puede cambiar: piezas, acción, calibre, munición, cadencia, teclas, retroceso, fogonazo, luz, tamaño de los casquillos, hacia dónde apunta el cañón.
+
+**Animaciones con keyframes (recargas e inspecciones)**: en «Animar las piezas», cada pieza tiene su deslizador (0 = reposo, 1 = recorrido completo) y ◆ para guardar su keyframe; **«Crear animación de inspección»** genera 3 s de keyframes editables (girar el arma, comprobar recámara, cargador a medias).
+
+**Casquillos** también como partícula propia (Añadir → Partículas → Casquillos) con calibres 9 mm, .45, .357, 5,56, 7,62, .308, .50 y cartuchos de escopeta.
+
+### Versión anterior: YOSADRAW 1.20.6
 
 ### Descargas
 - **Windows 64 bits:** `YOSADRAW-Setup-1.20.6-x64.exe` (instalador), `YOSADRAW-1.20.6-x64-portable.exe` o `YOSADRAW-1.20.6-win.zip` (portables, sin instalar: descomprime el zip y abre `YOSADRAW.exe`). Si SmartScreen avisa: «Más información» → «Ejecutar de todas formas».

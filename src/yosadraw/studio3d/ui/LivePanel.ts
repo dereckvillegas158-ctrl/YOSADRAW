@@ -314,7 +314,7 @@ function toonSection(r: Rows, s: Studio3D) {
 }
 
 const EVENTS: [EventType, string][] = [['start', 'Al empezar'], ['time', 'En el segundo…'], ['every', 'Cada … segundos'], ['key', 'Al pulsar la tecla…'], ['click', 'Al hacer clic en…'], ['collide', 'Al chocar…'], ['enter', 'Al entrar en la zona…'], ['grab', 'Al agarrar…'], ['release', 'Al soltar…'], ['talk', 'Al empezar a hablar (audio)'], ['quiet', 'Al callarse (audio)'], ['loud', 'Con un sonido fuerte (audio)']];
-const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código'], ['pose', 'Cambiar de expresión (pose)'], ['audio', 'Reproducir o parar audio'], ['particles', 'Partículas (ráfaga, disparo, abrir, cerrar)'], ['fluid', 'Líquido (chorro, abrir, cerrar)']];
+const ACTS: [ActType, string][] = [['impulse', 'Empujar'], ['jump', 'Saltar'], ['setdir', 'Cambiar dirección'], ['speed', 'Cambiar velocidad'], ['behavior', 'Cambiar comportamiento'], ['color', 'Cambiar color'], ['light', 'Luz (intensidad / color)'], ['fx', 'Efecto visual'], ['shake', 'Temblor de cámara'], ['spawn', 'Soltar una copia'], ['hide', 'Ocultar'], ['show', 'Mostrar'], ['gravity', 'Gravedad'], ['slowmo', 'Cámara lenta'], ['stop', 'Parar'], ['script', 'Código'], ['pose', 'Cambiar de expresión (pose)'], ['audio', 'Reproducir o parar audio'], ['weapon', 'Arma (disparar, recargar, inspeccionar)'], ['particles', 'Partículas (ráfaga, disparo, abrir, cerrar)'], ['fluid', 'Líquido (chorro, abrir, cerrar)']];
 const FX_PARAMS: [keyof Fx3, string, number][] = [['godrays', 'Luz volumétrica', 2], ['cones', 'Conos de luz', 2], ['bloom', 'Resplandor (bloom)', 3], ['chroma', 'Aberración cromática', 3], ['glitch', 'Glitch', 1], ['tintAmt', 'Tinte de color', 1], ['vignette', 'Viñeta', 1], ['grain', 'Grano', 1], ['ao', 'Volumen (oclusión ambiental)', 1]];
 
 /** Plantillas de reglas para empezar rápido. */
@@ -323,6 +323,7 @@ function presets(s: Studio3D): [string, () => Rule3][] {
   const light = s.scene.objects.find(o => o.light?.type === 'point' || o.light?.type === 'spot')?.id ?? '';
   const tub = s.scene.objects.find(o => o.card?.tuber)?.id ?? '';
   const blood = s.scene.objects.find(o => o.fluid?.liquid === 'blood')?.id ?? s.scene.objects.find(o => o.fluid)?.id ?? '';
+  const arma = s.scene.objects.find(o => o.weapon)?.id ?? '';
   const gun = s.scene.objects.find(o => o.particles?.type === 'muzzle')?.id ?? s.scene.objects.find(o => o.particles)?.id ?? '';
   const gore = s.scene.objects.find(o => o.particles && ['organs', 'gibs', 'bones', 'explosion'].includes(o.particles.type))?.id ?? s.scene.objects.find(o => o.particles)?.id ?? '';
   const R = (name: string, on: Rule3['on'], acts: Act3[]): Rule3 => ({ id: sid('ru'), name, enabled: true, once: false, on, do: acts });
@@ -338,6 +339,8 @@ function presets(s: Studio3D): [string, () => Rule3][] {
     ['PNGTuber: al callarse, volver a la expresión normal', () => R('Volver a normal', { type: 'quiet' }, tub ? [{ type: 'pose', target: tub }] : [])],
     ['Líquido: al chocar, salpicar sangre', () => R('Choque: sangre', { type: 'collide', a: dyn || ch }, blood ? [{ type: 'fluid', target: blood, param: 'burst', value: 80 }, { type: 'shake', target: '', value: 0.15, dur: 0.25 }] : [])],
     ['Líquido: tecla B, chorro de sangre', () => R('Tecla B: sangre', { type: 'key', key: 'b' }, blood ? [{ type: 'fluid', target: blood, param: 'burst', value: 120 }] : [])],
+    ['Arma real: tecla Q, ráfaga de 3', () => R('Q: ráfaga', { type: 'key', key: 'q' }, arma ? [{ type: 'weapon', target: arma, param: 'fire', value: 3 }] : [])],
+    ['Arma real: a los 2 s, inspeccionar', () => R('Inspección', { type: 'time', t: 2 }, arma ? [{ type: 'weapon', target: arma, param: 'inspect' }] : [])],
     ['Arma: tecla F, disparar (fogonazo y luz)', () => R('Tecla F: disparo', { type: 'key', key: 'f' }, gun ? [{ type: 'particles', target: gun, param: 'burst', value: 1 }, { type: 'shake', target: '', value: 0.06, dur: 0.12 }] : [])],
     ['Arma: clic en la escena, disparar', () => R('Clic: disparo', { type: 'click' }, gun ? [{ type: 'particles', target: gun, param: 'burst', value: 1 }, { type: 'shake', target: '', value: 0.05, dur: 0.1 }] : [])],
     ['Partículas: al chocar, explosión de órganos', () => R('Choque: órganos', { type: 'collide', a: dyn || ch }, gore ? [{ type: 'particles', target: gore, param: 'burst', value: 8 }, { type: 'shake', target: '', value: 0.2, dur: 0.3 }] : [])],
@@ -441,6 +444,7 @@ function ruleCard(r: Rows, s: Studio3D, rule: Rule3, objs: [string, string][]) {
     const p: (Node | null)[] = [sel(a.type, ACTS, v => ua(x => { x.type = v as ActType; }), 'Acción')];
     if (!['fx', 'shake', 'gravity', 'slowmo', 'stop', 'script', 'audio'].includes(a.type)) p.push(sel(a.target, objs, v => ua(x => { x.target = v; }), 'Objeto'));
     if (a.type === 'pose') { const o = a.target ? s.obj(a.target) : null; const ps = o?.card?.poses ?? []; p.push(sel(a.param ?? '', [['', 'Original'], ...ps.map(x => [x.name, x.name] as [string, string])], v => ua(x => { x.param = v; }), 'Expresión')); }
+    if (a.type === 'weapon') p.push(sel(a.param ?? 'fire', [['fire', 'Disparar'], ['reload', 'Recargar'], ['inspect', 'Inspeccionar']], v => ua(x => { x.param = v; }), 'Qué hacer'), ...((a.param ?? 'fire') === 'fire' ? [num(a.value ?? 1, v => ua(x => { x.value = Math.max(1, Math.round(v)); }), 'Disparos', 1)] : []));
     if (a.type === 'particles') p.push(sel(a.param ?? 'burst', [['burst', 'Ráfaga (o disparos)'], ['on', 'Abrir (caudal)'], ['off', 'Cerrar']], v => ua(x => { x.param = v; }), 'Qué hacer'), ...((a.param ?? 'burst') === 'burst' ? [num(a.value ?? 20, v => ua(x => { x.value = Math.max(1, Math.round(v)); }), 'Cantidad', 1)] : []));
     if (a.type === 'fluid') p.push(sel(a.param ?? 'burst', [['burst', 'Chorro'], ['on', 'Abrir (caudal)'], ['off', 'Cerrar']], v => ua(x => { x.param = v; }), 'Qué hacer'), ...((a.param ?? 'burst') === 'burst' ? [num(a.value ?? 40, v => ua(x => { x.value = Math.max(1, Math.round(v)); }), 'Gotas', 5)] : []));
     if (a.type === 'audio') { const ts = s.scene.audio?.tracks ?? []; p.push(sel(a.param ?? '', [['', '(todas)'], ...ts.map(t => [t.name, t.name] as [string, string])], v => ua(x => { x.param = v; }), 'Audio'), sel(String((a.value ?? 1) > 0 ? 1 : 0), [['1', 'Reproducir'], ['0', 'Parar']], v => ua(x => { x.value = Number(v); }), 'Qué hacer')); }

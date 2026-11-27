@@ -55,6 +55,8 @@ export interface Obj3 {
   fluid?: Fluid3;
   /** Emisor de partículas (chispas, fogonazo, órganos, humo…) en el modo En vivo. */
   particles?: Particles3;
+  /** Arma (raíz de un grupo con sus piezas): dispara, expulsa casquillos, retrocede, recarga, se inspecciona. */
+  weapon?: Weapon3;
   /** Estilo propio (shaders) sólo para este objeto: se ve en los modos Materiales y Render, en vivo y en los renders. */
   style?: ObjStyle;
   /** Comportamiento de una luz en vivo. */
@@ -100,7 +102,7 @@ export const defaultFluid = (liquid: LiquidType = 'blood'): Fluid3 => {
   return { liquid, style: L.style, color: L.color, rate: 60, burst: 0, speed: 3, spread: 18, dir: 'up', size: L.size, visc: L.visc, cohesion: L.cohesion, stick: L.stick, pulse: L.pulse, showSource: false };
 };
 /** Partículas del modo En vivo. */
-export type PartType = 'sparks' | 'muzzle' | 'explosion' | 'embers' | 'fire' | 'smoke' | 'organs' | 'bones' | 'gibs' | 'debris' | 'confetti' | 'coins' | 'stars' | 'leaves' | 'bubbles' | 'magic' | 'custom';
+export type PartType = 'sparks' | 'muzzle' | 'explosion' | 'embers' | 'fire' | 'smoke' | 'organs' | 'bones' | 'gibs' | 'debris' | 'confetti' | 'coins' | 'stars' | 'leaves' | 'bubbles' | 'magic' | 'casings' | 'custom';
 export type PartStyle = 'real' | 'cel' | 'cartoon' | 'flat' | 'neon';
 /**
  * Emisor de partículas: qué sale (forma por defecto, un objeto o modelo de la
@@ -132,6 +134,8 @@ export interface Particles3 {
   bleed: number;
   /** Se ve el objeto que las suelta. */
   showSource: boolean;
+  /** Casquillos: calibre (forma y color). */
+  caliber?: Caliber;
 }
 export const PART_TYPES: Record<PartType, { label: string; icon: string; p: Partial<Particles3> }> = {
   sparks: { label: 'Chispas', icon: '✦', p: { style: 'neon', color: '#fff3b0', color2: '#ff4a00', rate: 80, speed: 6, spread: 35, size: 0.025, sizeVar: 0.5, life: 0.7, gravity: 1, drag: 0.4, spin: 0, bounce: 0.45, collide: true, stay: false, fade: true, glow: 1.6, light: 1.2, lightRange: 4, lightColor: '#ffb040' } },
@@ -150,6 +154,7 @@ export const PART_TYPES: Record<PartType, { label: string; icon: string; p: Part
   leaves: { label: 'Hojas', icon: '🍂', p: { style: 'cel', color: '#ffffff', color2: '#ffffff', rate: 6, speed: 0.6, spread: 70, size: 0.08, sizeVar: 0.4, life: 8, gravity: 0.15, drag: 2.5, spin: 3, bounce: 0, collide: true, stay: true, fade: true, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
   bubbles: { label: 'Burbujas', icon: '◯', p: { style: 'real', color: '#bfe8ff', color2: '#e6f7ff', rate: 10, speed: 0.8, spread: 30, size: 0.06, sizeVar: 0.6, life: 4, gravity: -0.12, drag: 1, spin: 0, bounce: 0, collide: false, stay: false, fade: true, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
   magic: { label: 'Magia', icon: '✨', p: { style: 'neon', color: '#b46bff', color2: '#3ae0ff', rate: 40, speed: 1, spread: 180, size: 0.05, sizeVar: 0.6, life: 1.5, gravity: -0.1, drag: 1.5, spin: 2, bounce: 0, collide: false, stay: false, fade: true, glow: 1.5, light: 1.5, lightRange: 4, lightColor: '#9a6bff' } },
+  casings: { label: 'Casquillos', icon: '🔸', p: { style: 'real', color: '#ffffff', color2: '#ffffff', rate: 6, burst: 0, speed: 3, spread: 14, dir: 'right', size: 0.012, sizeVar: 0.05, life: 14, gravity: 1, drag: 0.15, spin: 22, bounce: 0.45, collide: true, stay: true, fade: false, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
   custom: { label: 'Personalizado', icon: '❖', p: { style: 'real', color: '#ffffff', color2: '#ffffff', rate: 10, speed: 3, spread: 30, size: 0.1, sizeVar: 0.3, life: 4, gravity: 1, drag: 0.2, spin: 3, bounce: 0.3, collide: true, stay: false, fade: true, glow: 0, light: 0, lightRange: 3, lightColor: '#ffffff' } },
 };
 export const PART_STYLES: [PartStyle, string][] = [['real', 'Realista (videojuego)'], ['cel', 'Cel shading'], ['cartoon', 'Caricatura (contorno)'], ['flat', 'Plano'], ['neon', 'Neón (brilla)']];
@@ -158,6 +163,65 @@ export const defaultParticles = (type: PartType = 'sparks'): Particles3 => ({
   size: 0.1, sizeVar: 0.3, life: 2, gravity: 1, drag: 0.2, spin: 0, bounce: 0.3, collide: true, stay: false, fade: true, glow: 0,
   light: 0, lightRange: 3, lightColor: '#ffffff', bleed: 0, showSource: false, ...PART_TYPES[type].p,
 });
+/** Calibres de los casquillos (forma, tamaño y color). */
+export type Caliber = '9mm' | '45acp' | '357' | '556' | '762' | '308' | '50bmg' | '12g';
+export const CALIBERS: Record<Caliber, { label: string; size: number }> = {
+  '9mm': { label: '9 mm (pistola)', size: 0.0105 }, '45acp': { label: '.45 (pistola)', size: 0.012 }, '357': { label: '.357 (revólver)', size: 0.0145 },
+  '556': { label: '5,56 mm (fusil)', size: 0.0225 }, '762': { label: '7,62 × 39 (fusil)', size: 0.0195 }, '308': { label: '.308 (francotirador)', size: 0.0255 },
+  '50bmg': { label: '.50 (pesada)', size: 0.05 }, '12g': { label: 'Cartucho 12 (escopeta)', size: 0.034 },
+};
+/** Armas: piezas con movimiento (rol → objeto y su recorrido). */
+export type WeaponKind = 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'revolver' | 'sniper' | 'custom';
+export type WeaponAction = 'semi' | 'auto' | 'pump' | 'bolt' | 'revolver';
+export type PartRole = 'slide' | 'bolt' | 'trigger' | 'hammer' | 'mag' | 'pump' | 'cylinder' | 'handle' | 'cover' | 'extra';
+export const PART_ROLES: [PartRole, string][] = [['slide', 'Corredera'], ['bolt', 'Cerrojo / portacerrojo'], ['handle', 'Palanca de carga / manija'], ['trigger', 'Gatillo'], ['hammer', 'Martillo'], ['mag', 'Cargador'], ['pump', 'Guardamanos de bombeo'], ['cylinder', 'Tambor'], ['cover', 'Tapa del expulsor'], ['extra', 'Otra pieza (inspección)']];
+/** Una pieza que se mueve: desplazamiento y giro (en el espacio del arma) en su posición máxima (v = 1). */
+export interface WPart3 { role: PartRole; id: string; move: [number, number, number]; rot: [number, number, number]; rest: [number, number, number, number, number, number] }
+export interface Weapon3 {
+  kind: WeaponKind; action: WeaponAction; caliber: Caliber;
+  parts: WPart3[];
+  /** Boca del cañón y ventana de expulsión (en el espacio del arma) y hacia dónde salen los casquillos. */
+  muzzle: [number, number, number]; eject: [number, number, number]; ejectDir: [number, number, number];
+  /** Disparos por minuto en automático, balas por cargador. */
+  rpm: number; ammo: number;
+  /** Teclas: disparar (mantener en automático), recargar, inspeccionar. */
+  fireKey: string; reloadKey: string; inspectKey: string;
+  /** También dispara con clic en la escena. */
+  fireClick: boolean;
+  /** Retroceso (0..2), fogonazo (tamaño, 0 = sin) y su luz, casquillos (escala) y balas (impactos con física). */
+  recoil: number; flash: number; flashLight: number; casingScale: number; bullets: boolean;
+  /** El cargador se puede sacar y meter arrastrándolo con el ratón en vivo. */
+  magDrag: boolean;
+  /** Hacia dónde apunta el cañón (en el espacio del arma): retroceso y balas. */
+  fwd: [number, number, number];
+}
+export const WEAPON_KINDS: Record<Exclude<WeaponKind, 'custom'>, { label: string; icon: string; action: WeaponAction; caliber: Caliber; rpm: number; ammo: number; recoil: number }> = {
+  pistol: { label: 'Pistola', icon: '🔫', action: 'semi', caliber: '9mm', rpm: 400, ammo: 17, recoil: 1 },
+  rifle: { label: 'Fusil de asalto', icon: '🪖', action: 'auto', caliber: '556', rpm: 750, ammo: 30, recoil: 0.7 },
+  smg: { label: 'Subfusil', icon: '⚡', action: 'auto', caliber: '9mm', rpm: 900, ammo: 32, recoil: 0.5 },
+  shotgun: { label: 'Escopeta de bombeo', icon: '💥', action: 'pump', caliber: '12g', rpm: 70, ammo: 7, recoil: 1.6 },
+  revolver: { label: 'Revólver', icon: '🤠', action: 'revolver', caliber: '357', rpm: 180, ammo: 6, recoil: 1.4 },
+  sniper: { label: 'Fusil de cerrojo', icon: '🎯', action: 'bolt', caliber: '308', rpm: 40, ammo: 5, recoil: 1.8 },
+};
+export const defaultWeapon = (kind: WeaponKind = 'custom'): Weapon3 => {
+  const k = kind === 'custom' ? null : WEAPON_KINDS[kind];
+  return { kind, action: k?.action ?? 'semi', caliber: k?.caliber ?? '9mm', parts: [], muzzle: [0, 0.03, 0.2], eject: [-0.015, 0.04, 0.03], ejectDir: [-1, 0.6, -0.2],
+    rpm: k?.rpm ?? 400, ammo: k?.ammo ?? 15, fireKey: 'f', reloadKey: 'r', inspectKey: 'i', fireClick: false,
+    recoil: k?.recoil ?? 1, flash: 1, flashLight: 1, casingScale: 1, bullets: true, magDrag: true, fwd: [0, 0, 1] };
+};
+const isV3 = (v: unknown): v is [number, number, number] => Array.isArray(v) && v.length === 3 && v.every(x => typeof x === 'number' && isFinite(x));
+export function normalizeWeapon(v: unknown): Weapon3 | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const w = v as Partial<Weapon3>;
+  const kind = (w.kind && (w.kind === 'custom' || w.kind in WEAPON_KINDS) ? w.kind : 'custom') as WeaponKind;
+  const d = defaultWeapon(kind);
+  const parts = Array.isArray(w.parts) ? w.parts.filter(p => p && typeof p.id === 'string' && PART_ROLES.some(r => r[0] === p.role)).map(p => ({
+    role: p.role, id: p.id, move: isV3(p.move) ? p.move : [0, 0, 0] as [number, number, number], rot: isV3(p.rot) ? p.rot : [0, 0, 0] as [number, number, number],
+    rest: Array.isArray(p.rest) && p.rest.length === 6 && p.rest.every(x => typeof x === 'number') ? p.rest : [0, 0, 0, 0, 0, 0] as WPart3['rest'],
+  })) : [];
+  return { ...d, ...w, kind, parts, muzzle: isV3(w.muzzle) ? w.muzzle : d.muzzle, eject: isV3(w.eject) ? w.eject : d.eject, ejectDir: isV3(w.ejectDir) ? w.ejectDir : d.ejectDir,
+    caliber: w.caliber && w.caliber in CALIBERS ? w.caliber : d.caliber, fwd: isV3(w.fwd) ? w.fwd : d.fwd, action: (['semi', 'auto', 'pump', 'bolt', 'revolver'] as WeaponAction[]).includes(w.action as WeaponAction) ? w.action as WeaponAction : d.action };
+}
 /** Pose de un dibujo: textura y tecla para cambiar a ella en vivo. */
 export interface Pose3 {
   id: string; name: string; tex: string; key: string;
@@ -294,7 +358,7 @@ export const defaultFx = (): Fx3 => ({ quality: 'medium', adaptive: true, previe
 /** Sucesos: también los del audio (empieza a hablar, se calla, sonido fuerte). */
 export type EventType = 'start' | 'time' | 'every' | 'key' | 'click' | 'collide' | 'enter' | 'grab' | 'release' | 'talk' | 'quiet' | 'loud';
 /** Acciones: también cambiar de pose (expresión) y reproducir o parar un audio. */
-export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script' | 'pose' | 'audio' | 'fluid' | 'particles';
+export type ActType = 'impulse' | 'jump' | 'setdir' | 'speed' | 'behavior' | 'color' | 'light' | 'fx' | 'shake' | 'spawn' | 'hide' | 'show' | 'gravity' | 'slowmo' | 'stop' | 'script' | 'pose' | 'audio' | 'fluid' | 'particles' | 'weapon';
 export interface Act3 { type: ActType; target: string; v?: [number, number, number]; value?: number; color?: string; param?: string; dur?: number; code?: string }
 export interface Rule3 { id: string; name: string; enabled: boolean; once: boolean; on: { type: EventType; t?: number; key?: string; a?: string; b?: string }; do: Act3[] }
 export interface Mat3 {
@@ -672,6 +736,7 @@ export function normalizeStudio(v: unknown): Studio3 | null {
       if (o.ctrl !== undefined) o.ctrl = isObj(o.ctrl) ? { ...defaultCtrl(), ...o.ctrl, lock: { ...defaultCtrl().lock, ...(isObj(o.ctrl.lock) ? o.ctrl.lock : {}) } } : undefined;
       if (o.style !== undefined) o.style = isObj(o.style) ? { ...defaultObjStyle(), ...o.style } : undefined;
       if (o.fluid !== undefined) { if (isObj(o.fluid) && typeof o.fluid.liquid === 'string' && o.fluid.liquid in LIQUIDS) o.fluid = { ...defaultFluid(o.fluid.liquid as LiquidType), ...o.fluid }; else delete o.fluid; }
+      if (o.weapon !== undefined) { const w = normalizeWeapon(o.weapon); if (w) o.weapon = w; else delete o.weapon; }
       if (o.particles !== undefined) { if (isObj(o.particles) && typeof o.particles.type === 'string' && o.particles.type in PART_TYPES) o.particles = { ...defaultParticles(o.particles.type as PartType), ...o.particles }; else delete o.particles; }
       if (o.style?.cel) o.style.cel = isObj(o.style.cel) ? { ...defaultCel(), ...o.style.cel } : null;
       if (o.style?.line) o.style.line = isObj(o.style.line) ? { width: isNum(o.style.line.width) ? o.style.line.width : 2, color: typeof o.style.line.color === 'string' ? o.style.line.color : '#111111' } : null;
