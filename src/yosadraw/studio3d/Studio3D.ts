@@ -7,10 +7,11 @@ import { setEase, smoothProp, type EaseSpec } from '../motion/keytools';
 import type { ProjectLibrary } from '../project/library';
 import { toast } from '../ui/dom';
 import { genDef, type GenType } from './generators';
-import { WMATS, generateWeapon, guessRole, roleMotion, type WMat } from './weaponGen';
+import { WMATS, generateModel, guessRole, roleMotion, type WMat } from './weaponGen';
+import { DEFAULT_MODEL, REAL_MODELS, type RealModel } from './realGuns';
 import * as M from './mesh';
 import {
-  History3, LIQUIDS, PRIMS, WEAPON_KINDS, defaultWeapon, type PartRole, type Weapon3, type WeaponKind, type WPart3, cameraObject, cardPhys, defaultFluid, type Fluid3, type LiquidType, PART_TYPES, defaultParticles, type Particles3, type PartType, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
+  History3, LIQUIDS, PRIMS, defaultWeapon, type PartRole, type Weapon3, type WeaponKind, type WPart3, cameraObject, cardPhys, defaultFluid, type Fluid3, type LiquidType, PART_TYPES, defaultParticles, type Particles3, type PartType, defaultAudio, defaultTuber, type Audio3, type Part3, defaultObjStyle, type ObjStyle, defaultCtrl, defaultFx, defaultPhys, type Ctrl3, type Fx3, type Phys3, type Rule3, clone, effLocked, forEachMatProp, forEachProp3, genObject, lightObject, newMaterial, newObject, newScene, objOf, presetMaterial,
   primHeight, primObject, rebuild, sceneOf, sid, subtree, type LightType, type Mat3, type Obj3, type PrimType, type Scene3, type Studio3,
 } from './model';
 
@@ -543,6 +544,23 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
   addFavMat(i: number) { const f = this.prefs.favMats[i]; if (!f) return null; const m = { ...clone(f), id: sid('mt'), fav: true }; this.edit(`Material ${m.name}`, s => { s.materials.push(m); }); return m; }
 
   /** Añade una textura (imagen como data URL) y la pone en el material. */
+  /** Pone (o quita, con `src` null) un mapa PBR de un material: relieve, rugosidad, metal, oclusión o emisión. */
+  setMatMap(matId: string, role: 'normal' | 'rough' | 'metal' | 'ao' | 'emissive', src: string | null, name = 'Mapa') {
+    const id = sid('tx');
+    this.edit(src ? 'Mapa del material' : 'Quitar mapa', s => {
+      const m = s.materials.find(x => x.id === matId); if (!m) return;
+      if (!src) { if (m.maps) { delete m.maps[role]; if (!Object.keys(m.maps).some(k => ['normal', 'rough', 'metal', 'ao', 'emissive'].includes(k))) delete m.maps; } return; }
+      s.textures.push({ id, name, src });
+      const mp = (m.maps ??= {});
+      mp[role] = id;
+      // Con mapa, el valor del material multiplica al del mapa: se deja en 1.
+      if (role === 'rough') m.rough.v = 1;
+      if (role === 'metal') m.metal.v = 1;
+      if (role === 'normal') mp.normalScale ??= 1;
+      if (role === 'ao') mp.aoI ??= 1;
+      if (role === 'emissive') { m.emissive.v = '#ffffff'; if (!(m.emissiveI.v > 0)) m.emissiveI.v = 1; }
+    });
+  }
   setTexture(matId: string, src: string, name: string, project: { id: string; rev: number } | null = null) {
     const id = sid('tx');
     this.edit('Textura', s => {
@@ -756,13 +774,15 @@ export class Studio3D extends Emitter<{ change: string; select: void; time: numb
   // ---------------------------------------------------------------- armas
 
   /** Arma original por piezas (cada pieza móvil, un objeto con su recorrido). */
-  addWeapon(kind: Exclude<WeaponKind, 'custom'>, at: [number, number, number] = [0, 1.2, 0]) {
-    const g = generateWeapon(kind);
+  addWeapon(which: Exclude<WeaponKind, 'custom'> | RealModel, at: [number, number, number] = [0, 1.2, 0]) {
+    const model: RealModel = which in REAL_MODELS ? which as RealModel : DEFAULT_MODEL[which as Exclude<WeaponKind, 'custom'>];
+    const M = REAL_MODELS[model], kind = M.kind;
+    const g = generateModel(model);
     const root = newObject('group', g.name, at);
-    const w: Weapon3 = { ...defaultWeapon(kind), muzzle: g.muzzle, eject: g.eject, ejectDir: g.ejectDir, parts: [] };
+    const w: Weapon3 = { ...defaultWeapon(kind), model, action: M.action, caliber: M.caliber, ammo: M.ammo, rpm: M.rpm, recoil: M.recoil, muzzle: g.muzzle, eject: g.eject, ejectDir: g.ejectDir, parts: [] };
     const objs: Obj3[] = [], byName = new Map<string, Obj3>();
     const newMats: Mat3[] = [];
-    this.edit(`Añadir ${WEAPON_KINDS[kind].label.toLowerCase()}`, (st, sc) => {
+    this.edit(`Añadir ${M.label}`, (st, sc) => {
       // Materiales del arma (se reutilizan si el proyecto ya los tiene).
       const mat = (k: WMat) => {
         const d = WMATS[k];

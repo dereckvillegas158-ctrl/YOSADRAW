@@ -178,7 +178,9 @@ export const PART_ROLES: [PartRole, string][] = [['slide', 'Corredera'], ['bolt'
 /** Una pieza que se mueve: desplazamiento y giro (en el espacio del arma) en su posición máxima (v = 1). */
 export interface WPart3 { role: PartRole; id: string; move: [number, number, number]; rot: [number, number, number]; rest: [number, number, number, number, number, number] }
 export interface Weapon3 {
-  kind: WeaponKind; action: WeaponAction; caliber: Caliber;
+  kind: WeaponKind;
+  /** Modelo real del que se creó (glock17, ak47…), si es uno de serie. */
+  model?: string; action: WeaponAction; caliber: Caliber;
   parts: WPart3[];
   /** Boca del cañón y ventana de expulsión (en el espacio del arma) y hacia dónde salen los casquillos. */
   muzzle: [number, number, number]; eject: [number, number, number]; ejectDir: [number, number, number];
@@ -370,8 +372,19 @@ export interface Mat3 {
   toon: boolean; fav: boolean;
   /** Recorte por transparencia (dibujos: lo transparente no se ve ni hace sombra). */
   cut?: boolean;
+  /** Mapas PBR (relieve, rugosidad, metal, oclusión, emisión). */
+  maps?: MatMaps;
+  /** false = el modelo usa las coordenadas de textura de glTF: las imágenes que se le pongan, sin invertir. */
+  texFlip?: boolean;
 }
-export interface Tex3 { id: string; name: string; src: string; project?: { id: string; rev: number } | null }
+export interface Tex3 { id: string; name: string; src: string; project?: { id: string; rev: number } | null;
+  /** false = sin invertir en vertical (texturas de glTF, como las guarda el modelo). */
+  flip?: boolean }
+/**
+ * Mapas PBR de un material (modelos importados tipo videojuego): relieve (normales),
+ * rugosidad, metal, oclusión ambiental y emisión. Son ids de texturas del proyecto.
+ */
+export interface MatMaps { normal?: string; rough?: string; metal?: string; ao?: string; emissive?: string; normalScale?: number; aoI?: number }
 export interface Scene3 {
   id: string; name: string; objects: Obj3[];
   camera: string | null;
@@ -694,6 +707,8 @@ export function normalizeStudio(v: unknown): Studio3 | null {
     const d = newMaterial(m.name ?? 'Material');
     for (const k of ['color', 'rough', 'metal', 'opacity', 'emissive', 'emissiveI'] as const) (m as unknown as Record<string, unknown>)[k] = okProp(m[k], d[k].v);
     m.tex ??= null; m.proc ??= null; m.texScale = isNum(m.texScale) ? m.texScale : 1; m.toon = !!m.toon; m.fav = !!m.fav; m.name ??= 'Material';
+    if (m.texFlip !== undefined && typeof m.texFlip !== 'boolean') delete m.texFlip;
+    if (m.maps !== undefined) { if (!isObj(m.maps)) delete m.maps; else { const mp = m.maps as Record<string, unknown>; for (const k of ['normal', 'rough', 'metal', 'ao', 'emissive']) if (mp[k] !== undefined && typeof mp[k] !== 'string') delete mp[k]; for (const k of ['normalScale', 'aoI']) if (mp[k] !== undefined && !isNum(mp[k])) delete mp[k]; } }
   }
   if (!s.materials.length) s.materials = base.materials;
   s.textures = Array.isArray(s.textures) ? s.textures.filter(t => isObj(t) && typeof t.id === 'string' && typeof t.src === 'string') : [];

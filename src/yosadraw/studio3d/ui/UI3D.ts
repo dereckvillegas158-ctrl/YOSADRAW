@@ -4,8 +4,9 @@ import { modal } from '../../ui/modal';
 import { menu } from '../../ui/motion/util';
 import { genDef } from '../generators';
 import { desktopBridge } from '../../brush/storage';
+import { addModelTextures } from './Panels';
 import { exportModel, importModel, MODEL_ACCEPT, renderVideo, saveFile, canvasPng, sceneAnimated, type ModelFormat } from '../io';
-import { defaultTuber, genObject, newObject, type PrimType } from '../model';
+import { defaultTuber, genObject, newObject, subtree, type PrimType } from '../model';
 import type { Studio3D, Tool3 } from '../Studio3D';
 import { View3D, type ViewName } from '../View3D';
 import { Assistant } from './Assistant';
@@ -288,7 +289,12 @@ export class UI3D {
     try {
       const r = await importModel(this.s, files); this.view.frameSelected();
       const extra = [r.instances ? `${r.instances} instancias` : '', r.points ? `${r.points} partículas` : '', r.anims ? 'las animaciones no se importan (usa keyframes)' : ''].filter(Boolean).join(' · ');
-      toast(`«${r.name}» importado: ${r.pieces} ${r.pieces === 1 ? 'pieza editable' : 'piezas editables'}${extra ? ` · ${extra}` : ''}. Úsalo también como forma de partículas.`, 'ok');
+      const tx = r.textures ? ` · ${r.textures} ${r.textures === 1 ? 'textura' : 'texturas'}` : '';
+      if (r.untextured) {
+        // Le faltan texturas: se ofrece elegirlas (sólo se rellenan los materiales sin imagen).
+        const ids = [...new Set([this.s.obj(r.groupId), ...subtree(this.s.scene, r.groupId)].flatMap(x => x?.mats ?? []))];
+        toast(`«${r.name}» importado: ${r.pieces} ${r.pieces === 1 ? 'pieza' : 'piezas'}${tx}${extra ? ` · ${extra}` : ''}. ${r.untextured} ${r.untextured === 1 ? 'material no trae' : 'materiales no traen'} textura (si el modelo venía en un .zip, impórtalo entero).`, 'info', { label: 'Añadir texturas…', run: () => void addModelTextures(this.s, ids) });
+      } else toast(`«${r.name}» importado: ${r.pieces} ${r.pieces === 1 ? 'pieza editable' : 'piezas editables'}${tx}${extra ? ` · ${extra}` : ''}. Úsalo también como forma de partículas o conviértelo en arma.`, 'ok');
     }
     catch (e) { toast(`No se pudo importar: ${e instanceof Error ? e.message : String(e)}`, 'error'); }
   }

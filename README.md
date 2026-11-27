@@ -375,7 +375,8 @@ Proyectos 3D dentro de YOSADRAW («Nuevo proyecto → 3D»): modelado poligonal,
 | Líquidos en vivo (sangre, agua, lava…; estilos) | `src/yosadraw/studio3d/live/fluid.ts` |
 | Partículas en vivo (chispas, fogonazo con luz dinámica, explosión, fuego, humo, órganos, huesos…; forma cambiable por modelo o imagen) | `src/yosadraw/studio3d/live/particles.ts` |
 | Formas de serie de las partículas (órganos, huesos, monedas, casquillos por calibre…) | `src/yosadraw/studio3d/live/partShapes.ts` |
-| Armas por piezas (pistola, fusil, subfusil, escopeta, revólver, cerrojo) y reconocimiento de piezas de modelos importados | `src/yosadraw/studio3d/weaponGen.ts` |
+| Armas por piezas y reconocimiento de piezas de modelos importados | `src/yosadraw/studio3d/weaponGen.ts` |
+| Modelos de armas reales (Glock 17, M1911, AK-47, M4A1, MP5, Remington 870, Colt Python, M24) | `src/yosadraw/studio3d/realGuns.ts` |
 | Armas en vivo: disparo, corredera, expulsión de casquillos, retroceso, recarga, cargador con el ratón, inspección, balas | `src/yosadraw/studio3d/live/weapons.ts` |
 | Panel del arma (piezas, ajustes, keyframes, inspección) | `src/yosadraw/studio3d/ui/WeaponPanel.ts` |
 | Módulo PNGTuber 2D (panel, fondo, vista plana) | `src/yosadraw/studio3d/ui/TuberPanel.ts` |
