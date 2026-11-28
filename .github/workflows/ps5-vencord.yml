@@ -10,6 +10,9 @@ on:
       - "ps5-vencord/**"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -39,3 +42,16 @@ jobs:
           name: VencordPS5
           path: |
             ps5-vencord/dist/VencordPS5
+
+      - name: Publicar el .elf en la Release "vencord-ps5"
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp vencord-ps5.elf dist/vencord-ps5.elf
+          cd dist && zip -qr VencordPS5-homebrew.zip VencordPS5 && cd ..
+          gh release delete vencord-ps5 --yes --cleanup-tag || true
+          gh release create vencord-ps5 dist/vencord-ps5.elf dist/VencordPS5-homebrew.zip \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Vencord PS5 (ultima compilacion)" \
+            --notes "Payload para PS5 liberada. Enviar con: nc -q0 IP_PS5 9021 < vencord-ps5.elf"
