@@ -41,6 +41,16 @@ typedef struct req {
 /* utilidades de cadenas                                               */
 /* ------------------------------------------------------------------ */
 
+/* La libc del SDK de PS5 no exporta memmem(). */
+static const char *
+vc_memmem(const char *hay, size_t hlen, const char *needle, size_t nlen) {
+  if(!nlen) return hay;
+  for(size_t i = 0; i + nlen <= hlen; i++) {
+    if(hay[i] == needle[0] && !memcmp(hay + i, needle, nlen)) return hay + i;
+  }
+  return 0;
+}
+
 char *
 vc_replace_all(const char *src, size_t len, const char *from, const char *to,
                size_t *out_len) {
@@ -48,7 +58,7 @@ vc_replace_all(const char *src, size_t len, const char *from, const char *to,
   const char *p = src, *end = src + len, *hit;
   char *out;
 
-  while((hit = memmem(p, end - p, from, flen))) {
+  while((hit = vc_memmem(p, end - p, from, flen))) {
     count++;
     p = hit + flen;
   }
@@ -56,7 +66,7 @@ vc_replace_all(const char *src, size_t len, const char *from, const char *to,
     return 0;
   }
   p = src;
-  while((hit = memmem(p, end - p, from, flen))) {
+  while((hit = vc_memmem(p, end - p, from, flen))) {
     memcpy(out + o, p, hit - p);
     o += hit - p;
     memcpy(out + o, to, tlen);
