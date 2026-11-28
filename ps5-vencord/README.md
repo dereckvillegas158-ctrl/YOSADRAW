@@ -14,7 +14,8 @@ La PS5 trae un navegador WebKit oculto, pero no acepta extensiones ni userscript
 ```
 
 - El HTTPS hacia Discord usa la librería TLS del propio sistema (`libSceHttp` + `libSceSsl`), así que no hace falta portar OpenSSL ni mbedTLS.
-- Vencord es el **build web oficial** (`Vencord.user.js`). Se descarga de GitHub la primera vez y se guarda en `/data/vencord-ps5/`.
+- Vencord es el **build web oficial** (`Vencord.user.js`) y va **incluido dentro del `.elf`**, así que no hace falta descargar nada en la consola. Con el botón "Actualizar Vencord" se baja la última versión, que se guarda en `/data/vencord-ps5/`.
+- Si la verificación del certificado HTTPS falla en la consola (pasa a menudo con los payloads), se reintenta automáticamente sin verificar, igual que hace websrv.
 - El servidor solo escucha en `127.0.0.1`, así que nadie de tu red puede usarlo.
 
 ## Requisitos
@@ -70,7 +71,7 @@ El payload se queda en segundo plano, muestra la notificación "Vencord PS5 list
 
 ### Panel
 
-`http://127.0.0.1:8095/__vc/` tiene botones para abrir Discord, iniciar sesión con token y **actualizar Vencord** a la última versión.
+`http://127.0.0.1:8095/__vc/` tiene botones para abrir Discord, iniciar sesión con token, **actualizar Vencord** a la última versión y ver un **diagnóstico de red** (`/__vc/diag`). El diagnóstico prueba la conexión con Discord y con GitHub y muestra el código de error exacto si algo falla.
 
 ### Opciones del payload
 

@@ -71,13 +71,29 @@ open_browser(void) {
 #endif
 }
 
+/* Comprueba la conexion al arrancar y avisa con el codigo de error
+ * concreto si algo falla, para poder diagnosticarlo. */
 static void *
-prefetch_thread(void *arg) {
+startup_check_thread(void *arg) {
+  char url[512];
   size_t len;
+  int status;
+  char *body;
   (void)arg;
+
+  snprintf(url, sizeof(url), "%s/robots.txt", g_cfg.upstream);
+  body = vc_http_get(url, &len, &status);
+  if(!body && !status) {
+    notify("Vencord PS5: no se puede conectar con Discord (%s)",
+           up_last_error());
+  } else if(up_tls_insecure()) {
+    printf("[vc] conectado a Discord (TLS sin verificar)\n");
+  }
+  free(body);
+
   if(!vencord_get(&len)) {
-    notify("Vencord PS5: no se pudo descargar Vencord. "
-           "Discord funcionara sin mods.");
+    notify("Vencord PS5: Vencord no disponible (%s). "
+           "Discord funcionara sin mods.", up_last_error());
   }
   return 0;
 }
@@ -154,7 +170,7 @@ main(int argc, char **argv) {
     return 1;
   }
 
-  pthread_create(&th, 0, prefetch_thread, 0);
+  pthread_create(&th, 0, startup_check_thread, 0);
   pthread_detach(th);
 
   notify("Vencord PS5 listo en %s", g_cfg.self_origin);

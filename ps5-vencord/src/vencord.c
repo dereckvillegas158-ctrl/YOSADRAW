@@ -13,6 +13,23 @@
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static char  *g_js;
 static size_t g_js_len;
+static const char *g_source = "ninguno";
+
+#ifdef VC_EMBED_VENCORD
+/* Copia de Vencord.user.js metida en el propio ELF al compilar, para que
+ * funcione aunque la descarga desde GitHub falle. */
+extern const char vc_embed_start[];
+extern const char vc_embed_end[];
+__asm__(".section .rodata\n"
+        ".global vc_embed_start\n"
+        ".global vc_embed_end\n"
+        ".balign 16\n"
+        "vc_embed_start:\n"
+        ".incbin \"" VC_EMBED_VENCORD "\"\n"
+        "vc_embed_end:\n"
+        ".byte 0\n"
+        ".previous\n");
+#endif
 
 static void
 cache_path(char *out, size_t size) {
@@ -121,8 +138,13 @@ download_locked(char *msg, size_t msg_size) {
   char *js = vc_http_get(g_cfg.vencord_url, &len, &status);
 
   if(!js || len < 1024 || !strstr(js, "Vencord")) {
-    snprintf(msg, msg_size, "No se pudo descargar Vencord (HTTP %d) desde %s",
-             status, g_cfg.vencord_url);
+    if(status) {
+      snprintf(msg, msg_size, "No se pudo descargar Vencord: HTTP %d", status);
+    } else {
+      snprintf(msg, msg_size, "No se pudo descargar Vencord: %s",
+               up_last_error());
+    }
+    printf("[vc] %s\n", msg);
     free(js);
     return -1;
   }
@@ -134,6 +156,7 @@ download_locked(char *msg, size_t msg_size) {
   free(g_js);
   g_js = js;
   g_js_len = len;
+  g_source = "descargado";
   snprintf(msg, msg_size, "Vencord actualizado (%zu KB). Recarga Discord.",
            len / 1024);
   printf("[vc] %s\n", msg);
@@ -142,15 +165,25 @@ download_locked(char *msg, size_t msg_size) {
 
 const char *
 vencord_get(size_t *len) {
-  char path[512], msg[512];
+  char path[512];
 
   pthread_mutex_lock(&g_lock);
   if(!g_js) {
     cache_path(path, sizeof(path));
     if((g_js = read_file(path, &g_js_len))) {
+      g_source = "cache";
       printf("[vc] Vencord cargado desde %s\n", path);
     } else {
+#ifdef VC_EMBED_VENCORD
+      g_js = (char *)vc_embed_start;
+      g_js_len = vc_embed_end - vc_embed_start;
+      g_source = "incluido";
+      printf("[vc] usando Vencord incluido en el payload (%zu KB)\n",
+             g_js_len / 1024);
+#else
+      char msg[512];
       download_locked(msg, sizeof(msg));
+#endif
     }
   }
   *len = g_js_len;
@@ -175,4 +208,9 @@ vencord_update(char *msg, size_t msg_size) {
   }
   pthread_mutex_unlock(&g_lock);
   return err;
+}
+
+const char *
+vencord_source(void) {
+  return g_source;
 }

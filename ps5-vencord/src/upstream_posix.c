@@ -19,6 +19,18 @@ typedef struct posix_priv {
   size_t pending_off;
 } posix_priv_t;
 
+static char g_last_error_msg[256];
+
+const char *
+up_last_error(void) {
+  return g_last_error_msg[0] ? g_last_error_msg : "sin errores";
+}
+
+int
+up_tls_insecure(void) {
+  return 0;
+}
+
 int
 up_init(int insecure_tls) {
   (void)insecure_tls;
@@ -84,12 +96,14 @@ up_request(const char *method, const char *url, const up_header_t *headers,
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
   if(getaddrinfo(host, port, &hints, &ai) || !ai) {
+    snprintf(g_last_error_msg, sizeof(g_last_error_msg), "%s: DNS", url);
     return -1;
   }
   fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
   if(fd < 0 || connect(fd, ai->ai_addr, ai->ai_addrlen)) {
     freeaddrinfo(ai);
     if(fd >= 0) close(fd);
+    snprintf(g_last_error_msg, sizeof(g_last_error_msg), "%s: connect", url);
     return -1;
   }
   freeaddrinfo(ai);

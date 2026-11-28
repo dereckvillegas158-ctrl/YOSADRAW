@@ -59,6 +59,7 @@ const char VC_HOME_HTML[] =
   "<a href=\"/app\" autofocus>Abrir Discord</a>"
   "<a class=\"alt\" href=\"/__vc/login\">Iniciar sesion con token</a>"
   "<button class=\"alt\" id=\"up\">Actualizar Vencord</button>"
+  "<a class=\"alt\" href=\"/__vc/diag\">Diagnostico de red</a>"
   "<p id=\"msg\"></p>"
   "<script>document.getElementById('up').onclick=function(){var m=document.getElementById('msg');"
   "m.textContent='Descargando...';fetch('/__vc/update',{method:'POST'}).then(function(r){return r.text()})"

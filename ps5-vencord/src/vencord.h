@@ -6,6 +6,8 @@
 const char *vencord_get(size_t *len);
 /* Fuerza la descarga de la ultima version. 0 = ok. */
 int         vencord_update(char *msg, size_t msg_size);
+/* "incluido", "cache", "descargado" o "ninguno" */
+const char *vencord_source(void);
 
 /* Peticion GET siguiendo redirecciones; devuelve cuerpo malloc'd o NULL. */
 char       *vc_http_get(const char *url, size_t *len, int *status);

@@ -644,6 +644,41 @@ handle_internal(int fd, req_t *r) {
     } else {
       return forward(fd, r, url, &o);
     }
+  } else if(!strncmp(path, "/diag", 5)) {
+    /* Diagnostico de red: prueba Discord y GitHub y muestra los codigos. */
+    char out[4096], url[600];
+    size_t o = 0, len = 0;
+    int status = 0;
+    char *body;
+
+    o += snprintf(out + o, sizeof(out) - o,
+                  "Vencord PS5 %s - diagnostico\n\n", VC_VERSION);
+    snprintf(url, sizeof(url), "%s/robots.txt", g_cfg.upstream);
+    body = vc_http_get(url, &len, &status);
+    o += snprintf(out + o, sizeof(out) - o, "Discord (%s): %s\n", url,
+                  body ? "OK" : status ? "respuesta HTTP inesperada" :
+                  up_last_error());
+    if(!body && status) {
+      o += snprintf(out + o, sizeof(out) - o, "  HTTP %d\n", status);
+    }
+    free(body);
+    body = vc_http_get(g_cfg.vencord_url, &len, &status);
+    o += snprintf(out + o, sizeof(out) - o, "GitHub (Vencord): %s",
+                  body ? "OK" : status ? "HTTP" : up_last_error());
+    if(!body && status) {
+      o += snprintf(out + o, sizeof(out) - o, " %d", status);
+    }
+    o += snprintf(out + o, sizeof(out) - o, "\n");
+    free(body);
+    vencord_get(&len);
+    o += snprintf(out + o, sizeof(out) - o,
+                  "Vencord en uso: %s (%zu KB)\n"
+                  "TLS: %s\n"
+                  "Ultimo error de red: %s\n",
+                  vencord_source(), len / 1024,
+                  up_tls_insecure() ? "sin verificar certificado" :
+                  "verificado", up_last_error());
+    send_text(fd, 200, out);
   } else if(!strncmp(path, "/login", 6)) {
     send_simple(fd, 200, "text/html; charset=utf-8", 0, VC_LOGIN_HTML,
                 strlen(VC_LOGIN_HTML));

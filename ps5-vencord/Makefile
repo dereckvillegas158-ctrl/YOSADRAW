@@ -17,13 +17,22 @@ endif
 ELF  := vencord-ps5.elf
 SRCS := src/main.c src/proxy.c src/vencord.c src/web.c src/upstream_sce.c
 
+# Vencord se mete dentro del ELF para no depender de descargarlo en la consola.
+VENCORD_JS  := vencord/Vencord.user.js
+VENCORD_URL := https://github.com/Vendicated/Vencord/releases/download/devbuild/Vencord.user.js
+
 CFLAGS := -O2 -Wall -Werror -Isrc -DVC_PS5
+CFLAGS += -DVC_EMBED_VENCORD='"$(CURDIR)/$(VENCORD_JS)"'
 LDADD  := -lkernel_sys -lSceSystemService -lSceUserService
 LDADD  += -lSceNet -lSceSsl -lSceHttp
 
 all: $(ELF)
 
-$(ELF): $(SRCS) $(wildcard src/*.h)
+$(VENCORD_JS):
+	mkdir -p vencord
+	wget -q -O $@.tmp $(VENCORD_URL) && mv $@.tmp $@
+
+$(ELF): $(SRCS) $(wildcard src/*.h) $(VENCORD_JS)
 	$(CC) $(CFLAGS) -o $@ $(SRCS) $(LDADD)
 
 homebrew: $(ELF)
@@ -37,6 +46,6 @@ test: $(ELF)
 	$(PS5_DEPLOY) -h $(PS5_HOST) -p $(PS5_PORT) $(ELF)
 
 clean:
-	rm -rf $(ELF) dist
+	rm -rf $(ELF) dist vencord
 
 .PHONY: all homebrew test clean

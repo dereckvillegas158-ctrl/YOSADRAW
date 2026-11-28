@@ -24,3 +24,7 @@ int     up_request(const char *method, const char *url,
 /* >0 bytes leidos, 0 fin, <0 error */
 ssize_t up_read(up_resp_t *r, void *buf, size_t len);
 void    up_close(up_resp_t *r);
+/* Ultimo error de red legible (para notificaciones y /__vc/diag). */
+const char *up_last_error(void);
+/* 1 si se esta usando HTTPS sin verificar el certificado. */
+int     up_tls_insecure(void);
