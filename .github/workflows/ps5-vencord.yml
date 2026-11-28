@@ -1,0 +1,41 @@
+name: Vencord PS5
+
+on:
+  push:
+    paths:
+      - "ps5-vencord/**"
+      - ".github/workflows/ps5-vencord.yml"
+  pull_request:
+    paths:
+      - "ps5-vencord/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ps5-vencord
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pruebas del proxy (build host)
+        run: make -f Makefile.host check
+
+      - name: Instalar ps5-payload-sdk
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 wget unzip
+          wget -q https://github.com/ps5-payload-dev/sdk/releases/latest/download/ps5-payload-sdk.zip
+          sudo unzip -q ps5-payload-sdk.zip -d /opt
+
+      - name: Compilar payload PS5
+        env:
+          PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+        run: make homebrew
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VencordPS5
+          path: |
+            ps5-vencord/dist/VencordPS5

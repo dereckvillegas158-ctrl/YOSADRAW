@@ -1,0 +1,17 @@
+# Compilacion para Linux/macOS, solo para probar el proxy en el PC
+# contra un servidor simulado (backend HTTP plano, sin TLS).
+#   make -f Makefile.host && make -f Makefile.host check
+CC     ?= cc
+CFLAGS ?= -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -D_GNU_SOURCE
+SRCS   := src/main.c src/proxy.c src/vencord.c src/web.c src/upstream_posix.c
+
+vencord-host: $(SRCS) $(wildcard src/*.h)
+	$(CC) $(CFLAGS) -Isrc -o $@ $(SRCS) -lpthread
+
+check: vencord-host
+	python3 tests/test_proxy.py ./vencord-host
+
+clean:
+	rm -f vencord-host
+
+.PHONY: check clean
