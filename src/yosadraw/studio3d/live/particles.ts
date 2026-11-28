@@ -384,7 +384,8 @@ export class ParticleSystem {
       const flick = c.type === 'muzzle' ? 1 : 0.82 + 0.18 * Math.sin(performance.now() * 0.023 + i) * Math.sin(performance.now() * 0.011);
       L.intensity = c.light * Math.max(flash, steady * flick) * 3;
       L.distance = c.lightRange;
-      L.visible = L.intensity > 0.01;
+      // (Siempre encendida, aunque a 0: si se apagara y encendiera, cambiaría el número de luces
+      // de la escena y Three volvería a preparar los sombreadores de todos los materiales: un tirón.)
     }
   }
   private draw(cam: T.Camera) {

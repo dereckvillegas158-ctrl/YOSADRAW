@@ -185,7 +185,7 @@ export class View3D {
   private recH = 0;
   private recPr = 0;
   /** Al grabar: resolución del vídeo y bordes suavizados (MSAA) también con efectos. */
-  setRecordHeight(h: number, msaa = false) { this.recH = Math.max(0, h); this.recMsaa = msaa && h > 0; this.fxp?.setMsaa(this.recMsaa ? 4 : 0); this.resize(); }
+  setRecordHeight(h: number, msaa = false) { this.recH = Math.max(0, h); this.recMsaa = msaa && h > 0; this.fxp?.setMsaa(this.recMsaa ? 4 : 0); if (this.fxp) this.fxp.recording = h > 0; this.resize(); }
   private recMsaa = false;
   private resize() {
     const w = this.el.clientWidth, h = this.el.clientHeight;
@@ -304,7 +304,7 @@ export class View3D {
     this.actorRing(live);
     if (FxPipeline.needed(fx, objStyles.length)) {
       const f = fx ?? { ...defaultFx(), quality: this.s.scene.fx?.quality ?? 'medium', adaptive: this.s.scene.fx?.adaptive ?? true };
-      if (!this.fxp) { this.fxp = new FxPipeline(this.renderer, this.scene, cam); this.fxp.minRatio = this.recPr; this.fxp.setMsaa(this.recMsaa ? 4 : 0); this.fxp.setSize(this.el.clientWidth || 1, this.el.clientHeight || 1); }
+      if (!this.fxp) { this.fxp = new FxPipeline(this.renderer, this.scene, cam); this.fxp.minRatio = this.recPr; this.fxp.recording = this.recH > 0; this.fxp.setMsaa(this.recMsaa ? 4 : 0); this.fxp.setSize(this.el.clientWidth || 1, this.el.clientHeight || 1); }
       if (this.fxp.currentQuality !== f.quality && !f.adaptive) this.fxp.setQuality(f.quality);
       this.fxp.render(this.scene, cam, f, live?.time ?? performance.now() / 1000, this.sunDir(), objStyles);
       // Al editar, el squiggle de los objetos sigue temblando (a su ritmo, sin gastar más).
@@ -589,6 +589,31 @@ export class View3D {
   }
 
   /** Actualiza la escena de Three a partir del modelo (sólo reconstruye lo que cambió). */
+  private bgColor = new T.Color();
+  private fogObj = new T.FogExp2('#000000', 0);
+  private warmRt: T.WebGLRenderTarget | null = null;
+  /**
+   * Prepara ya los sombreadores de todo lo de la escena (también lo que aún no se ve: lo que
+   * quede fuera del encuadre de la cámara, los casquillos, el fogonazo…). Si no, Three los
+   * prepara la primera vez que aparecen en pantalla y ese fotograma tarda mucho (un tirón).
+   */
+  warmShaders() {
+    if (!this.s.active) return;
+    // Un dibujo de prueba (diminuto y que no se ve) con todo visible y sin recortar por el
+    // encuadre: así se preparan también los de las sombras (renderer.compile no los hace).
+    const off: T.Object3D[] = [], cull: T.Object3D[] = [];
+    this.scene.traverse(o => {
+      if (o.userData.helper) return;
+      if (!o.visible) { off.push(o); o.visible = true; }
+      if (o.frustumCulled) { cull.push(o); o.frustumCulled = false; }
+    });
+    const r = this.renderer, prev = r.getRenderTarget();
+    this.warmRt ??= new T.WebGLRenderTarget(8, 8);
+    try { r.setRenderTarget(this.warmRt); r.shadowMap.needsUpdate = true; r.render(this.scene, this.viewCam()); } catch { /* sin contexto: se preparan al dibujar */ }
+    r.setRenderTarget(prev);
+    for (const o of off) o.visible = false;
+    for (const o of cull) o.frustumCulled = true;
+  }
   sync(full = true) {
     const s = this.s;
     if (!s.active) return;
@@ -600,8 +625,14 @@ export class View3D {
     this.rig.visible = !lit;
     this.scene.environment = lit ? this.envTex : null;
     this.scene.environmentIntensity = sc.env.envLight;
-    this.scene.background = sc.env.transparent ? null : this.bgTexture(sc.env.bgTex) ?? new T.Color(sc.env.bg);
-    this.scene.fog = sc.env.fog > 0 ? new T.FogExp2(sc.env.bg, sc.env.fog * 0.05) : null;
+    const bgt = sc.env.transparent ? null : this.bgTexture(sc.env.bgTex);
+    if (sc.env.transparent) this.scene.background = null;
+    else if (bgt) this.scene.background = bgt;
+    else { this.bgColor.set(sc.env.bg); this.scene.background = this.bgColor; }
+    // La misma niebla de un fotograma a otro: una nueva en cada uno obligaba a Three a revisar
+    // el sombreador de cada material en cada fotograma.
+    if (sc.env.fog > 0) { this.fogObj.color.set(sc.env.bg); this.fogObj.density = sc.env.fog * 0.05; this.scene.fog = this.fogObj; }
+    else this.scene.fog = null;
     this.renderer.toneMappingExposure = sc.env.exposure;
     // 2D (PNGTuber, sin luces): colores exactos (la pantalla verde y el dibujo tal cual).
     this.renderer.toneMapping = sc.env.unlit ? T.NoToneMapping : T.ACESFilmicToneMapping;

@@ -268,6 +268,7 @@ class GodRaysPass extends Pass {
   rays = new T.WebGLRenderTarget(1, 1);
   private quad: FullScreenQuad;
   private mat: T.ShaderMaterial;
+  private n0 = 0;
   private black = new T.MeshBasicMaterial({ color: 0x000000 });
   private cutMats = new Map<T.Material, T.MeshBasicMaterial>();
   private sun = new T.Mesh(new T.SphereGeometry(1, 16, 8), new T.MeshBasicMaterial({ color: '#ffffff' }));
@@ -277,10 +278,17 @@ class GodRaysPass extends Pass {
   constructor(private scene: T.Scene, public camera: T.Camera, samples: number) {
     super();
     this.needsSwap = false;
-    this.mat = RAYS(samples);
+    this.mat = RAYS(samples); this.n0 = samples;
     this.quad = new FullScreenQuad(this.mat);
   }
-  setSamples(n: number) { this.mat.dispose(); this.mat = RAYS(n); this.quad.material = this.mat; }
+  /** Un material por número de muestras (cambiar de calidad no vuelve a compilar el sombreador). */
+  private byN = new Map<number, T.ShaderMaterial>();
+  setSamples(n: number) {
+    if (!this.byN.size) this.byN.set(this.n0, this.mat);
+    let m = this.byN.get(n);
+    if (!m) { m = RAYS(n); this.byN.set(n, m); }
+    this.mat = m; this.quad.material = m;
+  }
   setSize(w: number, h: number) { const W = Math.max(1, Math.round(w * this.scale)), H = Math.max(1, Math.round(h * this.scale)); this.occ.setSize(W, H); this.rays.setSize(W, H); }
   render(renderer: T.WebGLRenderer) {
     if (!this.sunDir || this.strength <= 0) { renderer.setRenderTarget(this.rays); renderer.setClearColor(0, 1); renderer.clear(); return; }
@@ -328,7 +336,7 @@ class GodRaysPass extends Pass {
     renderer.setRenderTarget(this.rays);
     this.quad.render(renderer);
   }
-  dispose() { this.occ.dispose(); this.rays.dispose(); this.mat.dispose(); this.quad.dispose(); this.black.dispose(); for (const m of this.cutMats.values()) m.dispose(); }
+  dispose() { this.occ.dispose(); this.rays.dispose(); this.mat.dispose(); for (const m of this.byN.values()) m.dispose(); this.quad.dispose(); this.black.dispose(); for (const m of this.cutMats.values()) m.dispose(); }
 }
 
 /** Cadena de efectos (se salta si no hay ninguno activo: sin coste). */
@@ -348,7 +356,12 @@ export class FxPipeline {
   private styleKey = '?';
   /** FPS medidos (para bajar la calidad sola). */
   fps = 60;
-  private frames = 0; private t0 = performance.now(); private slow = 0;
+  private frames = 0; private t0 = performance.now(); private slow = 0; private good = 0; private lastDown = -1e9;
+  /**
+   * Grabando: la calidad sólo puede bajar (nunca subir). Cada cambio de calidad rehace los
+   * lienzos internos (un tirón); subir y bajar sin parar daba tirones cada pocos segundos.
+   */
+  recording = false;
   /** `fixedRatio`: resolución exacta (renders), sin mirar la pantalla. */
   constructor(renderer: T.WebGLRenderer, scene: T.Scene, camera: T.Camera, private fixedRatio = 0) {
     this.composer = new EffectComposer(renderer, new T.WebGLRenderTarget(1, 1, { type: T.HalfFloatType, samples: fixedRatio ? 4 : 0 }));
@@ -465,9 +478,12 @@ export class FxPipeline {
     if (!f.adaptive) return;
     const order: Quality[] = ['low', 'medium', 'high'];
     const i = order.indexOf(this.quality), want = order.indexOf(f.quality);
-    if (this.fps < 40 && i > 0) { if (++this.slow >= 2) { this.setQuality(order[i - 1]); this.slow = 0; } }
-    else if (this.fps > 57 && i < want) { this.slow = 0; this.setQuality(order[i + 1]); }
-    else this.slow = 0;
+    if (this.fps < 40 && i > 0) { this.good = 0; if (++this.slow >= 2) { this.setQuality(order[i - 1]); this.slow = 0; this.lastDown = now; } return; }
+    this.slow = 0;
+    // Subir con calma: varios segundos holgados seguidos y no justo después de haber bajado
+    // (si no, sube, va lenta, baja… y cada cambio es un tirón).
+    if (this.fps > 57 && i < want && !this.recording) { if (++this.good >= 4 && now - this.lastDown > 15000) { this.good = 0; this.setQuality(order[i + 1]); } }
+    else this.good = 0;
   }
   dispose() { this.god.dispose(); this.bloom.dispose(); this.mask.dispose(); this.ao.dispose(); this.composer.dispose(); }
 }

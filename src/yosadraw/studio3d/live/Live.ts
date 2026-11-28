@@ -181,6 +181,7 @@ export class Live {
     this.view.live = this.hooks;
     this.view.liveInput = { down: e => this.down(e), move: e => this.move(e), up: () => this.up(), wheel: e => this.wheel(e) };
     this.view.sync();
+    this.view.warmShaders();
     this.time = 0;
     this.keyed = null;
     this.running = true;
