@@ -28,3 +28,5 @@ void    up_close(up_resp_t *r);
 const char *up_last_error(void);
 /* 1 si se esta usando HTTPS sin verificar el certificado. */
 int     up_tls_insecure(void);
+/* Pruebas de conexion paso a paso para /__vc/diag. Devuelve bytes escritos. */
+size_t  up_selftest(char *out, size_t size, const char *upstream);

@@ -423,11 +423,17 @@ forward(int fd, req_t *r, const char *url, const fwd_opts_t *o) {
   snprintf(cururl, sizeof(cururl), "%s", url);
   for(;;) {
     if(up_request(r->method, cururl, hdrs, r->body, r->body_len, &resp)) {
-      char msg[9000];
+      char msg[10000];
       snprintf(msg, sizeof(msg),
-               "Vencord PS5: no se pudo conectar con %s\n"
-               "Comprueba la conexion a Internet de la consola.\n", cururl);
-      send_text(fd, 502, msg);
+               "<!doctype html><meta charset=utf-8><title>Vencord PS5</title>"
+               "<body style=\"font:20px system-ui;background:#1e1f22;color:#dbdee1;"
+               "padding:40px\"><h2>Vencord PS5: no se pudo conectar</h2>"
+               "<p>%s</p><p>Error: <code>%s</code></p>"
+               "<p><a style=\"color:#00a8fc\" href=\"/__vc/diag\">"
+               "Abrir diagnostico</a> &middot; "
+               "<a style=\"color:#00a8fc\" href=\"javascript:location.reload()\">"
+               "Reintentar</a></p></body>", cururl, up_last_error());
+      send_simple(fd, 502, "text/html; charset=utf-8", 0, msg, strlen(msg));
       return keep;
     }
     if(o->follow_redirects && redirects < 5 &&
@@ -646,7 +652,7 @@ handle_internal(int fd, req_t *r) {
     }
   } else if(!strncmp(path, "/diag", 5)) {
     /* Diagnostico de red: prueba Discord y GitHub y muestra los codigos. */
-    char out[4096], url[600];
+    char out[12288], url[600];
     size_t o = 0, len = 0;
     int status = 0;
     char *body;
@@ -678,6 +684,8 @@ handle_internal(int fd, req_t *r) {
                   vencord_source(), len / 1024,
                   up_tls_insecure() ? "sin verificar certificado" :
                   "verificado", up_last_error());
+    o += snprintf(out + o, sizeof(out) - o, "\nPruebas detalladas:\n");
+    o += up_selftest(out + o, sizeof(out) - o, g_cfg.upstream);
     send_text(fd, 200, out);
   } else if(!strncmp(path, "/login", 6)) {
     send_simple(fd, 200, "text/html; charset=utf-8", 0, VC_LOGIN_HTML,

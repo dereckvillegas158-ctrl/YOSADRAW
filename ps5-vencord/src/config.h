@@ -1,7 +1,7 @@
 /* Vencord PS5 - configuracion global */
 #pragma once
 
-#define VC_VERSION      "1.1.0"
+#define VC_VERSION      "1.2.0"
 #define VC_LISTEN_ADDR  "127.0.0.1"
 #define VC_DEFAULT_PORT 8095
 

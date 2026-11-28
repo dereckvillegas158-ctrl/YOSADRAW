@@ -31,6 +31,11 @@ up_tls_insecure(void) {
   return 0;
 }
 
+size_t
+up_selftest(char *out, size_t size, const char *upstream) {
+  return snprintf(out, size, "(autodiagnostico solo disponible en PS5)\n");
+}
+
 int
 up_init(int insecure_tls) {
   (void)insecure_tls;
